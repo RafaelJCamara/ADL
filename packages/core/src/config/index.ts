@@ -56,3 +56,11 @@ export {
   type MergeResult,
   type ResolvedAgentBlock,
 } from './effective-config.js';
+export { ADL_VARIABLES, interpolate, type AdlVariableName } from './interpolate.js';
+export {
+  CONTEXT_FILE_CASCADE,
+  pickFirstPresent,
+  resolveContextFiles,
+  type ContextCascadeFile,
+  type ContextFilesConfig,
+} from './context-cascade.js';

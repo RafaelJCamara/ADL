@@ -320,12 +320,25 @@ export type OnOverflow = z.infer<typeof OnOverflowSchema>;
  * `'error'` an available option — rather than always truncating — matters:
  * silently truncating an oversized context file and proceeding is exactly the
  * quiet degradation this project is designed against.
+ *
+ * `files` deliberately carries **no default value** — SPEC-05's four-file
+ * context cascade (`AGENTS.md` → `CLAUDE.md` →
+ * `.github/copilot-instructions.md` → `README.md`, plan 01-08's
+ * `context-cascade.ts`) is itself the fallback for "nothing declared", and a
+ * schema-level default of `['README.md']` would make an undeclared
+ * `context.files` indistinguishable from one explicitly set to
+ * `['README.md']` — silently defeating the cascade before 01-08 ever sees
+ * the value. `resolveContextFiles` applies the cascade exactly when this
+ * field is `undefined`.
  */
 export const ContextConfigSchema = z.strictObject({
   files: z
     .array(RepoRelativePathSchema)
-    .default(['README.md'])
-    .describe('Repo-relative paths fed into every agent prompt. Default: ["README.md"].'),
+    .optional()
+    .describe(
+      'Repo-relative paths fed into every agent prompt. No default here: when absent, ' +
+        "resolveContextFiles (01-08) falls back through SPEC-05's four-file cascade.",
+    ),
   max_bytes: z
     .int()
     .positive()
@@ -502,12 +515,12 @@ export const AdlYmlSchema = z
         'never a shell string. No default: every field is required.',
     ),
     context: ContextConfigSchema.default({
-      files: ['README.md'],
       max_bytes: 200_000,
       on_overflow: 'truncate',
     }).describe(
       'Which repo files feed the agent prompts, and the overflow policy if they exceed ' +
-        'max_bytes. Default: { files: ["README.md"], max_bytes: 200000, on_overflow: "truncate" }.',
+        'max_bytes. Default: { max_bytes: 200000, on_overflow: "truncate" } — files is left ' +
+        "undeclared so 01-08's context cascade applies.",
     ),
     pipeline: z
       .array(PipelineEntrySchema)
