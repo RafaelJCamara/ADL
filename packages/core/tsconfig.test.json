@@ -1,0 +1,22 @@
+{
+  // The program the *type tests* are checked in.
+  //
+  // `tsconfig.json` deliberately includes only `src/**/*.ts`: it is the build
+  // program, it emits to `dist/`, and pulling `test/` into it would ship the
+  // suite to consumers. But `test/stage/type-boundary.test-d.ts` asserts a
+  // compile-time property (D-12: `StageError` and `Verdict` are mutually
+  // non-assignable), and an assertion that is never compiled asserts nothing.
+  //
+  // So the type tests get their own non-emitting program, which Vitest's
+  // typechecker runs — see `test.typecheck` in `vitest.config.ts`. `composite`
+  // is off because a composite project may not disable emit.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
