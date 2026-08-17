@@ -8,7 +8,12 @@
  */
 
 export { parseYamlDocument } from './yaml-parse.js';
-export { DurationSchema, MAX_DURATION_MS, parseDuration, type Duration } from './duration.js';
+export {
+  DurationSchema,
+  MAX_DURATION_MS,
+  parseDuration,
+  type Duration,
+} from './duration.js';
 export {
   isRepoRelativePath,
   RepoRelativePathSchema,
@@ -20,6 +25,7 @@ export {
   AgentsConfigSchema,
   CommandSpecSchema,
   ContextConfigSchema,
+  GROUP_SYNTAX_REJECTION,
   LimitsSchema,
   OnOverflowSchema,
   OnSendBackSchema,
@@ -38,3 +44,43 @@ export {
   type ReadyProbe,
   type StartCommandSpec,
 } from './adl-yml.js';
+export {
+  AGENT_ROLES,
+  DAEMON_ONLY_FIELDS,
+  DEFAULT_CONFIG,
+  DaemonConfigSchema,
+  EffectiveConfigSchema,
+  mergeConfig,
+  type AgentRole,
+  type ClampedField,
+  type DaemonAgentBlock,
+  type DaemonConfig,
+  type DefaultConfig,
+  type DiscardedField,
+  type EffectiveConfig,
+  type MergeReport,
+  type MergeResult,
+  type ResolvedAgentBlock,
+} from './effective-config.js';
+export {
+  ADL_VARIABLES,
+  interpolate,
+  type AdlVariableName,
+} from './interpolate.js';
+export {
+  CONTEXT_FILE_CASCADE,
+  pickFirstPresent,
+  resolveContextFiles,
+  type ContextCascadeFile,
+  type ContextFilesConfig,
+} from './context-cascade.js';
+export {
+  BUILT_IN_STAGE_IDS,
+  HarnessResolutionError,
+  resolvePipeline,
+  type BuiltInStageId,
+  type HarnessRegistry,
+  type HarnessSource,
+  type PipelineEntryInput,
+  type ResolvedStage,
+} from './pipeline.js';

@@ -8,9 +8,11 @@ import { CriterionRefSchema } from './criterion-ref.js';
 export const WaiverTargetSchema = z
   .union([
     CriterionRefSchema,
-    z.strictObject({ kind: z.literal('stage'), stageId: z.string().min(1) }).meta({
-      id: 'WaiverTargetStage',
-    }),
+    z
+      .strictObject({ kind: z.literal('stage'), stageId: z.string().min(1) })
+      .meta({
+        id: 'WaiverTargetStage',
+      }),
   ])
   .meta({
     id: 'WaiverTarget',
@@ -42,7 +44,8 @@ export const WaiverSchema = z
   })
   .meta({
     id: 'Waiver',
-    description: 'A human-granted, recorded acceptance that a gate was not satisfied',
+    description:
+      'A human-granted, recorded acceptance that a gate was not satisfied',
   });
 
 export type Waiver = z.infer<typeof WaiverSchema>;

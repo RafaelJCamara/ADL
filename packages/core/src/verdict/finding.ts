@@ -6,10 +6,12 @@ import { CriterionRefSchema } from './criterion-ref.js';
  * How badly a finding blocks. `blocker` and `major` are what a `send_back`
  * is made of; `minor` and `nit` travel on `warn` verdicts too.
  */
-export const SeveritySchema = z.enum(['blocker', 'major', 'minor', 'nit']).meta({
-  id: 'Severity',
-  description: 'How badly a finding blocks',
-});
+export const SeveritySchema = z
+  .enum(['blocker', 'major', 'minor', 'nit'])
+  .meta({
+    id: 'Severity',
+    description: 'How badly a finding blocks',
+  });
 
 export type Severity = z.infer<typeof SeveritySchema>;
 
@@ -60,7 +62,8 @@ export const FindingSchema = z
   })
   .meta({
     id: 'Finding',
-    description: 'One thing a gate found wrong, always tied to a criterion or a global category',
+    description:
+      'One thing a gate found wrong, always tied to a criterion or a global category',
   });
 
 export type Finding = z.infer<typeof FindingSchema>;
@@ -120,7 +123,9 @@ export function normaliseTitle(title: string): string {
 export function fingerprintFinding(input: FingerprintInput): string {
   const path = input.location?.path ?? '';
   const NUL = '\u0000';
-  return sha256Hex([input.stageId, normaliseTitle(input.title), path].join(NUL));
+  return sha256Hex(
+    [input.stageId, normaliseTitle(input.title), path].join(NUL),
+  );
 }
 
 const SEVERITY_ORDER: Readonly<Record<Severity, number>> = Object.freeze({
@@ -145,6 +150,10 @@ export function sortFindings(findings: readonly Finding[]): Finding[] {
   return [...findings].sort((a, b) => {
     const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
     if (bySeverity !== 0) return bySeverity;
-    return a.fingerprint < b.fingerprint ? -1 : a.fingerprint > b.fingerprint ? 1 : 0;
+    return a.fingerprint < b.fingerprint
+      ? -1
+      : a.fingerprint > b.fingerprint
+        ? 1
+        : 0;
   });
 }

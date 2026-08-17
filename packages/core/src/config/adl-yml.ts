@@ -176,7 +176,9 @@ export type CommandSpec = z.infer<typeof CommandSpecSchema>;
  * rejects `${ADL_PORT}` as an invalid host, which is exactly the value every
  * realistic fixture needs to write.
  */
-const InterpolatableUrlSchema = z.string().regex(/^https?:\/\/[^\s\0"'<>\\^`|]+$/);
+const InterpolatableUrlSchema = z
+  .string()
+  .regex(/^https?:\/\/[^\s\0"'<>\\^`|]+$/);
 
 /** HTTP status codes are 100–599. */
 const HttpStatusSchema = z.int().min(100).max(599);
@@ -201,14 +203,21 @@ const HttpReadyProbeSchema = z
 const TcpReadyProbeSchema = z
   .strictObject({
     kind: z.literal('tcp'),
-    port: TcpPortSchema.describe('The port to poll until it accepts a connection. Bounded 1–65535.'),
+    port: TcpPortSchema.describe(
+      'The port to poll until it accepts a connection. Bounded 1–65535.',
+    ),
   })
   .meta({ id: 'TcpReadyProbe' });
 
 const LogReadyProbeSchema = z
   .strictObject({
     kind: z.literal('log'),
-    pattern: z.string().min(1).describe('A literal substring to wait for in the started process\'s output.'),
+    pattern: z
+      .string()
+      .min(1)
+      .describe(
+        "A literal substring to wait for in the started process's output.",
+      ),
   })
   .meta({ id: 'LogReadyProbe' });
 
@@ -254,7 +263,7 @@ export type ReadyProbe = z.infer<typeof ReadyProbeSchema>;
  * stages land. `v2` unlocks it once `mutates` and `Workspace.snapshot()`
  * exist (ARCHITECTURE.md §3).
  */
-const GROUP_SYNTAX_REJECTION =
+export const GROUP_SYNTAX_REJECTION =
   'Parallel stage groups ("group:") are a recognised future capability and are not yet supported. ' +
   'List each stage separately until v2 parallel pipelines ship.';
 
@@ -282,14 +291,16 @@ export const StartCommandSpecSchema = CommandSpecSchema.extend({
     ctx.addIssue({
       code: 'custom',
       path: ['ready_timeout'],
-      message: 'ready and ready_timeout are required together: ready_timeout is missing.',
+      message:
+        'ready and ready_timeout are required together: ready_timeout is missing.',
     });
   }
   if (value.ready === undefined && value.ready_timeout !== undefined) {
     ctx.addIssue({
       code: 'custom',
       path: ['ready'],
-      message: 'ready and ready_timeout are required together: ready is missing.',
+      message:
+        'ready and ready_timeout are required together: ready is missing.',
     });
   }
 });
@@ -320,12 +331,25 @@ export type OnOverflow = z.infer<typeof OnOverflowSchema>;
  * `'error'` an available option — rather than always truncating — matters:
  * silently truncating an oversized context file and proceeding is exactly the
  * quiet degradation this project is designed against.
+ *
+ * `files` deliberately carries **no default value** — SPEC-05's four-file
+ * context cascade (`AGENTS.md` → `CLAUDE.md` →
+ * `.github/copilot-instructions.md` → `README.md`, plan 01-08's
+ * `context-cascade.ts`) is itself the fallback for "nothing declared", and a
+ * schema-level default of `['README.md']` would make an undeclared
+ * `context.files` indistinguishable from one explicitly set to
+ * `['README.md']` — silently defeating the cascade before 01-08 ever sees
+ * the value. `resolveContextFiles` applies the cascade exactly when this
+ * field is `undefined`.
  */
 export const ContextConfigSchema = z.strictObject({
   files: z
     .array(RepoRelativePathSchema)
-    .default(['README.md'])
-    .describe('Repo-relative paths fed into every agent prompt. Default: ["README.md"].'),
+    .optional()
+    .describe(
+      'Repo-relative paths fed into every agent prompt. No default here: when absent, ' +
+        "resolveContextFiles (01-08) falls back through SPEC-05's four-file cascade.",
+    ),
   max_bytes: z
     .int()
     .positive()
@@ -359,19 +383,32 @@ export type OnSendBack = z.infer<typeof OnSendBackSchema>;
  * registry (built-in id, then npm package, then repo-relative path) — that
  * resolution is 01-08's job, this schema validates shape only, so unknown ids
  * fail at config validation rather than mid-run.
+ *
+ * `harness` deliberately uses {@link RepoRelativePathSchema}, not
+ * {@link StageIdSchema}: D-23's resolution order includes an npm package name
+ * (which may carry `@scope/`, `/`, and digits `StageIdSchema` rejects) and a
+ * repo-relative path (which needs the traversal/absolute/NUL guard, not a
+ * bare-identifier pattern). `RepoRelativePathSchema` is broad enough to admit
+ * all three candidate shapes — a bare built-in id, a package name, or a real
+ * path — while still rejecting the traversal and absolute-path shapes that
+ * would be dangerous if this value is ever resolved as a filesystem path
+ * (01-08's `pipeline.ts`).
  */
 const HarnessEntrySchema = z.strictObject({
-  harness: StageIdSchema.describe(
+  harness: RepoRelativePathSchema.describe(
     'The harness id, resolved (01-08) as a built-in id, then an npm package, then a ' +
-      'repo-relative path. Unrecognised ids fail at config validation, not mid-run.',
+      'repo-relative path (guarded against traversal). Unrecognised ids fail at config ' +
+      'validation, not mid-run.',
   ),
   with: z
     .record(z.string(), z.unknown())
     .optional()
-    .describe('Harness-specific configuration, passed through opaquely. Default: none.'),
+    .describe(
+      'Harness-specific configuration, passed through opaquely. Default: none.',
+    ),
   on_send_back: OnSendBackSchema.optional().describe(
     'Whether a send_back from this stage continues the pipeline or stops it (Phase 7). ' +
-      'Default: derived from the stage\'s cost class at runtime, not by this schema.',
+      "Default: derived from the stage's cost class at runtime, not by this schema.",
   ),
 });
 
@@ -394,7 +431,11 @@ const GroupEntrySchema = z
  * `group:`. Position in the array is the stage's position in the pipeline —
  * this is EXEC-07's entire mechanism (ARCHITECTURE.md §3).
  */
-export const PipelineEntrySchema = z.union([StageIdSchema, HarnessEntrySchema, GroupEntrySchema]);
+export const PipelineEntrySchema = z.union([
+  StageIdSchema,
+  HarnessEntrySchema,
+  GroupEntrySchema,
+]);
 
 export type PipelineEntry = z.infer<typeof PipelineEntrySchema>;
 
@@ -466,7 +507,10 @@ const AgentBlockSchema = z.strictObject({
       'The agent backend id (e.g. "claude-code"). No default. Shape-only: daemon-only ' +
         'per D-22, and 01-08 clamps or rejects a repo-supplied value.',
     ),
-  model: z.string().min(1).describe('The model alias to run this role with. No default.'),
+  model: z
+    .string()
+    .min(1)
+    .describe('The model alias to run this role with. No default.'),
   prompt_template: RepoRelativePathSchema.optional().describe(
     'A repo-relative override of the default prompt template for this role. Default: none.',
   ),
@@ -502,12 +546,12 @@ export const AdlYmlSchema = z
         'never a shell string. No default: every field is required.',
     ),
     context: ContextConfigSchema.default({
-      files: ['README.md'],
       max_bytes: 200_000,
       on_overflow: 'truncate',
     }).describe(
       'Which repo files feed the agent prompts, and the overflow policy if they exceed ' +
-        'max_bytes. Default: { files: ["README.md"], max_bytes: 200000, on_overflow: "truncate" }.',
+        'max_bytes. Default: { max_bytes: 200000, on_overflow: "truncate" } — files is left ' +
+        "undeclared so 01-08's context cascade applies.",
     ),
     pipeline: z
       .array(PipelineEntrySchema)
@@ -522,9 +566,9 @@ export const AdlYmlSchema = z
       budget_usd: 15,
       repeat_finding_threshold: 2,
     }).describe(
-      'Ceilings on this loop\'s cost, clamped down — never up — by the daemon\'s own ' +
+      "Ceilings on this loop's cost, clamped down — never up — by the daemon's own " +
         'ceiling (D-22). Default: { max_rounds: 6, budget_usd: 15, repeat_finding_threshold: 2 }; ' +
-        'see LimitsSchema for each field\'s individual documented ceiling.',
+        "see LimitsSchema for each field's individual documented ceiling.",
     ),
     agents: AgentsConfigSchema.default({}).describe(
       'Per-role model selection, shape-only — backend and credential selection is ' +

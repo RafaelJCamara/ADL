@@ -51,11 +51,15 @@ interface ColumnInfo {
   pk: number;
 }
 
-async function columnInfo(db: Kysely<Database>, table: string): Promise<ColumnInfo[]> {
+async function columnInfo(
+  db: Kysely<Database>,
+  table: string,
+): Promise<ColumnInfo[]> {
   // `pragma table_info` does not accept a bound parameter, so the table name is
   // interpolated with `sql.raw`. Every call site here passes a literal from
   // this file — no external input reaches it.
-  const result = await sql<ColumnInfo>`pragma table_info(${sql.raw(table)})`.execute(db);
+  const result =
+    await sql<ColumnInfo>`pragma table_info(${sql.raw(table)})`.execute(db);
   return result.rows;
 }
 
@@ -141,12 +145,17 @@ describe('the full migration chain against a real temp SQLite file', () => {
     await withTempDb(async ({ db }) => {
       const result = await migrateToLatest(db, MIGRATIONS_DIR);
       expect(result.error).toBeUndefined();
-      expect(result.results.map((r) => r.migrationName)).toEqual(MIGRATION_NAMES);
+      expect(result.results.map((r) => r.migrationName)).toEqual(
+        MIGRATION_NAMES,
+      );
       expect(result.results.every((r) => r.status === 'Success')).toBe(true);
       expect(MIGRATION_NAMES).toContain('0002_contracts');
 
       const names = await tableNames(db);
-      const expected = [...Object.keys(TABLE_COLUMNS), ...BOOKKEEPING_TABLES].sort();
+      const expected = [
+        ...Object.keys(TABLE_COLUMNS),
+        ...BOOKKEEPING_TABLES,
+      ].sort();
       expect([...names].sort()).toEqual(expected);
     });
   });
@@ -213,8 +222,13 @@ describe('usage_events records enough to reconstruct cost', () => {
         // A default of zero destroys the distinction, at write time and
         // permanently, between "the backend reported zero cache reads" and
         // "the backend does not report cache reads at all" (Pitfall 6).
-        expect(info?.notnull, `usage_events.${column} must be nullable`).toBe(0);
-        expect(info?.dflt_value, `usage_events.${column} must have no default`).toBeNull();
+        expect(info?.notnull, `usage_events.${column} must be nullable`).toBe(
+          0,
+        );
+        expect(
+          info?.dflt_value,
+          `usage_events.${column} must have no default`,
+        ).toBeNull();
       }
     });
   });
@@ -244,7 +258,10 @@ describe('usage_events records enough to reconstruct cost', () => {
         })
         .execute();
 
-      const row = await db.selectFrom('usage_events').selectAll().executeTakeFirstOrThrow();
+      const row = await db
+        .selectFrom('usage_events')
+        .selectAll()
+        .executeTakeFirstOrThrow();
       expect(row.cache_read_input_tokens).toBeNull();
       expect(row.cost_usd).toBeNull();
     });
@@ -358,7 +375,11 @@ describe('verdicts are rows, not a JSON blob on the attempt', () => {
       // every stored verdict. That is the whole reason `verdicts` is a table.
       const covered = await db
         .selectFrom('verdict_checked_criteria')
-        .innerJoin('verdicts', 'verdicts.id', 'verdict_checked_criteria.verdict_id')
+        .innerJoin(
+          'verdicts',
+          'verdicts.id',
+          'verdict_checked_criteria.verdict_id',
+        )
         .select(['verdict_checked_criteria.criterion_id'])
         .where('verdicts.outcome', '=', 'pass')
         .orderBy('verdict_checked_criteria.position')
@@ -433,7 +454,10 @@ describe('findings and waivers', () => {
         })
         .execute();
 
-      const finding = await db.selectFrom('findings').selectAll().executeTakeFirstOrThrow();
+      const finding = await db
+        .selectFrom('findings')
+        .selectAll()
+        .executeTakeFirstOrThrow();
       expect(finding.fingerprint).toHaveLength(64);
       expect(finding.criterion_id).toBe('AC-3');
       expect(finding.path).toBe('src/auth/login.ts');
@@ -460,10 +484,132 @@ describe('findings and waivers', () => {
         })
         .execute();
 
-      const waiver = await db.selectFrom('waivers').selectAll().executeTakeFirstOrThrow();
+      const waiver = await db
+        .selectFrom('waivers')
+        .selectAll()
+        .executeTakeFirstOrThrow();
       expect(waiver.target_stage_id).toBe('security');
       expect(waiver.actor).toBe('maintainer@example.com');
       expect(waiver.at).toBe(at);
+    });
+  });
+});
+
+/**
+ * `0004_feature_state_constraint.ts` (01-08) — the CHECK constraint closing
+ * the gap `packages/core/test/state/exec-07.test.ts` checks textually:
+ * `0001_initial.ts` declared `features.state text not null` with no
+ * enumeration of its valid values. This proves the constraint actually
+ * enforces the vocabulary at the database level, not merely that the
+ * migration ran without error.
+ */
+describe('features.state is constrained to FEATURE_STATES (0004)', () => {
+  it('accepts every documented state', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const at = '2026-08-17T12:00:00.000Z';
+      const repoId = ulid();
+
+      await db
+        .insertInto('repos')
+        .values({
+          id: repoId,
+          remote_url: 'https://github.com/example/target-repo.git',
+          default_branch: 'main',
+          forge: 'github',
+          features_dir: 'features',
+          created_at: at,
+          updated_at: at,
+        })
+        .execute();
+
+      const states = [
+        'discovered',
+        'queued',
+        'leased',
+        'developing',
+        'gating',
+        'publishing',
+        'pr_open',
+        'merged',
+        'escalated',
+        'abandoned',
+        'paused',
+      ];
+
+      for (const state of states) {
+        await db
+          .insertInto('features')
+          .values({
+            id: ulid(),
+            repo_id: repoId,
+            path: `features/${state}`,
+            state,
+            state_version: 1,
+            round: 0,
+            current_stage_index: 0,
+            spec_hash: 'a'.repeat(64),
+            effective_config_json: null,
+            workspace_handle: null,
+            lease_owner: null,
+            lease_token: null,
+            lease_expires_at: null,
+            heartbeat_at: null,
+            crash_count: 0,
+            created_at: at,
+            updated_at: at,
+          })
+          .execute();
+      }
+
+      const rows = await db.selectFrom('features').select(['state']).execute();
+      expect(rows.map((r) => r.state).sort()).toEqual([...states].sort());
+    });
+  });
+
+  it('rejects a state outside the documented vocabulary', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const at = '2026-08-17T12:00:00.000Z';
+      const repoId = ulid();
+
+      await db
+        .insertInto('repos')
+        .values({
+          id: repoId,
+          remote_url: 'https://github.com/example/target-repo.git',
+          default_branch: 'main',
+          forge: 'github',
+          features_dir: 'features',
+          created_at: at,
+          updated_at: at,
+        })
+        .execute();
+
+      await expect(
+        db
+          .insertInto('features')
+          .values({
+            id: ulid(),
+            repo_id: repoId,
+            path: 'features/bogus',
+            state: 'reticulating-splines' as 'gating',
+            state_version: 1,
+            round: 0,
+            current_stage_index: 0,
+            spec_hash: 'a'.repeat(64),
+            effective_config_json: null,
+            workspace_handle: null,
+            lease_owner: null,
+            lease_token: null,
+            lease_expires_at: null,
+            heartbeat_at: null,
+            crash_count: 0,
+            created_at: at,
+            updated_at: at,
+          })
+          .execute(),
+      ).rejects.toThrow(/CHECK constraint failed/i);
     });
   });
 });
