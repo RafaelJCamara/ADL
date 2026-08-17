@@ -38,3 +38,21 @@ export {
   type ReadyProbe,
   type StartCommandSpec,
 } from './adl-yml.js';
+export {
+  AGENT_ROLES,
+  DAEMON_ONLY_FIELDS,
+  DEFAULT_CONFIG,
+  DaemonConfigSchema,
+  EffectiveConfigSchema,
+  mergeConfig,
+  type AgentRole,
+  type ClampedField,
+  type DaemonAgentBlock,
+  type DaemonConfig,
+  type DefaultConfig,
+  type DiscardedField,
+  type EffectiveConfig,
+  type MergeReport,
+  type MergeResult,
+  type ResolvedAgentBlock,
+} from './effective-config.js';
