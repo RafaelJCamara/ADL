@@ -1,0 +1,20 @@
+# Build output — regenerated, never hand-edited.
+dist
+node_modules
+coverage
+
+# Resolution output. Reformatting it would produce an enormous diff and pnpm
+# rewrites it anyway.
+pnpm-lock.yaml
+
+# Emitted JSON Schema (D-26). It is committed and diffed in CI precisely so a
+# change to the published contract is visible; reformatting it here would make
+# that diff about whitespace instead.
+packages/core/schema/
+
+# Planning and agent-tooling artifacts. Prose owned by the GSD workflow, not
+# project source — Prettier would reflow tables and wrap lines that are laid
+# out deliberately.
+.planning/
+.claude/
+.gsd/

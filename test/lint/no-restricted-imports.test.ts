@@ -63,9 +63,23 @@ const FIXTURES: readonly FixtureCase[] = [
   },
 ];
 
+/**
+ * `ignore: false` is what lets these runs see the fixtures at all.
+ *
+ * The fixtures are globally ignored by `eslint.config.js` so that `pnpm lint`
+ * — and therefore CI — is not permanently red from files that exist to be
+ * reported. Bypassing the ignore here is the only difference between this run
+ * and CI's: the config file, and so the rule objects, are identical.
+ */
+const SEE_IGNORED_FIXTURES = { ignore: false } as const;
+
 /** ESLint loading the repository's real flat config, exactly as CI does. */
 function realConfigLinter(): ESLint {
-  return new ESLint({ cwd: REPO_ROOT, overrideConfigFile: CONFIG_FILE });
+  return new ESLint({
+    cwd: REPO_ROOT,
+    overrideConfigFile: CONFIG_FILE,
+    ...SEE_IGNORED_FIXTURES,
+  });
 }
 
 /** The negative control: everything except the architecture rule set. */
@@ -74,6 +88,7 @@ function withoutArchitectureRules(): ESLint {
     cwd: REPO_ROOT,
     overrideConfigFile: true,
     baseConfig: baseConfigs,
+    ...SEE_IGNORED_FIXTURES,
   });
 }
 
@@ -127,9 +142,10 @@ describe('architecture rules fail on deliberate violations', () => {
         messages: result.messages.map((m) => `${m.ruleId}: ${m.message}`),
       }));
 
-    expect(offenders, 'fixtures must be clean apart from the architecture rules').toEqual(
-      [],
-    );
+    expect(
+      offenders,
+      'fixtures must be clean apart from the architecture rules',
+    ).toEqual([]);
   });
 });
 
@@ -143,7 +159,10 @@ describe('architecture rule severity', () => {
 
     for (const ruleId of ARCHITECTURE_RULE_IDS) {
       const entry = resolved.rules?.[ruleId];
-      expect(entry, `${ruleId} must be registered for core verdict sources`).toBeDefined();
+      expect(
+        entry,
+        `${ruleId} must be registered for core verdict sources`,
+      ).toBeDefined();
       // ESLint normalises severity to 0 | 1 | 2 in the resolved config.
       expect(
         Array.isArray(entry) ? entry[0] : entry,
@@ -164,7 +183,10 @@ describe('architecture rule severity', () => {
         }
       }
     }
-    expect(severities, 'architecture rules must ship at error severity').toEqual([]);
+    expect(
+      severities,
+      'architecture rules must ship at error severity',
+    ).toEqual([]);
   });
 
   it('exercises every rule id the architecture config registers', () => {
