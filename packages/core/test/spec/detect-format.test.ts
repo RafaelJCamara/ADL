@@ -6,7 +6,10 @@ import {
   GHERKIN_EXTENSION,
   SPEC_ENTRY_FILENAME,
 } from '../../src/spec/detect-format.js';
-import { assignCriterionIds, criterionTextHash } from '../../src/spec/criterion-ids.js';
+import {
+  assignCriterionIds,
+  criterionTextHash,
+} from '../../src/spec/criterion-ids.js';
 import type { CriterionBody } from '../../src/spec/criterion-ids.js';
 
 /**
@@ -23,7 +26,11 @@ import type { CriterionBody } from '../../src/spec/criterion-ids.js';
 function statement(raw: string, text: string): CriterionBody {
   const start = raw.indexOf(text);
   if (start < 0) throw new Error(`test fixture bug: ${text} not in raw`);
-  return { kind: 'statement', text, source: { start, end: start + text.length } };
+  return {
+    kind: 'statement',
+    text,
+    source: { start, end: start + text.length },
+  };
 }
 
 describe('detectFormat', () => {
@@ -56,7 +63,9 @@ describe('detectFormat', () => {
   });
 
   it('refuses a listing with both entry-file kinds, naming both', () => {
-    expect(() => detectFormat(['spec.md', 'checkout.feature'])).toThrow(LoadError);
+    expect(() => detectFormat(['spec.md', 'checkout.feature'])).toThrow(
+      LoadError,
+    );
     try {
       detectFormat(['spec.md', 'checkout.feature']);
     } catch (error) {
@@ -94,7 +103,9 @@ describe('detectFormat', () => {
   it('does not mistake a file merely containing the entry name for the entry file', () => {
     // `not-spec.md` and `spec.md.bak` are context files, not entry files. A
     // substring match here would silently pick the wrong document.
-    expect(() => detectFormat(['not-spec.md', 'spec.md.bak'])).toThrow(LoadError);
+    expect(() => detectFormat(['not-spec.md', 'spec.md.bak'])).toThrow(
+      LoadError,
+    );
   });
 
   it('reads only the names it was given — the directory listing is the caller job', () => {
@@ -109,7 +120,11 @@ describe('assignCriterionIds', () => {
 
   it('numbers criteria AC-1.. in the order given', () => {
     const assigned = assignCriterionIds(
-      [statement(raw, 'alpha'), statement(raw, 'bravo'), statement(raw, 'charlie')],
+      [
+        statement(raw, 'alpha'),
+        statement(raw, 'bravo'),
+        statement(raw, 'charlie'),
+      ],
       'spec.md',
     );
     expect(assigned.map((c) => c.id)).toEqual(['AC-1', 'AC-2', 'AC-3']);
@@ -117,9 +132,9 @@ describe('assignCriterionIds', () => {
   });
 
   it('yields exactly AC-1 for a single-criterion spec', () => {
-    expect(assignCriterionIds([statement(raw, 'alpha')], 'spec.md').map((c) => c.id)).toEqual([
-      'AC-1',
-    ]);
+    expect(
+      assignCriterionIds([statement(raw, 'alpha')], 'spec.md').map((c) => c.id),
+    ).toEqual(['AC-1']);
   });
 
   it('attaches the textHash of each criterion body', () => {
@@ -160,7 +175,9 @@ describe('assignCriterionIds', () => {
     expect(criterion?.kind).toBe('scenario');
     if (criterion?.kind === 'scenario') {
       expect(criterion.name).toBe('totals');
-      expect(criterion.steps).toEqual([{ keyword: 'Given', text: '<n> items' }]);
+      expect(criterion.steps).toEqual([
+        { keyword: 'Given', text: '<n> items' },
+      ]);
       expect(criterion.examples?.rows).toHaveLength(2);
     }
   });
@@ -168,12 +185,16 @@ describe('assignCriterionIds', () => {
 
 describe('criterionTextHash', () => {
   it('is stable across calls over the same string', () => {
-    expect(criterionTextHash('a criterion')).toBe(criterionTextHash('a criterion'));
+    expect(criterionTextHash('a criterion')).toBe(
+      criterionTextHash('a criterion'),
+    );
     expect(criterionTextHash('a criterion')).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('distinguishes strings differing only by a trailing space — no whitespace collapsing', () => {
-    expect(criterionTextHash('a criterion')).not.toBe(criterionTextHash('a criterion '));
+    expect(criterionTextHash('a criterion')).not.toBe(
+      criterionTextHash('a criterion '),
+    );
   });
 
   it('distinguishes a combining-character variant from its precomposed form — no NFKC', () => {
@@ -183,6 +204,8 @@ describe('criterionTextHash', () => {
     const precomposed = 'café';
     const combining = 'café';
     expect(precomposed.normalize('NFKC')).toBe(combining.normalize('NFKC'));
-    expect(criterionTextHash(precomposed)).not.toBe(criterionTextHash(combining));
+    expect(criterionTextHash(precomposed)).not.toBe(
+      criterionTextHash(combining),
+    );
   });
 });

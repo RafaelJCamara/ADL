@@ -28,7 +28,12 @@ import * as z from 'zod';
 
 import type { CriterionRef, GlobalCategory } from '../verdict/criterion-ref.js';
 import type { Finding } from '../verdict/finding.js';
-import { OUTCOMES, VerdictSchema, type PassVerdict, type Verdict } from '../verdict/verdict.js';
+import {
+  OUTCOMES,
+  VerdictSchema,
+  type PassVerdict,
+  type Verdict,
+} from '../verdict/verdict.js';
 
 /**
  * The five ways a stage can break without having judged anything (D-12).
@@ -84,7 +89,8 @@ export const StageErrorSchema = z
   })
   .meta({
     id: 'StageError',
-    description: 'A stage that broke rather than judged — outside the Verdict union entirely',
+    description:
+      'A stage that broke rather than judged — outside the Verdict union entirely',
   });
 
 export type StageError = z.infer<typeof StageErrorSchema>;
@@ -143,13 +149,26 @@ export function isTransientStageErrorKind(kind: StageErrorKind): boolean {
   return TRANSIENT_KINDS.has(kind);
 }
 
-const STAGE_ERROR_POLICIES: Readonly<Record<StageErrorKind, StageErrorPolicy>> = Object.freeze({
-  provider_error: { retryable: true, consumesRound: false, consumesBudget: false },
-  timeout: { retryable: true, consumesRound: false, consumesBudget: false },
-  unparseable: { retryable: false, consumesRound: false, consumesBudget: true },
-  binary_missing: { retryable: false, consumesRound: false, consumesBudget: false },
-  auth: { retryable: false, consumesRound: false, consumesBudget: false },
-});
+const STAGE_ERROR_POLICIES: Readonly<Record<StageErrorKind, StageErrorPolicy>> =
+  Object.freeze({
+    provider_error: {
+      retryable: true,
+      consumesRound: false,
+      consumesBudget: false,
+    },
+    timeout: { retryable: true, consumesRound: false, consumesBudget: false },
+    unparseable: {
+      retryable: false,
+      consumesRound: false,
+      consumesBudget: true,
+    },
+    binary_missing: {
+      retryable: false,
+      consumesRound: false,
+      consumesBudget: false,
+    },
+    auth: { retryable: false, consumesRound: false, consumesBudget: false },
+  });
 
 /**
  * How the loop must treat a failure of this kind.
@@ -289,11 +308,23 @@ export interface RepairReprompt {
 
 export type ParseStageOutputResult =
   /** Parsed. `repairAttempts` is 0 on a first-attempt success, 1 after a repair. */
-  | { readonly kind: 'parsed'; readonly verdict: Verdict; readonly repairAttempts: number }
+  | {
+      readonly kind: 'parsed';
+      readonly verdict: Verdict;
+      readonly repairAttempts: number;
+    }
   /** One repair reprompt is warranted. There will not be a second. */
-  | { readonly kind: 'repair'; readonly repairAttempts: 1; readonly reprompt: RepairReprompt }
+  | {
+      readonly kind: 'repair';
+      readonly repairAttempts: 1;
+      readonly reprompt: RepairReprompt;
+    }
   /** The ladder is exhausted. An infrastructure failure, never a verdict. */
-  | { readonly kind: 'failed'; readonly repairAttempts: 1; readonly error: StageError };
+  | {
+      readonly kind: 'failed';
+      readonly repairAttempts: 1;
+      readonly error: StageError;
+    };
 
 /** Fenced code blocks, scanned without a regex so the cost is provably linear. */
 function* fencedBlocks(raw: string): Generator<string> {
@@ -344,10 +375,15 @@ function* jsonCandidates(raw: string): Generator<unknown> {
 }
 
 /** Lift Zod's own list of valid discriminants out of an `invalid_union` issue. */
-function validOutcomesFrom(issues: readonly z.core.$ZodIssue[]): readonly string[] {
+function validOutcomesFrom(
+  issues: readonly z.core.$ZodIssue[],
+): readonly string[] {
   for (const issue of issues) {
     const options = (issue as { options?: unknown }).options;
-    if (Array.isArray(options) && options.every((option) => typeof option === 'string')) {
+    if (
+      Array.isArray(options) &&
+      options.every((option) => typeof option === 'string')
+    ) {
       return options as readonly string[];
     }
   }
@@ -363,7 +399,10 @@ function validOutcomesFrom(issues: readonly z.core.$ZodIssue[]): readonly string
  * mutable state. `attempt >= MAX_REPAIR_ATTEMPTS` can only ever produce `parsed`
  * or `failed` — there is no input that buys a second repair.
  */
-export function parseStageOutput(raw: string, attempt: number): ParseStageOutputResult {
+export function parseStageOutput(
+  raw: string,
+  attempt: number,
+): ParseStageOutputResult {
   let firstFailure: readonly z.core.$ZodIssue[] | undefined;
 
   for (const candidate of jsonCandidates(raw)) {
@@ -434,7 +473,11 @@ export interface UnknownCriterionFlag {
 
 export type CriterionRefReconciliation =
   /** Every cited id is known. Nothing to do, nothing spent. */
-  | { readonly kind: 'ok'; readonly target: CriterionRefTarget; readonly repairAttempts: 0 }
+  | {
+      readonly kind: 'ok';
+      readonly target: CriterionRefTarget;
+      readonly repairAttempts: 0;
+    }
   /** One repair reprompt is warranted, carrying the ids the spec actually has. */
   | {
       readonly kind: 'repair';
@@ -450,7 +493,11 @@ export type CriterionRefReconciliation =
       readonly flag: UnknownCriterionFlag;
     }
   /** A pass citation that stayed unknown. Infrastructure failure, not a verdict. */
-  | { readonly kind: 'failed'; readonly repairAttempts: 1; readonly error: StageError };
+  | {
+      readonly kind: 'failed';
+      readonly repairAttempts: 1;
+      readonly error: StageError;
+    };
 
 /** The criterion ids a reference names — none, for a global reference. */
 function citedIds(ref: CriterionRef): readonly string[] {
@@ -490,7 +537,9 @@ export function reconcileCriterionRefs(
   attempt: number,
 ): CriterionRefReconciliation {
   const known = new Set(knownCriterionIds);
-  const unknownIds = [...new Set(citedIdsOf(target).filter((id) => !known.has(id)))];
+  const unknownIds = [
+    ...new Set(citedIdsOf(target).filter((id) => !known.has(id))),
+  ];
 
   if (unknownIds.length === 0) {
     return { kind: 'ok', target, repairAttempts: 0 };
@@ -510,7 +559,10 @@ export function reconcileCriterionRefs(
     return {
       kind: 'demoted',
       repairAttempts: MAX_REPAIR_ATTEMPTS,
-      finding: { ...target.finding, criterionRef: { kind: 'global', category: 'other' } },
+      finding: {
+        ...target.finding,
+        criterionRef: { kind: 'global', category: 'other' },
+      },
       flag: {
         originalCriterionId,
         allUnknownIds: unknownIds,

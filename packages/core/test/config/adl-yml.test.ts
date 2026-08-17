@@ -19,12 +19,16 @@ import { LoadError } from '../../src/errors.js';
  * files is the caller's job (test harness), never the schema's.
  */
 function fixture(name: string): string {
-  const path = fileURLToPath(new URL(`../fixtures/adl-yml/${name}`, import.meta.url));
+  const path = fileURLToPath(
+    new URL(`../fixtures/adl-yml/${name}`, import.meta.url),
+  );
   return readFileSync(path, 'utf8');
 }
 
 /** The module's own source, used to extract and re-validate its worked example. */
-const MODULE_PATH = fileURLToPath(new URL('../../src/config/adl-yml.ts', import.meta.url));
+const MODULE_PATH = fileURLToPath(
+  new URL('../../src/config/adl-yml.ts', import.meta.url),
+);
 const MODULE_SOURCE = readFileSync(MODULE_PATH, 'utf8');
 
 /**
@@ -36,7 +40,8 @@ const MODULE_SOURCE = readFileSync(MODULE_PATH, 'utf8');
  */
 function extractYamlExample(source: string): string {
   const fenceStart = source.indexOf('```yaml');
-  if (fenceStart === -1) throw new Error('no ```yaml fence found in module header');
+  if (fenceStart === -1)
+    throw new Error('no ```yaml fence found in module header');
   const bodyStart = source.indexOf('\n', fenceStart) + 1;
   const fenceEnd = source.indexOf('```', bodyStart);
   if (fenceEnd === -1) throw new Error('```yaml fence is not closed');
@@ -51,7 +56,9 @@ function extractYamlExample(source: string): string {
 function parseValid(name: string) {
   const result = parseAdlYml(fixture(name));
   if (result instanceof LoadError) {
-    throw new Error(`expected ${name} to validate, got LoadError: ${result.message}`);
+    throw new Error(
+      `expected ${name} to validate, got LoadError: ${result.message}`,
+    );
   }
   return result;
 }
@@ -81,7 +88,9 @@ describe('parseAdlYml: the four valid fixtures', () => {
 describe('parseAdlYml: the three invalid fixtures', () => {
   it('fails the shell-string fixture with an issue path naming the offending command', () => {
     const error = parseInvalid('invalid-shell-string.yml');
-    expect(error.message).toMatch(/commands.*build.*argv|argv.*commands.*build/i);
+    expect(error.message).toMatch(
+      /commands.*build.*argv|argv.*commands.*build/i,
+    );
   });
 
   it('fails the unknown-key fixture naming the offending key', () => {
@@ -98,7 +107,10 @@ describe('parseAdlYml: the three invalid fixtures', () => {
 
 describe('parseAdlYml: version', () => {
   it('fails when version is 2', () => {
-    const source = fixture('valid-http-ready.yml').replace('version: 1', 'version: 2');
+    const source = fixture('valid-http-ready.yml').replace(
+      'version: 1',
+      'version: 2',
+    );
     expect(parseAdlYml(source)).toBeInstanceOf(LoadError);
   });
 
@@ -123,30 +135,38 @@ describe('CommandSpecSchema: argv', () => {
     expect(CommandSpecSchema.safeParse({ argv: [] }).success).toBe(false);
   });
 
-  it("rejects an argv array whose first element is an empty string", () => {
-    expect(CommandSpecSchema.safeParse({ argv: ['', 'ci'] }).success).toBe(false);
+  it('rejects an argv array whose first element is an empty string', () => {
+    expect(CommandSpecSchema.safeParse({ argv: ['', 'ci'] }).success).toBe(
+      false,
+    );
   });
 
   it('accepts a well-formed argv array', () => {
-    expect(CommandSpecSchema.safeParse({ argv: ['npm', 'ci'] }).success).toBe(true);
+    expect(CommandSpecSchema.safeParse({ argv: ['npm', 'ci'] }).success).toBe(
+      true,
+    );
   });
 
   it('rejects a bare-integer timeout, and accepts a duration-string timeout', () => {
-    expect(CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], timeout: 600 }).success).toBe(
-      false,
-    );
-    expect(CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], timeout: '10m' }).success).toBe(
-      true,
-    );
+    expect(
+      CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], timeout: 600 })
+        .success,
+    ).toBe(false);
+    expect(
+      CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], timeout: '10m' })
+        .success,
+    ).toBe(true);
   });
 
   it('validates cwd through the shared repo-relative path guard', () => {
-    expect(CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], cwd: '../escape' }).success).toBe(
-      false,
-    );
-    expect(CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], cwd: 'packages/api' }).success).toBe(
-      true,
-    );
+    expect(
+      CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], cwd: '../escape' })
+        .success,
+    ).toBe(false);
+    expect(
+      CommandSpecSchema.safeParse({ argv: ['npm', 'ci'], cwd: 'packages/api' })
+        .success,
+    ).toBe(true);
   });
 });
 
@@ -161,37 +181,62 @@ describe('ReadyProbeSchema', () => {
   });
 
   it('validates each of the four probe kinds', () => {
-    expect(ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://x/health' }).success).toBe(
-      true,
-    );
-    expect(ReadyProbeSchema.safeParse({ kind: 'tcp', port: 5432 }).success).toBe(true);
-    expect(ReadyProbeSchema.safeParse({ kind: 'log', pattern: 'ready' }).success).toBe(true);
-    expect(ReadyProbeSchema.safeParse({ kind: 'exec', argv: ['pg_isready'] }).success).toBe(true);
+    expect(
+      ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://x/health' })
+        .success,
+    ).toBe(true);
+    expect(
+      ReadyProbeSchema.safeParse({ kind: 'tcp', port: 5432 }).success,
+    ).toBe(true);
+    expect(
+      ReadyProbeSchema.safeParse({ kind: 'log', pattern: 'ready' }).success,
+    ).toBe(true);
+    expect(
+      ReadyProbeSchema.safeParse({ kind: 'exec', argv: ['pg_isready'] })
+        .success,
+    ).toBe(true);
   });
 
   it('accepts a URL carrying the ADL_PORT interpolation placeholder', () => {
     expect(
-      ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://127.0.0.1:${ADL_PORT}/health' })
-        .success,
+      ReadyProbeSchema.safeParse({
+        kind: 'http',
+        url: 'http://127.0.0.1:${ADL_PORT}/health',
+      }).success,
     ).toBe(true);
   });
 
   it('validates an http probe at its expected-status ceiling and fails one step above', () => {
     expect(
-      ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://x/', expect: 599 }).success,
+      ReadyProbeSchema.safeParse({
+        kind: 'http',
+        url: 'http://x/',
+        expect: 599,
+      }).success,
     ).toBe(true);
     expect(
-      ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://x/', expect: 600 }).success,
+      ReadyProbeSchema.safeParse({
+        kind: 'http',
+        url: 'http://x/',
+        expect: 600,
+      }).success,
     ).toBe(false);
     expect(
-      ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://x/', expect: 99 }).success,
+      ReadyProbeSchema.safeParse({ kind: 'http', url: 'http://x/', expect: 99 })
+        .success,
     ).toBe(false);
   });
 
   it('validates a tcp probe at its port ceiling and fails one step above', () => {
-    expect(ReadyProbeSchema.safeParse({ kind: 'tcp', port: 65535 }).success).toBe(true);
-    expect(ReadyProbeSchema.safeParse({ kind: 'tcp', port: 65536 }).success).toBe(false);
-    expect(ReadyProbeSchema.safeParse({ kind: 'tcp', port: 0 }).success).toBe(false);
+    expect(
+      ReadyProbeSchema.safeParse({ kind: 'tcp', port: 65535 }).success,
+    ).toBe(true);
+    expect(
+      ReadyProbeSchema.safeParse({ kind: 'tcp', port: 65536 }).success,
+    ).toBe(false);
+    expect(ReadyProbeSchema.safeParse({ kind: 'tcp', port: 0 }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -222,21 +267,33 @@ describe('start command: ready / ready_timeout both-or-neither', () => {
       }).success,
     ).toBe(true);
     expect(
-      AdlYmlSchema.shape.commands.shape.start.safeParse({ argv: ['npm', 'run', 'dev'] }).success,
+      AdlYmlSchema.shape.commands.shape.start.safeParse({
+        argv: ['npm', 'run', 'dev'],
+      }).success,
     ).toBe(true);
   });
 });
 
 describe('ContextConfigSchema', () => {
   it('rejects a context file entry that is absolute or contains a parent-directory segment', () => {
-    expect(ContextConfigSchema.safeParse({ files: ['/etc/passwd'] }).success).toBe(false);
-    expect(ContextConfigSchema.safeParse({ files: ['../secrets.env'] }).success).toBe(false);
-    expect(ContextConfigSchema.safeParse({ files: ['docs/README.md'] }).success).toBe(true);
+    expect(
+      ContextConfigSchema.safeParse({ files: ['/etc/passwd'] }).success,
+    ).toBe(false);
+    expect(
+      ContextConfigSchema.safeParse({ files: ['../secrets.env'] }).success,
+    ).toBe(false);
+    expect(
+      ContextConfigSchema.safeParse({ files: ['docs/README.md'] }).success,
+    ).toBe(true);
   });
 
   it('validates max_bytes at its ceiling and fails one step above', () => {
-    expect(ContextConfigSchema.safeParse({ max_bytes: 2_000_000 }).success).toBe(true);
-    expect(ContextConfigSchema.safeParse({ max_bytes: 2_000_001 }).success).toBe(false);
+    expect(
+      ContextConfigSchema.safeParse({ max_bytes: 2_000_000 }).success,
+    ).toBe(true);
+    expect(
+      ContextConfigSchema.safeParse({ max_bytes: 2_000_001 }).success,
+    ).toBe(false);
   });
 
   it('defaults max_bytes and on_overflow when the block is present but empty', () => {
@@ -246,8 +303,12 @@ describe('ContextConfigSchema', () => {
   });
 
   it('accepts on_overflow: error as an explicit alternative to silent truncation', () => {
-    expect(ContextConfigSchema.safeParse({ on_overflow: 'error' }).success).toBe(true);
-    expect(ContextConfigSchema.safeParse({ on_overflow: 'ignore' }).success).toBe(false);
+    expect(
+      ContextConfigSchema.safeParse({ on_overflow: 'error' }).success,
+    ).toBe(true);
+    expect(
+      ContextConfigSchema.safeParse({ on_overflow: 'ignore' }).success,
+    ).toBe(false);
   });
 });
 
@@ -257,17 +318,27 @@ describe('PipelineEntrySchema', () => {
   });
 
   it('validates an object naming a harness, with an optional with block', () => {
-    expect(PipelineEntrySchema.safeParse({ harness: 'security' }).success).toBe(true);
+    expect(PipelineEntrySchema.safeParse({ harness: 'security' }).success).toBe(
+      true,
+    );
     expect(
-      PipelineEntrySchema.safeParse({ harness: 'security', with: { level: 'strict' } }).success,
+      PipelineEntrySchema.safeParse({
+        harness: 'security',
+        with: { level: 'strict' },
+      }).success,
     ).toBe(true);
     expect(
-      PipelineEntrySchema.safeParse({ harness: 'security', on_send_back: 'stop' }).success,
+      PipelineEntrySchema.safeParse({
+        harness: 'security',
+        on_send_back: 'stop',
+      }).success,
     ).toBe(true);
   });
 
   it('parses the group syntax and rejects it, naming it as a future capability', () => {
-    const result = PipelineEntrySchema.safeParse({ group: [{ harness: 'security' }] });
+    const result = PipelineEntrySchema.safeParse({
+      group: [{ harness: 'security' }],
+    });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toMatch(/future/i);
   });
@@ -284,9 +355,10 @@ describe('LimitsSchema', () => {
       ['repeat_finding_threshold', 20, 21],
     ];
     for (const [field, atCeiling, aboveCeiling] of cases) {
-      expect(LimitsSchema.safeParse({ [field]: atCeiling }).success, `${field} at ceiling`).toBe(
-        true,
-      );
+      expect(
+        LimitsSchema.safeParse({ [field]: atCeiling }).success,
+        `${field} at ceiling`,
+      ).toBe(true);
       expect(
         LimitsSchema.safeParse({ [field]: aboveCeiling }).success,
         `${field} above ceiling`,
@@ -298,7 +370,9 @@ describe('LimitsSchema', () => {
   it('rejects zero and negative values', () => {
     expect(LimitsSchema.safeParse({ max_rounds: 0 }).success).toBe(false);
     expect(LimitsSchema.safeParse({ budget_usd: -1 }).success).toBe(false);
-    expect(LimitsSchema.safeParse({ repeat_finding_threshold: 0 }).success).toBe(false);
+    expect(
+      LimitsSchema.safeParse({ repeat_finding_threshold: 0 }).success,
+    ).toBe(false);
   });
 });
 
@@ -336,7 +410,9 @@ describe('AdlYmlSchema: self-documentation', () => {
     const example = extractYamlExample(MODULE_SOURCE);
     const result = parseAdlYml(example);
     if (result instanceof LoadError) {
-      throw new Error(`worked example in adl-yml.ts header failed to parse: ${result.message}`);
+      throw new Error(
+        `worked example in adl-yml.ts header failed to parse: ${result.message}`,
+      );
     }
     expect(result.version).toBe(1);
     expect(result.commands.start.ready?.kind).toBe('http');

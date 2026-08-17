@@ -7,7 +7,9 @@ import { createDb } from '../../src/index.js';
 import type { Database } from '../../src/index.js';
 
 /** Absolute path to `packages/db/migrations`, resolved from this file. */
-export const MIGRATIONS_DIR = fileURLToPath(new URL('../../migrations', import.meta.url));
+export const MIGRATIONS_DIR = fileURLToPath(
+  new URL('../../migrations', import.meta.url),
+);
 
 export interface TempDb {
   readonly db: Kysely<Database>;
@@ -28,7 +30,9 @@ export interface TempDb {
  * database. That matters more than it sounds: a leaked file is invisible
  * locally and accumulates on the machine running CI.
  */
-export async function withTempDb<T>(fn: (ctx: TempDb) => Promise<T>): Promise<T> {
+export async function withTempDb<T>(
+  fn: (ctx: TempDb) => Promise<T>,
+): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'adl-db-'));
   const filePath = join(dir, 'adl.db');
   const db = createDb(filePath);

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { DurationSchema, MAX_DURATION_MS, parseDuration } from '../../src/config/duration.js';
+import {
+  DurationSchema,
+  MAX_DURATION_MS,
+  parseDuration,
+} from '../../src/config/duration.js';
 import { LoadError } from '../../src/errors.js';
 
 /**
@@ -62,9 +66,10 @@ describe('DurationSchema', () => {
     for (const [unit, ms] of Object.entries(UNIT_MS)) {
       const cap = MAX_DURATION_MS / ms;
       expect(Number.isInteger(cap), `${unit} cap is a whole number`).toBe(true);
-      expect(DurationSchema.safeParse(`${cap}${unit}`).success, `${cap}${unit} is the ceiling`).toBe(
-        true,
-      );
+      expect(
+        DurationSchema.safeParse(`${cap}${unit}`).success,
+        `${cap}${unit} is the ceiling`,
+      ).toBe(true);
       expect(
         DurationSchema.safeParse(`${cap + 1}${unit}`).success,
         `${cap + 1}${unit} is one step above the ceiling`,
@@ -96,7 +101,9 @@ describe('DurationSchema', () => {
         const value = `${n}${unit}`;
         const expected = n >= 1 && n * ms <= MAX_DURATION_MS;
         if (DurationSchema.safeParse(value).success !== expected) {
-          mismatches.push(`${value} (expected ${expected ? 'accept' : 'reject'})`);
+          mismatches.push(
+            `${value} (expected ${expected ? 'accept' : 'reject'})`,
+          );
         }
       }
     }
@@ -105,12 +112,15 @@ describe('DurationSchema', () => {
 
   it('agrees with the arithmetic at every decade boundary in milliseconds', () => {
     const samples = [
-      0, 1, 9, 10, 99, 100, 999_999, 1_000_000, 9_999_999, 10_000_000, 79_999_999, 80_000_000,
-      85_999_999, 86_000_000, 86_399_999, 86_400_000, 86_400_001, 99_999_999, 100_000_000,
+      0, 1, 9, 10, 99, 100, 999_999, 1_000_000, 9_999_999, 10_000_000,
+      79_999_999, 80_000_000, 85_999_999, 86_000_000, 86_399_999, 86_400_000,
+      86_400_001, 99_999_999, 100_000_000,
     ];
     for (const n of samples) {
       const expected = n >= 1 && n <= MAX_DURATION_MS;
-      expect(DurationSchema.safeParse(`${n}ms`).success, `${n}ms`).toBe(expected);
+      expect(DurationSchema.safeParse(`${n}ms`).success, `${n}ms`).toBe(
+        expected,
+      );
     }
   });
 });
@@ -135,7 +145,15 @@ describe('parseDuration', () => {
   });
 
   it('throws a LoadError naming the offending value rather than returning NaN', () => {
-    for (const value of ['10', '-5m', '0m', '', '5 minutes', '86400001ms', '25h']) {
+    for (const value of [
+      '10',
+      '-5m',
+      '0m',
+      '',
+      '5 minutes',
+      '86400001ms',
+      '25h',
+    ]) {
       expect(() => parseDuration(value), value).toThrow(LoadError);
       expect(() => parseDuration(value), value).toThrow(/duration/i);
     }

@@ -6,14 +6,14 @@ commands:
     # Defect: argv given as a shell string instead of an argv array. No shell
     # means no quoting bugs and no injection surface from repo config — this
     # must fail with an issue path pointing at commands.build.argv.
-    argv: "npm ci"
+    argv: 'npm ci'
     timeout: 10m
   start:
     argv: [npm, run, dev]
     timeout: 2m
     ready:
       kind: http
-      url: "http://127.0.0.1:${ADL_PORT}/health"
+      url: 'http://127.0.0.1:${ADL_PORT}/health'
     ready_timeout: 30s
   test:
     argv: [npm, test]

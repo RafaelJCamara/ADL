@@ -1,4 +1,9 @@
-import { parseDocument, type DocumentOptions, type ParseOptions, type SchemaOptions } from 'yaml';
+import {
+  parseDocument,
+  type DocumentOptions,
+  type ParseOptions,
+  type SchemaOptions,
+} from 'yaml';
 
 import { LoadError, type SourcePosition } from '../errors.js';
 

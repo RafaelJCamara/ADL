@@ -65,7 +65,9 @@ function isBareName(name: string): boolean {
 
 function isGherkinEntry(name: string): boolean {
   return (
-    isBareName(name) && name.length > GHERKIN_EXTENSION.length && name.endsWith(GHERKIN_EXTENSION)
+    isBareName(name) &&
+    name.length > GHERKIN_EXTENSION.length &&
+    name.endsWith(GHERKIN_EXTENSION)
   );
 }
 

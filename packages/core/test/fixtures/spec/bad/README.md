@@ -16,17 +16,17 @@ dropped.
 
 ## The nine inputs, and what each proves
 
-| Row | Input | Parser | Loader must |
-| --- | ----- | ------ | ----------- |
-| 1 | Empty file | accepts, `doc.feature === undefined` | reject: no feature declared |
-| 2 | Whitespace only | accepts, `doc.feature === undefined` | reject: no feature declared |
-| 3 | Comment only | accepts, `doc.feature === undefined` | reject: no feature declared |
-| 4 | `Feature:` with no scenarios | accepts, `children.length === 0` | reject: zero scenarios |
-| 5 | `Scenario:` with no steps | accepts, `steps.length === 0` | reject, naming the scenario |
-| 6 | `Scenario Outline` with no `Examples` | accepts | reject, naming the outline |
-| 7 | Two `Feature:` blocks | **throws** `CompositeParserException` | surface with line and column |
-| 8 | Ragged `Examples` table | **throws** `CompositeParserException` | surface with line and column |
-| 9 | Free text at top level | **throws** `CompositeParserException` | surface with line and column |
+| Row | Input                                 | Parser                                | Loader must                  |
+| --- | ------------------------------------- | ------------------------------------- | ---------------------------- |
+| 1   | Empty file                            | accepts, `doc.feature === undefined`  | reject: no feature declared  |
+| 2   | Whitespace only                       | accepts, `doc.feature === undefined`  | reject: no feature declared  |
+| 3   | Comment only                          | accepts, `doc.feature === undefined`  | reject: no feature declared  |
+| 4   | `Feature:` with no scenarios          | accepts, `children.length === 0`      | reject: zero scenarios       |
+| 5   | `Scenario:` with no steps             | accepts, `steps.length === 0`         | reject, naming the scenario  |
+| 6   | `Scenario Outline` with no `Examples` | accepts                               | reject, naming the outline   |
+| 7   | Two `Feature:` blocks                 | **throws** `CompositeParserException` | surface with line and column |
+| 8   | Ragged `Examples` table               | **throws** `CompositeParserException` | surface with line and column |
+| 9   | Free text at top level                | **throws** `CompositeParserException` | surface with line and column |
 
 Rows 1–6 are the dangerous half. The parser reports **success** on every one of
 them, so a loader that treats parser success as sufficient lets a feature into

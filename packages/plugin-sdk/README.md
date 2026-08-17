@@ -25,7 +25,7 @@ reachable from two import paths.
 - **`Verdict` and its six outcome schemas** (`pass`, `send_back`, `fail`,
   `inconclusive`, `warn`, `skip`) — what `Stage.run` resolves to when the gate
   judged.
-- **`StageError`** — what `Stage.run` resolves to when the gate *broke* instead
+- **`StageError`** — what `Stage.run` resolves to when the gate _broke_ instead
   of judging: a parse failure, a provider outage, a missing binary, an auth
   failure. It sits outside the `Verdict` union entirely, and it never costs the
   developer a round.

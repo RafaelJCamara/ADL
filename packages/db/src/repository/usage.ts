@@ -1,5 +1,9 @@
 import { sql, type Kysely } from 'kysely';
-import type { Database, ModelPricesTable, UsageEventsTable } from '../schema.js';
+import type {
+  Database,
+  ModelPricesTable,
+  UsageEventsTable,
+} from '../schema.js';
 
 /**
  * The spend ledger and the price table behind it.

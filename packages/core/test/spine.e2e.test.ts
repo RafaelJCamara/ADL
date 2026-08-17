@@ -22,7 +22,9 @@ import {
  * `node:fs` appears here and nowhere in `packages/core/src/` — reading the file
  * is the caller's job, which is exactly the boundary this test demonstrates.
  */
-const FIXTURE_PATH = fileURLToPath(new URL('./fixtures/spec/good/spec.md', import.meta.url));
+const FIXTURE_PATH = fileURLToPath(
+  new URL('./fixtures/spec/good/spec.md', import.meta.url),
+);
 const RAW = readFileSync(FIXTURE_PATH, 'utf8');
 
 describe('spine: spec.md -> criteria -> verdicts -> round outcome', () => {
@@ -35,12 +37,18 @@ describe('spine: spec.md -> criteria -> verdicts -> round outcome', () => {
 
     // Three top-level bullets, so three criteria — the two nested sub-bullets
     // under the second one are detail, not criteria of their own (D-19).
-    expect(spec.acceptanceCriteria.map((c) => c.id)).toEqual(['AC-1', 'AC-2', 'AC-3']);
+    expect(spec.acceptanceCriteria.map((c) => c.id)).toEqual([
+      'AC-1',
+      'AC-2',
+      'AC-3',
+    ]);
 
     const [ac1, ac2, ac3] = spec.acceptanceCriteria;
     expect(ac1?.kind).toBe('statement');
     expect(ac1?.text).toContain('reached a terminal state is removed');
-    expect(ac2?.text).toContain('never removes a worktree belonging to a feature');
+    expect(ac2?.text).toContain(
+      'never removes a worktree belonging to a feature',
+    );
     expect(ac3?.text).toContain('--dry-run');
 
     // The nested bullets live INSIDE AC-2's text rather than beside it. This is
@@ -48,7 +56,9 @@ describe('spine: spec.md -> criteria -> verdicts -> round outcome', () => {
     // which would renumber every criterion after it — and D-01 says renumbering
     // means re-running every agent prompt.
     expect(ac2?.text).toContain('An expired lease means the worker died');
-    expect(ac2?.text).toContain('Recovery re-attaches to the existing worktree');
+    expect(ac2?.text).toContain(
+      'Recovery re-attaches to the existing worktree',
+    );
     expect(ac1?.text).not.toContain('An expired lease means the worker died');
     expect(ac3?.text).not.toContain('An expired lease means the worker died');
   });
@@ -68,7 +78,9 @@ describe('spine: spec.md -> criteria -> verdicts -> round outcome', () => {
       // when the author's meaning changed.
       const offset = RAW.indexOf(criterion.text);
       expect(offset).toBeGreaterThanOrEqual(0);
-      expect(RAW.slice(offset, offset + criterion.text.length)).toBe(criterion.text);
+      expect(RAW.slice(offset, offset + criterion.text.length)).toBe(
+        criterion.text,
+      );
     }
   });
 
@@ -80,7 +92,8 @@ describe('spine: spec.md -> criteria -> verdicts -> round outcome', () => {
 
     const passVerdict: Verdict = VerdictSchema.parse({
       outcome: 'pass',
-      summary: 'Terminal-state worktrees are collected and running features are left alone.',
+      summary:
+        'Terminal-state worktrees are collected and running features are left alone.',
       checked: [
         { kind: 'criterion', id: ac1?.id },
         { kind: 'criterion', id: ac2?.id },
@@ -144,11 +157,16 @@ describe('spine: spec.md -> criteria -> verdicts -> round outcome', () => {
     }
 
     // And it stays not-green regardless of where the inconclusive sits.
-    expect(aggregate([inconclusiveVerdict, passVerdict]).kind).not.toBe('green');
+    expect(aggregate([inconclusiveVerdict, passVerdict]).kind).not.toBe(
+      'green',
+    );
   });
 
   it('rejects a seventh outcome, naming the six that exist', () => {
-    const result = VerdictSchema.safeParse({ outcome: 'approved', summary: 'looks fine' });
+    const result = VerdictSchema.safeParse({
+      outcome: 'approved',
+      summary: 'looks fine',
+    });
 
     expect(result.success).toBe(false);
     if (!result.success) {

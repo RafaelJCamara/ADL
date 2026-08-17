@@ -125,7 +125,9 @@ export async function migrateToLatest(
           // same file-matching rule, so this should be unreachable. Guarding
           // anyway: silently applying a migration with no digest is exactly
           // the gap this whole module exists to close.
-          throw new Error(`no digest computed for migration "${name}" — cannot record checksum`);
+          throw new Error(
+            `no digest computed for migration "${name}" — cannot record checksum`,
+          );
         }
         wrapped[name] = wrapMigrationWithChecksum(migration, name, digest);
       }

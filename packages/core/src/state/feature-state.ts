@@ -114,7 +114,8 @@ export interface ChangeRequestRef {
 }
 
 /** Why a limit fired. Recorded on the escalation, so the reason survives. */
-export type LimitReason = 'round_limit' | 'budget_limit' | 'budget_limit_midstage';
+export type LimitReason =
+  'round_limit' | 'budget_limit' | 'budget_limit_midstage';
 
 /**
  * Every labelled edge in the architecture's diagram, as a discriminated union.
@@ -139,7 +140,11 @@ export type FeatureEvent =
   /** `gating → publishing`. The whole pipeline is satisfied. */
   | { readonly t: 'all_gates_passed' }
   /** `gating → developing`. The only edge that consumes a round. */
-  | { readonly t: 'send_back'; readonly stageId: string; readonly findingCount: number }
+  | {
+      readonly t: 'send_back';
+      readonly stageId: string;
+      readonly findingCount: number;
+    }
   /** `publishing → pr_open`. */
   | { readonly t: 'cr_opened'; readonly ref: ChangeRequestRef }
   /** `pr_open → merged`. */
@@ -185,7 +190,9 @@ export type FeatureEventKind = FeatureEvent['t'];
  * failure mode the coverage count exists to prevent.
  */
 type _EveryEventKindListed =
-  Exclude<FeatureEventKind, (typeof FEATURE_EVENT_KINDS)[number]> extends never ? true : never;
+  Exclude<FeatureEventKind, (typeof FEATURE_EVENT_KINDS)[number]> extends never
+    ? true
+    : never;
 const _everyEventKindListed: _EveryEventKindListed = true;
 void _everyEventKindListed;
 
@@ -245,7 +252,12 @@ export const TRANSITION_CTX_FIELDS = Object.freeze([
 ] as const) satisfies readonly (keyof TransitionCtx)[];
 
 type _EveryCtxFieldListed =
-  Exclude<keyof TransitionCtx, (typeof TRANSITION_CTX_FIELDS)[number]> extends never ? true : never;
+  Exclude<
+    keyof TransitionCtx,
+    (typeof TRANSITION_CTX_FIELDS)[number]
+  > extends never
+    ? true
+    : never;
 const _everyCtxFieldListed: _EveryCtxFieldListed = true;
 void _everyCtxFieldListed;
 

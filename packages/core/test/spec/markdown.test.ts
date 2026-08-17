@@ -3,7 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { LoadError } from '../../src/errors.js';
-import { loadAdlTemplateSpec, MAX_SPEC_BYTES } from '../../src/spec/markdown.js';
+import {
+  loadAdlTemplateSpec,
+  MAX_SPEC_BYTES,
+} from '../../src/spec/markdown.js';
 
 /**
  * The markdown half of the intake surface (SPEC-01, CORE-05).
@@ -45,7 +48,8 @@ describe('loadAdlTemplateSpec — required and optional headings', () => {
   });
 
   it('accepts a title and a criteria section with every optional heading absent', () => {
-    const minimal = '# Just a title\n\n## Acceptance Criteria\n\n- The one thing that matters.\n';
+    const minimal =
+      '# Just a title\n\n## Acceptance Criteria\n\n- The one thing that matters.\n';
     const spec = loadAdlTemplateSpec(minimal, 'minimal');
     expect(spec.title).toBe('Just a title');
     expect(spec.narrative).toBeUndefined();
@@ -57,7 +61,8 @@ describe('loadAdlTemplateSpec — required and optional headings', () => {
 
   it('gives a missing acceptance-criteria heading and an empty one two distinct errors', () => {
     const noHeading = '# T\n\n## Intent\n\nSome prose.\n';
-    const emptyHeading = '# T\n\n## Acceptance Criteria\n\nJust a paragraph, no list.\n';
+    const emptyHeading =
+      '# T\n\n## Acceptance Criteria\n\nJust a paragraph, no list.\n';
 
     let noHeadingMessage = '';
     try {
@@ -109,7 +114,9 @@ describe('loadAdlTemplateSpec — verbatim retention', () => {
   it('recomputes every criterion text from raw.slice(...) at the recorded offsets', () => {
     const spec = loadAdlTemplateSpec(SPEC, 'feature-branch-cleanup');
     for (const criterion of spec.acceptanceCriteria) {
-      expect(SPEC.slice(criterion.source.start, criterion.source.end)).toBe(criterion.text);
+      expect(SPEC.slice(criterion.source.start, criterion.source.end)).toBe(
+        criterion.text,
+      );
     }
   });
 
@@ -122,7 +129,9 @@ describe('loadAdlTemplateSpec — frontmatter and fenced code (D-18)', () => {
   it('rejects a leading frontmatter block rather than absorbing it into the first section', () => {
     const withFrontmatter =
       '---\ntitle: Something\n---\n\n# T\n\n## Acceptance Criteria\n\n- One thing.\n';
-    expect(() => loadAdlTemplateSpec(withFrontmatter, 'x')).toThrow(/frontmatter/);
+    expect(() => loadAdlTemplateSpec(withFrontmatter, 'x')).toThrow(
+      /frontmatter/,
+    );
   });
 
   it('does not let a heading-shaped line inside a fenced code block create a section boundary', () => {
@@ -135,7 +144,9 @@ describe('loadAdlTemplateSpec — frontmatter and fenced code (D-18)', () => {
       '- A second real criterion.\n';
     const spec = loadAdlTemplateSpec(withFence, 'x');
     expect(spec.acceptanceCriteria).toHaveLength(2);
-    expect(spec.acceptanceCriteria[0]?.text).toContain('## Acceptance Criteria');
+    expect(spec.acceptanceCriteria[0]?.text).toContain(
+      '## Acceptance Criteria',
+    );
   });
 
   it('does not support GFM tables — a table inside a list item is literal pipe text', () => {
@@ -155,7 +166,9 @@ describe('loadAdlTemplateSpec — frontmatter and fenced code (D-18)', () => {
 describe('loadAdlTemplateSpec — size cap', () => {
   it('rejects a source above the 1 MB cap before the parser runs', () => {
     const huge =
-      '# T\n\n## Acceptance Criteria\n\n- ' + 'x'.repeat(MAX_SPEC_BYTES + 1_000) + '\n';
+      '# T\n\n## Acceptance Criteria\n\n- ' +
+      'x'.repeat(MAX_SPEC_BYTES + 1_000) +
+      '\n';
     expect(() => loadAdlTemplateSpec(huge, 'x')).toThrow(/exceeds/);
   });
 });

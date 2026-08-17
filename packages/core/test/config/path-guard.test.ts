@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { isRepoRelativePath, RepoRelativePathSchema } from '../../src/config/path-guard.js';
+import {
+  isRepoRelativePath,
+  RepoRelativePathSchema,
+} from '../../src/config/path-guard.js';
 
 /**
  * Threat T-1-02. Every path in `adl.yml` — a context file entry, a command's
@@ -29,7 +32,10 @@ const REJECTED: ReadonlyArray<readonly [string, string]> = [
   ['..', 'a bare parent-directory segment'],
   ['a/..', 'a trailing parent-directory segment'],
   ['..\\secrets.env', 'a parent-directory segment with a backslash separator'],
-  ['a\\..\\..\\etc', 'interior parent-directory segments with backslash separators'],
+  [
+    'a\\..\\..\\etc',
+    'interior parent-directory segments with backslash separators',
+  ],
   ['C:\\Windows\\System32\\config', 'a Windows drive-letter path'],
   ['c:/windows/system32', 'a lowercase drive-letter path with forward slashes'],
   ['\\\\server\\share\\secrets', 'a UNC path'],
@@ -51,7 +57,10 @@ describe('RepoRelativePathSchema', () => {
 
   it('rejects a non-string', () => {
     for (const value of [42, null, undefined, ['a'], { path: 'a' }]) {
-      expect(RepoRelativePathSchema.safeParse(value).success, JSON.stringify(value)).toBe(false);
+      expect(
+        RepoRelativePathSchema.safeParse(value).success,
+        JSON.stringify(value),
+      ).toBe(false);
     }
   });
 

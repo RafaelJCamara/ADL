@@ -44,7 +44,8 @@ export function aggregate(verdicts: readonly Verdict[]): RoundOutcome {
   if (verdicts.length === 0) {
     return {
       kind: 'escalate',
-      reason: 'No verdicts were produced — the pipeline ran zero gates, so nothing was verified.',
+      reason:
+        'No verdicts were produced — the pipeline ran zero gates, so nothing was verified.',
     };
   }
 
@@ -72,7 +73,9 @@ export function aggregate(verdicts: readonly Verdict[]): RoundOutcome {
     return { kind: 'send_back', brief: { findings: sortFindings(findings) } };
   }
 
-  const inconclusive: InconclusiveVerdict[] = verdicts.filter((v) => v.outcome === 'inconclusive');
+  const inconclusive: InconclusiveVerdict[] = verdicts.filter(
+    (v) => v.outcome === 'inconclusive',
+  );
   if (inconclusive.length > 0) {
     return { kind: 'unverified', inconclusive };
   }

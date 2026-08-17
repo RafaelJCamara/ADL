@@ -1,4 +1,10 @@
-import { AstBuilder, dialects, Errors, GherkinClassicTokenMatcher, Parser } from '@cucumber/gherkin';
+import {
+  AstBuilder,
+  dialects,
+  Errors,
+  GherkinClassicTokenMatcher,
+  Parser,
+} from '@cucumber/gherkin';
 import type Dialect from '@cucumber/gherkin/dist/Dialect.js';
 import { IdGenerator, StepKeywordType } from '@cucumber/messages';
 import type { Background, Feature, Scenario, Step } from '@cucumber/messages';
@@ -41,15 +47,26 @@ const KEYWORD_BY_TYPE: Readonly<Record<string, SpecStep['keyword']>> = {
 };
 
 /** The English literals, used to keep `And`/`But` distinct — both are CONJUNCTION. */
-const LITERAL_KEYWORDS = new Set<SpecStep['keyword']>(['Given', 'When', 'Then', 'And', 'But', '*']);
+const LITERAL_KEYWORDS = new Set<SpecStep['keyword']>([
+  'Given',
+  'When',
+  'Then',
+  'And',
+  'But',
+  '*',
+]);
 
 function toSpecStep(step: Step): SpecStep {
   // The literal wins when it is one we model, so `But` survives as `But`
   // instead of collapsing into `And`. `keywordType` is the fallback that keeps
   // non-English dialects working.
   const literal = step.keyword.trim() as SpecStep['keyword'];
-  if (LITERAL_KEYWORDS.has(literal)) return { keyword: literal, text: step.text };
-  const byType = step.keywordType === undefined ? undefined : KEYWORD_BY_TYPE[step.keywordType];
+  if (LITERAL_KEYWORDS.has(literal))
+    return { keyword: literal, text: step.text };
+  const byType =
+    step.keywordType === undefined
+      ? undefined
+      : KEYWORD_BY_TYPE[step.keywordType];
   return { keyword: byType ?? '*', text: step.text };
 }
 
@@ -95,7 +112,11 @@ export function collectScenarios(feature: Feature): Scenario[] {
  */
 export function isOutline(scenario: Scenario): boolean {
   const keyword = scenario.keyword.trim();
-  return keyword === 'Scenario Outline' || keyword === 'Scenario Template' || scenario.examples.length > 0;
+  return (
+    keyword === 'Scenario Outline' ||
+    keyword === 'Scenario Template' ||
+    scenario.examples.length > 0
+  );
 }
 
 /** Backgrounds anywhere in the document, in document order. */
@@ -117,7 +138,10 @@ function collectBackgrounds(feature: Feature): Background[] {
  * upstream type, though every location this parser actually emits carries one;
  * an absent column is treated as the start of the line.
  */
-function toPosition(location: { readonly line: number; readonly column?: number }): SourcePosition {
+function toPosition(location: {
+  readonly line: number;
+  readonly column?: number;
+}): SourcePosition {
   return { line: location.line, column: location.column ?? 1 };
 }
 
@@ -139,7 +163,11 @@ function lineStartOffsets(raw: string): number[] {
  * under both LF and CRLF (verified): a `\r` sits at the end of the preceding
  * line, so it never shifts the next line's start.
  */
-function toOffset(lineStarts: readonly number[], line: number, column: number | undefined): number {
+function toOffset(
+  lineStarts: readonly number[],
+  line: number,
+  column: number | undefined,
+): number {
   const start = lineStarts[line - 1];
   if (start === undefined) {
     throw new LoadError(`internal: line ${line} is outside the source`);
@@ -152,7 +180,9 @@ function toOffset(lineStarts: readonly number[], line: number, column: number | 
 
 interface Located {
   readonly location: { readonly line: number; readonly column?: number };
-  readonly tags?: readonly { readonly location: { readonly line: number; readonly column?: number } }[];
+  readonly tags?: readonly {
+    readonly location: { readonly line: number; readonly column?: number };
+  }[];
 }
 
 /**
@@ -166,7 +196,10 @@ function blockStart(lineStarts: readonly number[], node: Located): number {
   const own = toOffset(lineStarts, node.location.line, node.location.column);
   const firstTag = node.tags?.[0];
   if (firstTag === undefined) return own;
-  return Math.min(own, toOffset(lineStarts, firstTag.location.line, firstTag.location.column));
+  return Math.min(
+    own,
+    toOffset(lineStarts, firstTag.location.line, firstTag.location.column),
+  );
 }
 
 /**
@@ -178,16 +211,22 @@ function blockStart(lineStarts: readonly number[], node: Located): number {
  * steps, docstrings, data tables, and an outline's `Examples` — inside the
  * criterion, which is exactly what CORE-05 asks for.
  */
-function blockBoundaries(feature: Feature, lineStarts: readonly number[]): number[] {
+function blockBoundaries(
+  feature: Feature,
+  lineStarts: readonly number[],
+): number[] {
   const offsets: number[] = [];
   for (const child of feature.children) {
-    if (child.background) offsets.push(blockStart(lineStarts, child.background));
+    if (child.background)
+      offsets.push(blockStart(lineStarts, child.background));
     if (child.scenario) offsets.push(blockStart(lineStarts, child.scenario));
     if (child.rule) {
       offsets.push(blockStart(lineStarts, child.rule));
       for (const ruleChild of child.rule.children) {
-        if (ruleChild.background) offsets.push(blockStart(lineStarts, ruleChild.background));
-        if (ruleChild.scenario) offsets.push(blockStart(lineStarts, ruleChild.scenario));
+        if (ruleChild.background)
+          offsets.push(blockStart(lineStarts, ruleChild.background));
+        if (ruleChild.scenario)
+          offsets.push(blockStart(lineStarts, ruleChild.scenario));
       }
     }
   }
@@ -215,8 +254,15 @@ function scenarioSpan(
 function stepKeywordsFor(language: string): readonly string[] {
   const table = dialects as Readonly<Record<string, Dialect>>;
   const source = table[language] ?? table['en'];
-  if (source === undefined) return ['Given ', 'When ', 'Then ', 'And ', 'But ', '* '];
-  return [...source.given, ...source.when, ...source.then, ...source.and, ...source.but];
+  if (source === undefined)
+    return ['Given ', 'When ', 'Then ', 'And ', 'But ', '* '];
+  return [
+    ...source.given,
+    ...source.when,
+    ...source.then,
+    ...source.and,
+    ...source.but,
+  ];
 }
 
 /**
@@ -226,7 +272,10 @@ function stepKeywordsFor(language: string): readonly string[] {
  * any text at all, including a line reading exactly `Given something`, and
  * counting it would make a perfectly valid feature file fail to load.
  */
-function countSourceStepLines(raw: string, keywords: readonly string[]): number {
+function countSourceStepLines(
+  raw: string,
+  keywords: readonly string[],
+): number {
   let count = 0;
   let docStringDelimiter: string | undefined;
 
@@ -234,7 +283,8 @@ function countSourceStepLines(raw: string, keywords: readonly string[]): number 
     const trimmed = line.trim();
 
     if (docStringDelimiter !== undefined) {
-      if (trimmed.startsWith(docStringDelimiter)) docStringDelimiter = undefined;
+      if (trimmed.startsWith(docStringDelimiter))
+        docStringDelimiter = undefined;
       continue;
     }
     if (trimmed.startsWith('"""')) {
@@ -283,7 +333,8 @@ function examplesTable(
         toPosition(block.location),
       );
     }
-    for (const row of block.tableBody) rows.push(row.cells.map((cell) => cell.value));
+    for (const row of block.tableBody)
+      rows.push(row.cells.map((cell) => cell.value));
   }
 
   return { headers: headers ?? [], rows };
@@ -338,7 +389,9 @@ export function loadGherkinSpec(
       // execution. `instanceof` narrows honestly rather than casting blind.
       const first = error.errors[0];
       const position =
-        first instanceof Errors.GherkinException ? toPosition(first.location) : undefined;
+        first instanceof Errors.GherkinException
+          ? toPosition(first.location)
+          : undefined;
       throw new LoadError(
         `"${label}" could not be parsed:\n${error.errors.map((e) => e.message).join('\n')}`,
         position,
@@ -355,7 +408,9 @@ export function loadGherkinSpec(
     // it is not what the author needs to hear about one — and a message that
     // covers every case equally well guides nobody to the fix.
     if (raw.length === 0) {
-      throw new LoadError(`"${label}" is empty; a Gherkin spec needs a "Feature:" line.`);
+      throw new LoadError(
+        `"${label}" is empty; a Gherkin spec needs a "Feature:" line.`,
+      );
     }
     if (raw.trim().length === 0) {
       throw new LoadError(
@@ -402,7 +457,10 @@ export function loadGherkinSpec(
   const reachableSteps =
     scenarios.reduce((sum, s) => sum + s.steps.length, 0) +
     backgrounds.reduce((sum, b) => sum + b.steps.length, 0);
-  const sourceSteps = countSourceStepLines(raw, stepKeywordsFor(feature.language));
+  const sourceSteps = countSourceStepLines(
+    raw,
+    stepKeywordsFor(feature.language),
+  );
   if (sourceSteps !== reachableSteps) {
     throw new LoadError(
       `"${label}" contains ${sourceSteps} step lines but only ${reachableSteps} are inside a scenario or background. ` +
@@ -417,7 +475,9 @@ export function loadGherkinSpec(
 
   const bodies: CriterionBody[] = scenarios.map((scenario) => {
     const source = scenarioSpan(raw, lineStarts, boundaries, scenario);
-    const examples = isOutline(scenario) ? examplesTable(scenario, label) : undefined;
+    const examples = isOutline(scenario)
+      ? examplesTable(scenario, label)
+      : undefined;
     return {
       kind: 'scenario',
       // Verbatim, sliced from the source — never rebuilt from the tree, so an
@@ -448,7 +508,9 @@ export function loadGherkinSpec(
     sourceFormat: 'gherkin',
     ...(description.length > 0 ? { narrative: description } : {}),
     acceptanceCriteria,
-    ...(backgroundSteps.length > 0 ? { background: { steps: backgroundSteps } } : {}),
+    ...(backgroundSteps.length > 0
+      ? { background: { steps: backgroundSteps } }
+      : {}),
     contextRefs: [],
     raw,
     specHash: sha256Hex(raw),

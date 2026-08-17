@@ -281,8 +281,13 @@ export const FEATURES_COLUMNS = [
 ] as const satisfies readonly (keyof FeaturesTable)[];
 
 /** Compile-time proof that {@link FEATURES_COLUMNS} omits no column. */
-type MissingFeatureColumns = Exclude<keyof FeaturesTable, (typeof FEATURES_COLUMNS)[number]>;
-const _featuresColumnsAreExhaustive: MissingFeatureColumns extends never ? true : never = true;
+type MissingFeatureColumns = Exclude<
+  keyof FeaturesTable,
+  (typeof FEATURES_COLUMNS)[number]
+>;
+const _featuresColumnsAreExhaustive: MissingFeatureColumns extends never
+  ? true
+  : never = true;
 void _featuresColumnsAreExhaustive;
 
 /** The tables `0001_initial.ts` creates, for the migration smoke test. */
@@ -439,13 +444,20 @@ export const TABLE_COLUMNS = {
     'cache_read_multiplier',
     'effective_from',
   ],
-} as const satisfies { [K in keyof Database]: readonly (keyof Database[K] & string)[] };
+} as const satisfies {
+  [K in keyof Database]: readonly (keyof Database[K] & string)[];
+};
 
 /** Compile-time proof that {@link TABLE_COLUMNS} omits no column of any table. */
 type MissingColumns = {
-  [K in keyof Database]: Exclude<keyof Database[K], (typeof TABLE_COLUMNS)[K][number]>;
+  [K in keyof Database]: Exclude<
+    keyof Database[K],
+    (typeof TABLE_COLUMNS)[K][number]
+  >;
 }[keyof Database];
-const _tableColumnsAreExhaustive: [MissingColumns] extends [never] ? true : never = true;
+const _tableColumnsAreExhaustive: [MissingColumns] extends [never]
+  ? true
+  : never = true;
 void _tableColumnsAreExhaustive;
 
 /**

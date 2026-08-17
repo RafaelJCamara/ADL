@@ -10,7 +10,7 @@ commands:
     timeout: 2m
     ready:
       kind: http
-      url: "http://127.0.0.1:${ADL_PORT}/health"
+      url: 'http://127.0.0.1:${ADL_PORT}/health'
     ready_timeout: 30s
   test:
     argv: [npm, test]

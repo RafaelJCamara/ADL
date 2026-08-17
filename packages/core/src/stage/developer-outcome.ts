@@ -36,7 +36,11 @@ import { CriterionRefSchema } from '../verdict/criterion-ref.js';
  * Exported as data so a consumer can enumerate the union without duplicating
  * the list — and so a test can assert that `pass` is not among them.
  */
-export const DEVELOPER_OUTCOME_KINDS = Object.freeze(['committed', 'dispute', 'blocked'] as const);
+export const DEVELOPER_OUTCOME_KINDS = Object.freeze([
+  'committed',
+  'dispute',
+  'blocked',
+] as const);
 
 export type DeveloperOutcomeKind = (typeof DEVELOPER_OUTCOME_KINDS)[number];
 
@@ -76,7 +80,8 @@ export const DisputeTargetSchema = z
   ])
   .meta({
     id: 'DisputeTarget',
-    description: 'The specific finding, or the whole stage, a dispute is aimed at',
+    description:
+      'The specific finding, or the whole stage, a dispute is aimed at',
   });
 
 export type DisputeTarget = z.infer<typeof DisputeTargetSchema>;
@@ -103,7 +108,8 @@ export const DisputeSchema = z
   })
   .meta({
     id: 'Dispute',
-    description: 'A structured, triageable disagreement with a gate — escalates to a human',
+    description:
+      'A structured, triageable disagreement with a gate — escalates to a human',
   });
 
 export type Dispute = z.infer<typeof DisputeSchema>;
@@ -141,10 +147,15 @@ export const BlockedOutcomeSchema = z
  * structurally, because the union has nowhere to put it (threat T-1-07).
  */
 export const DeveloperOutcomeSchema = z
-  .discriminatedUnion('kind', [CommittedOutcomeSchema, DisputeOutcomeSchema, BlockedOutcomeSchema])
+  .discriminatedUnion('kind', [
+    CommittedOutcomeSchema,
+    DisputeOutcomeSchema,
+    BlockedOutcomeSchema,
+  ])
   .meta({
     id: 'DeveloperOutcome',
-    description: "The developer's own result — report, dispute, or blocked. Never approval.",
+    description:
+      "The developer's own result — report, dispute, or blocked. Never approval.",
   });
 
 export type DeveloperOutcome = z.infer<typeof DeveloperOutcomeSchema>;
@@ -164,10 +175,10 @@ export type BlockedOutcome = z.infer<typeof BlockedOutcomeSchema>;
  *
  * `send_back` is the only thing in ADL that consumes a round (CORE-01).
  */
-export const DEVELOPER_OUTCOME_ROUND_COST: Readonly<Record<DeveloperOutcomeKind, 0>> = Object.freeze(
-  {
-    committed: 0,
-    dispute: 0,
-    blocked: 0,
-  },
-);
+export const DEVELOPER_OUTCOME_ROUND_COST: Readonly<
+  Record<DeveloperOutcomeKind, 0>
+> = Object.freeze({
+  committed: 0,
+  dispute: 0,
+  blocked: 0,
+});

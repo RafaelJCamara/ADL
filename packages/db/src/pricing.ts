@@ -93,9 +93,13 @@ export async function priceUsageEvent(
   const inputCost = (event.inputTokens ?? 0) * perTokenInput;
   const outputCost = (event.outputTokens ?? 0) * perTokenOutput;
   const cacheWriteCost =
-    (event.cacheCreationInputTokens ?? 0) * perTokenInput * price.cache_write_multiplier;
+    (event.cacheCreationInputTokens ?? 0) *
+    perTokenInput *
+    price.cache_write_multiplier;
   const cacheReadCost =
-    (event.cacheReadInputTokens ?? 0) * perTokenInput * price.cache_read_multiplier;
+    (event.cacheReadInputTokens ?? 0) *
+    perTokenInput *
+    price.cache_read_multiplier;
 
   return {
     costUsd: inputCost + outputCost + cacheWriteCost + cacheReadCost,

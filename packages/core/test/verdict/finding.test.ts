@@ -10,9 +10,14 @@ import {
 
 /** CORE-04: `criterionRef`, `fingerprint`, `location`, and `sortFindings`. */
 
-function makeFinding(overrides: Partial<Record<keyof Finding, unknown>> = {}): unknown {
+function makeFinding(
+  overrides: Partial<Record<keyof Finding, unknown>> = {},
+): unknown {
   return {
-    fingerprint: fingerprintFinding({ stageId: 'reviewer', title: 'Missing input validation' }),
+    fingerprint: fingerprintFinding({
+      stageId: 'reviewer',
+      title: 'Missing input validation',
+    }),
     severity: 'major',
     title: 'Missing input validation',
     detail: 'The handler trusts req.body without checking its shape.',
@@ -23,24 +28,25 @@ function makeFinding(overrides: Partial<Record<keyof Finding, unknown>> = {}): u
 
 describe('FindingSchema — CORE-04', () => {
   it('requires criterionRef', () => {
-    const { criterionRef: _drop, ...withoutCriterionRef } = makeFinding() as Record<
-      string,
-      unknown
-    >;
+    const { criterionRef: _drop, ...withoutCriterionRef } =
+      makeFinding() as Record<string, unknown>;
     const result = FindingSchema.safeParse(withoutCriterionRef);
     expect(result.success).toBe(false);
   });
 
   it('enforces a 64-character fingerprint — too short and too long both fail', () => {
-    expect(FindingSchema.safeParse(makeFinding({ fingerprint: 'a'.repeat(63) })).success).toBe(
-      false,
-    );
-    expect(FindingSchema.safeParse(makeFinding({ fingerprint: 'a'.repeat(65) })).success).toBe(
-      false,
-    );
-    expect(FindingSchema.safeParse(makeFinding({ fingerprint: 'a'.repeat(64) })).success).toBe(
-      true,
-    );
+    expect(
+      FindingSchema.safeParse(makeFinding({ fingerprint: 'a'.repeat(63) }))
+        .success,
+    ).toBe(false);
+    expect(
+      FindingSchema.safeParse(makeFinding({ fingerprint: 'a'.repeat(65) }))
+        .success,
+    ).toBe(false);
+    expect(
+      FindingSchema.safeParse(makeFinding({ fingerprint: 'a'.repeat(64) }))
+        .success,
+    ).toBe(true);
   });
 
   it('accepts a Finding with no location — location is optional', () => {
@@ -62,7 +68,10 @@ describe('FindingSchema — CORE-04', () => {
 
   it('sortFindings is deterministic across repeat calls over the same set', () => {
     const a = makeFinding({
-      fingerprint: fingerprintFinding({ stageId: 'reviewer', title: 'A blocker' }),
+      fingerprint: fingerprintFinding({
+        stageId: 'reviewer',
+        title: 'A blocker',
+      }),
       severity: 'blocker',
       title: 'A blocker',
     }) as Finding;
@@ -72,7 +81,10 @@ describe('FindingSchema — CORE-04', () => {
       title: 'A nit',
     }) as Finding;
     const c = makeFinding({
-      fingerprint: fingerprintFinding({ stageId: 'reviewer', title: 'A major' }),
+      fingerprint: fingerprintFinding({
+        stageId: 'reviewer',
+        title: 'A major',
+      }),
       severity: 'major',
       title: 'A major',
     }) as Finding;
@@ -82,7 +94,11 @@ describe('FindingSchema — CORE-04', () => {
     const second = sortFindings(set).map((f) => f.fingerprint);
     expect(first).toEqual(second);
     // blocker before major before nit
-    expect(sortFindings(set).map((f) => f.severity)).toEqual(['blocker', 'major', 'nit']);
+    expect(sortFindings(set).map((f) => f.severity)).toEqual([
+      'blocker',
+      'major',
+      'nit',
+    ]);
   });
 
   it('sortFindings does not mutate its input', () => {
@@ -109,7 +125,11 @@ describe('fingerprint normalisation — pinned behaviour, tuning deferred to Pha
   const STAGE = 'reviewer';
 
   it.each([
-    ['same title differing only in letter case', 'Missing Null Check', 'missing null check'],
+    [
+      'same title differing only in letter case',
+      'Missing Null Check',
+      'missing null check',
+    ],
     [
       'same title differing only in collapsed whitespace',
       'Missing   null    check',
@@ -138,7 +158,11 @@ describe('fingerprint normalisation — pinned behaviour, tuning deferred to Pha
   });
 
   it.each([
-    ['titles naming different code identifiers', "`foo` is unvalidated", "`bar` is unvalidated"],
+    [
+      'titles naming different code identifiers',
+      '`foo` is unvalidated',
+      '`bar` is unvalidated',
+    ],
     [
       'titles describing different problems entirely',
       'Missing null check',

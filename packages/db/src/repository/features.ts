@@ -1,5 +1,10 @@
 import type { Kysely } from 'kysely';
-import type { Database, FeatureEventsTable, FeaturesTable, RoundsTable } from '../schema.js';
+import type {
+  Database,
+  FeatureEventsTable,
+  FeaturesTable,
+  RoundsTable,
+} from '../schema.js';
 
 /**
  * The narrow set of feature operations Phases 1 through 5 need.
@@ -49,7 +54,11 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
     },
 
     findById(id) {
-      return db.selectFrom('features').selectAll().where('id', '=', id).executeTakeFirst();
+      return db
+        .selectFrom('features')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirst();
     },
 
     findByPath(repoId, path) {
@@ -70,7 +79,14 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .execute();
     },
 
-    async compareAndSwapState({ id, expectedVersion, state, currentStageIndex, round, updatedAt }) {
+    async compareAndSwapState({
+      id,
+      expectedVersion,
+      state,
+      currentStageIndex,
+      round,
+      updatedAt,
+    }) {
       let query = db
         .updateTable('features')
         .set({

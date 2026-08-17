@@ -12,7 +12,8 @@ export const SendBackBriefSchema = z
   })
   .meta({
     id: 'SendBackBrief',
-    description: 'The actionable findings a round is sending back to the developer',
+    description:
+      'The actionable findings a round is sending back to the developer',
   });
 
 export type SendBackBrief = z.infer<typeof SendBackBriefSchema>;
@@ -27,17 +28,26 @@ export type SendBackBrief = z.infer<typeof SendBackBriefSchema>;
  */
 export const GreenOutcomeSchema = z
   .strictObject({ kind: z.literal('green') })
-  .meta({ id: 'GreenOutcome', description: 'Every gate judged, and nothing is outstanding' });
+  .meta({
+    id: 'GreenOutcome',
+    description: 'Every gate judged, and nothing is outstanding',
+  });
 
 /** The round produced actionable findings. The only outcome that loops. */
 export const SendBackOutcomeSchema = z
   .strictObject({ kind: z.literal('send_back'), brief: SendBackBriefSchema })
-  .meta({ id: 'SendBackOutcome', description: 'The developer gets a brief and another round' });
+  .meta({
+    id: 'SendBackOutcome',
+    description: 'The developer gets a brief and another round',
+  });
 
 /** The round cannot be resolved by looping. A human is the right recipient. */
 export const EscalateOutcomeSchema = z
   .strictObject({ kind: z.literal('escalate'), reason: z.string().min(1) })
-  .meta({ id: 'EscalateOutcome', description: 'Looping cannot resolve this; escalate to a human' });
+  .meta({
+    id: 'EscalateOutcome',
+    description: 'Looping cannot resolve this; escalate to a human',
+  });
 
 /**
  * A gate could not tell, and nothing actionable came back.
@@ -52,7 +62,10 @@ export const UnverifiedOutcomeSchema = z
     kind: z.literal('unverified'),
     inconclusive: z.array(InconclusiveVerdictSchema).min(1),
   })
-  .meta({ id: 'UnverifiedOutcome', description: 'A gate could not tell, and nothing is actionable' });
+  .meta({
+    id: 'UnverifiedOutcome',
+    description: 'A gate could not tell, and nothing is actionable',
+  });
 
 /**
  * The result of a whole round of gates (D-09).

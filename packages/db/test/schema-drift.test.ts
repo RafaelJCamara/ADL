@@ -1,7 +1,12 @@
 import { sql, type Kysely } from 'kysely';
 import { describe, expect, it } from 'vitest';
 
-import { BOOKKEEPING_TABLES, TABLE_COLUMNS, migrateToLatest, type Database } from '../src/index.js';
+import {
+  BOOKKEEPING_TABLES,
+  TABLE_COLUMNS,
+  migrateToLatest,
+  type Database,
+} from '../src/index.js';
 import { MIGRATIONS_DIR, withTempDb } from './helpers/temp-db.js';
 
 /**
@@ -28,11 +33,18 @@ async function liveTables(db: Kysely<Database>): Promise<string[]> {
     where type = 'table' and name not like 'sqlite_%'
     order by name
   `.execute(db);
-  return result.rows.filter((r) => !BOOKKEEPING_TABLES.includes(r.name)).map((r) => r.name);
+  return result.rows
+    .filter((r) => !BOOKKEEPING_TABLES.includes(r.name))
+    .map((r) => r.name);
 }
 
-async function liveColumns(db: Kysely<Database>, table: string): Promise<string[]> {
-  const result = await sql<{ name: string }>`pragma table_info(${sql.raw(table)})`.execute(db);
+async function liveColumns(
+  db: Kysely<Database>,
+  table: string,
+): Promise<string[]> {
+  const result = await sql<{
+    name: string;
+  }>`pragma table_info(${sql.raw(table)})`.execute(db);
   return result.rows.map((r) => r.name);
 }
 
@@ -57,7 +69,9 @@ describe('the hand-written Database interface matches the live schema', () => {
       await migrateToLatest(db, MIGRATIONS_DIR);
 
       const live = await liveTables(db);
-      const missing = Object.keys(TABLE_COLUMNS).filter((t) => !live.includes(t));
+      const missing = Object.keys(TABLE_COLUMNS).filter(
+        (t) => !live.includes(t),
+      );
       expect(
         missing,
         `these tables are declared in the Database interface but no migration creates them: ${missing.join(', ')}`,
@@ -76,12 +90,16 @@ describe('the hand-written Database interface matches the live schema', () => {
 
         for (const column of live) {
           if (!declared.includes(column)) {
-            drift.push(`${table}.${column} exists in the database but not in the interface`);
+            drift.push(
+              `${table}.${column} exists in the database but not in the interface`,
+            );
           }
         }
         for (const column of declared) {
           if (!live.includes(column)) {
-            drift.push(`${table}.${column} is declared in the interface but no column exists`);
+            drift.push(
+              `${table}.${column} is declared in the interface but no column exists`,
+            );
           }
         }
       }

@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'kysely';
@@ -46,7 +53,10 @@ async function copyRealMigrationsInto(dir: string): Promise<void> {
   for (const file of files) {
     if (file.endsWith('.d.ts')) continue;
     if (!/\.(ts|js|mjs)$/.test(file)) continue;
-    await writeFile(join(dir, file), await readFile(join(MIGRATIONS_DIR, file)));
+    await writeFile(
+      join(dir, file),
+      await readFile(join(MIGRATIONS_DIR, file)),
+    );
   }
 }
 
@@ -86,7 +96,9 @@ describe('the migration checksum guard', () => {
     const realDigestsAtTeardown = await digestRealMigrations();
     // This is the containment proof, not `git diff --exit-code`: it depends on
     // nothing git knows, and it fails in the same run that caused the problem.
-    expect([...realDigestsAtTeardown.entries()]).toEqual([...realDigestsAtSetup.entries()]);
+    expect([...realDigestsAtTeardown.entries()]).toEqual([
+      ...realDigestsAtSetup.entries(),
+    ]);
   });
 
   it('passes trivially on a fresh database and records one checksum row per applied migration', async () => {
@@ -95,9 +107,9 @@ describe('the migration checksum guard', () => {
       expect(result.error).toBeUndefined();
       expect(result.results.length).toBeGreaterThan(0);
 
-      const rows = await sql<{ name: string }>`select name from ${sql.raw(CHECKSUM_TABLE)}`.execute(
-        db,
-      );
+      const rows = await sql<{
+        name: string;
+      }>`select name from ${sql.raw(CHECKSUM_TABLE)}`.execute(db);
       expect(rows.rows.map((r) => r.name).sort()).toEqual(
         result.results.map((r) => r.migrationName).sort(),
       );
@@ -107,8 +119,13 @@ describe('the migration checksum guard', () => {
   it('the runner records no column on kysely_migration beyond its original two', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
-      const info = await sql<{ name: string }>`pragma table_info(kysely_migration)`.execute(db);
-      expect(info.rows.map((r) => r.name).sort()).toEqual(['name', 'timestamp']);
+      const info = await sql<{
+        name: string;
+      }>`pragma table_info(kysely_migration)`.execute(db);
+      expect(info.rows.map((r) => r.name).sort()).toEqual([
+        'name',
+        'timestamp',
+      ]);
     });
   });
 
@@ -126,7 +143,10 @@ describe('the migration checksum guard', () => {
         expect(first.results.length).toBeGreaterThan(0);
 
         const appliedName = first.results[0]!.migrationName;
-        await appendFile(join(dir, `${appliedName}.ts`), '\n// mutated after being applied\n');
+        await appendFile(
+          join(dir, `${appliedName}.ts`),
+          '\n// mutated after being applied\n',
+        );
 
         await expect(migrateToLatest(db, dir)).rejects.toThrow(
           new RegExp(`"${appliedName}"[\\s\\S]*modified after being applied`),
@@ -147,7 +167,9 @@ describe('the migration checksum guard', () => {
       await withTempDb(async ({ db }) => {
         await migrateToLatest(db, dir);
         const files = await readdir(dir);
-        const target = files.find((f) => /\.ts$/.test(f) && !f.endsWith('.d.ts'))!;
+        const target = files.find(
+          (f) => /\.ts$/.test(f) && !f.endsWith('.d.ts'),
+        )!;
         await appendFile(join(dir, target), '\n// one more byte\n');
 
         let caught: unknown;
@@ -170,7 +192,9 @@ describe('the migration checksum guard', () => {
   });
 
   it('refuses to run when a checksum row for an applied migration was deleted', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'adl-migrations-delete-checksum-'));
+    const dir = await mkdtemp(
+      join(tmpdir(), 'adl-migrations-delete-checksum-'),
+    );
     expect(dir).not.toBe(MIGRATIONS_DIR);
 
     try {
@@ -182,7 +206,9 @@ describe('the migration checksum guard', () => {
 
         // The bypass this proves impossible: removing the guard's own
         // evidence rather than the migration's evidence.
-        await sql`delete from ${sql.raw(CHECKSUM_TABLE)} where name = ${appliedName}`.execute(db);
+        await sql`delete from ${sql.raw(CHECKSUM_TABLE)} where name = ${appliedName}`.execute(
+          db,
+        );
 
         await expect(migrateToLatest(db, dir)).rejects.toThrow(
           new RegExp(`"${appliedName}"[\\s\\S]*no recorded checksum`),
@@ -207,7 +233,9 @@ describe('the migration checksum guard', () => {
 
         const second = await migrateToLatest(db, dir);
         expect(second.error).toBeUndefined();
-        expect(second.results.map((r) => r.migrationName)).toContain('9999_extra');
+        expect(second.results.map((r) => r.migrationName)).toContain(
+          '9999_extra',
+        );
 
         const rows = await sql<{ name: string }>`
           select name from ${sql.raw(CHECKSUM_TABLE)} where name = '9999_extra'
@@ -238,7 +266,9 @@ describe('the migration checksum guard', () => {
 
         // ...and neither bookkeeping table recorded it, because the checksum
         // insert and the migration's statements share one transaction.
-        const applied = await sql<{ name: string }>`select name from kysely_migration`.execute(db);
+        const applied = await sql<{
+          name: string;
+        }>`select name from kysely_migration`.execute(db);
         expect(applied.rows.map((r) => r.name)).not.toContain('0001_boom');
 
         const checksums = await sql<{ name: string }>`

@@ -36,7 +36,10 @@ describe('spine: spec -> verdicts -> round outcome -> persisted rows', () => {
       VerdictSchema.parse({
         outcome: 'pass',
         summary: 'Every acceptance criterion is implemented and covered.',
-        checked: spec.acceptanceCriteria.map((c) => ({ kind: 'criterion', id: c.id })),
+        checked: spec.acceptanceCriteria.map((c) => ({
+          kind: 'criterion',
+          id: c.id,
+        })),
       }),
       VerdictSchema.parse({
         outcome: 'skip',
@@ -99,7 +102,10 @@ describe('spine: spec -> verdicts -> round outcome -> persisted rows', () => {
           seq: 1,
           from_state: 'gating',
           to_state: 'ready_for_pr',
-          event_json: JSON.stringify({ kind: 'round_completed', outcome: outcome.kind }),
+          event_json: JSON.stringify({
+            kind: 'round_completed',
+            outcome: outcome.kind,
+          }),
           actor: 'manager',
           at: NOW,
         })

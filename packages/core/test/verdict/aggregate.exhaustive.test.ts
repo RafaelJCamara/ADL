@@ -2,8 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import { aggregate } from '../../src/verdict/aggregate.js';
 import { RoundOutcomeSchema } from '../../src/verdict/round-outcome.js';
-import { fingerprintFinding, type Finding, type Severity } from '../../src/verdict/finding.js';
-import { OUTCOMES, VerdictSchema, type Outcome, type Verdict } from '../../src/verdict/verdict.js';
+import {
+  fingerprintFinding,
+  type Finding,
+  type Severity,
+} from '../../src/verdict/finding.js';
+import {
+  OUTCOMES,
+  VerdictSchema,
+  type Outcome,
+  type Verdict,
+} from '../../src/verdict/verdict.js';
 
 /**
  * CORE-02's word *exhaustively*, made literally true.
@@ -62,7 +71,11 @@ function multisets<T>(items: readonly T[], n: number): T[][] {
   return out;
 }
 
-function makeFinding(stageId: string, title: string, severity: Severity): Finding {
+function makeFinding(
+  stageId: string,
+  title: string,
+  severity: Severity,
+): Finding {
   return {
     fingerprint: fingerprintFinding({ stageId, title }),
     severity,
@@ -72,8 +85,16 @@ function makeFinding(stageId: string, title: string, severity: Severity): Findin
   };
 }
 
-const SEND_BACK_FINDING = makeFinding('reviewer', 'Password comparison is not constant-time', 'blocker');
-const WARN_FINDING = makeFinding('reviewer', 'This helper could be a one-liner', 'nit');
+const SEND_BACK_FINDING = makeFinding(
+  'reviewer',
+  'Password comparison is not constant-time',
+  'blocker',
+);
+const WARN_FINDING = makeFinding(
+  'reviewer',
+  'This helper could be a one-liner',
+  'nit',
+);
 
 /**
  * One real, schema-valid `Verdict` per outcome.
@@ -127,7 +148,9 @@ function round(outcomes: readonly Outcome[]): readonly Verdict[] {
 }
 
 describe('aggregate() — CORE-02, exhaustively', () => {
-  const perLength = Array.from({ length: MAX_STAGES }, (_, i) => multisets(OUTCOMES, i + 1));
+  const perLength = Array.from({ length: MAX_STAGES }, (_, i) =>
+    multisets(OUTCOMES, i + 1),
+  );
   const all = perLength.flat();
 
   it('enumerates every multiset for lengths 1..8 — 3,002 of them', () => {
@@ -135,7 +158,9 @@ describe('aggregate() — CORE-02, exhaustively', () => {
     // enumeration would otherwise leave every safety assertion below passing
     // over a smaller universe, which is the failure this test exists to make
     // impossible.
-    expect(perLength.map((bucket) => bucket.length)).toEqual([...EXPECTED_PER_LENGTH]);
+    expect(perLength.map((bucket) => bucket.length)).toEqual([
+      ...EXPECTED_PER_LENGTH,
+    ]);
     expect(all).toHaveLength(EXPECTED_TOTAL);
     expect(perLength[MAX_STAGES - 1]).toHaveLength(EXPECTED_AT_EXACTLY_EIGHT);
   });
@@ -144,7 +169,8 @@ describe('aggregate() — CORE-02, exhaustively', () => {
     const offenders: string[] = [];
     for (const combo of all) {
       if (!combo.includes('inconclusive')) continue;
-      if (aggregate(round(combo)).kind === 'green') offenders.push(combo.join('+'));
+      if (aggregate(round(combo)).kind === 'green')
+        offenders.push(combo.join('+'));
     }
     expect(offenders).toEqual([]);
   });
@@ -154,7 +180,8 @@ describe('aggregate() — CORE-02, exhaustively', () => {
     for (const combo of all) {
       const forward = aggregate(round(combo)).kind;
       const backward = aggregate(round([...combo].reverse())).kind;
-      if (forward !== backward) offenders.push(`${combo.join('+')}: ${forward} vs ${backward}`);
+      if (forward !== backward)
+        offenders.push(`${combo.join('+')}: ${forward} vs ${backward}`);
     }
     expect(offenders).toEqual([]);
   });
@@ -194,7 +221,9 @@ describe('aggregate() — D-10 precedence, as named tests', () => {
   });
 
   it('sends back when `send_back` sits alongside `inconclusive` and no `fail`', () => {
-    const outcome = aggregate(round(['inconclusive', 'send_back', 'warn', 'pass', 'skip']));
+    const outcome = aggregate(
+      round(['inconclusive', 'send_back', 'warn', 'pass', 'skip']),
+    );
     expect(outcome.kind).toBe('send_back');
     if (outcome.kind !== 'send_back') throw new Error('unreachable');
     const fingerprints = outcome.brief.findings.map((f) => f.fingerprint);
@@ -203,7 +232,10 @@ describe('aggregate() — D-10 precedence, as named tests', () => {
     expect(fingerprints).toContain(SEND_BACK_FINDING.fingerprint);
     expect(fingerprints).toContain(WARN_FINDING.fingerprint);
     // Deterministically ordered: blocker before nit.
-    expect(outcome.brief.findings.map((f) => f.severity)).toEqual(['blocker', 'nit']);
+    expect(outcome.brief.findings.map((f) => f.severity)).toEqual([
+      'blocker',
+      'nit',
+    ]);
   });
 
   it('is unverified when `inconclusive` has no `send_back` and no `fail` anywhere', () => {

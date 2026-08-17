@@ -24,7 +24,11 @@ export {
   type DetectedFormat,
 } from './detect-format.js';
 
-export { assignCriterionIds, criterionTextHash, type CriterionBody } from './criterion-ids.js';
+export {
+  assignCriterionIds,
+  criterionTextHash,
+  type CriterionBody,
+} from './criterion-ids.js';
 
 export { loadAdlTemplateSpec, MAX_SPEC_BYTES } from './markdown.js';
 

@@ -25,12 +25,12 @@ longer accurate, and the amendment is deliberate rather than an oversight.
 
 `@adl/core` depends on **Zod plus two parser families**:
 
-| Dependency | Why it is here |
-|---|---|
-| `zod` | The source of truth for every contract (D-26) |
-| `mdast-util-from-markdown` | CommonMark parsing **with byte offsets** for the ADL template loader |
-| `@cucumber/gherkin` + `@cucumber/messages` | The reference Gherkin implementation, for `*.feature` specs |
-| `yaml` | `adl.yml` parsing with positioned errors |
+| Dependency                                 | Why it is here                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `zod`                                      | The source of truth for every contract (D-26)                        |
+| `mdast-util-from-markdown`                 | CommonMark parsing **with byte offsets** for the ADL template loader |
+| `@cucumber/gherkin` + `@cucumber/messages` | The reference Gherkin implementation, for `*.feature` specs          |
+| `yaml`                                     | `adl.yml` parsing with positioned errors                             |
 
 The markdown parser is the one that moves the number, pulling in roughly 34
 transitive micromark packages. It earns that cost: `position.start.offset` /
@@ -50,13 +50,13 @@ There is deliberately **no** `src/index.ts`. Subsystems are reached through
 subpath exports, so a plan that adds a subsystem creates its own barrel and
 never edits a shared one:
 
-| Subpath | Contents |
-|---|---|
+| Subpath             | Contents                                                    |
+| ------------------- | ----------------------------------------------------------- |
 | `@adl/core/verdict` | `Verdict`, `Finding`, `CriterionRef`, `Waiver`, `aggregate` |
-| `@adl/core/spec` | `NormalizedSpec`, `AcceptanceCriterion`, the spec loaders |
-| `@adl/core/stage` | `Stage`, `StageContext`, `StageError`, `DeveloperOutcome` |
-| `@adl/core/config` | `adl.yml` schema, `EffectiveConfig` merge and clamps |
-| `@adl/core/state` | `FeatureState`, `FeatureEvent`, `transition` |
+| `@adl/core/spec`    | `NormalizedSpec`, `AcceptanceCriterion`, the spec loaders   |
+| `@adl/core/stage`   | `Stage`, `StageContext`, `StageError`, `DeveloperOutcome`   |
+| `@adl/core/config`  | `adl.yml` schema, `EffectiveConfig` merge and clamps        |
+| `@adl/core/state`   | `FeatureState`, `FeatureEvent`, `transition`                |
 
 The bare `.` export points at `./verdict` for convenience; prefer the explicit
 subpath.

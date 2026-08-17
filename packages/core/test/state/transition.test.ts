@@ -21,7 +21,9 @@ import {
  * added to the union without a sample here fails to compile in an editor and,
  * more importantly, is caught at runtime by the cross-product count below.
  */
-const SAMPLE_EVENTS: { [K in FeatureEventKind]: Extract<FeatureEvent, { t: K }> } = {
+const SAMPLE_EVENTS: {
+  [K in FeatureEventKind]: Extract<FeatureEvent, { t: K }>;
+} = {
   admit: { t: 'admit' },
   lease_acquired: { t: 'lease_acquired', workerId: 'worker-1' },
   workspace_ready: { t: 'workspace_ready' },
@@ -42,7 +44,9 @@ const SAMPLE_EVENTS: { [K in FeatureEventKind]: Extract<FeatureEvent, { t: K }> 
   unrecoverable: { t: 'unrecoverable', reason: 'workspace destroyed' },
 };
 
-const ALL_EVENTS: readonly FeatureEvent[] = FEATURE_EVENT_KINDS.map((kind) => SAMPLE_EVENTS[kind]);
+const ALL_EVENTS: readonly FeatureEvent[] = FEATURE_EVENT_KINDS.map(
+  (kind) => SAMPLE_EVENTS[kind],
+);
 
 const NON_TERMINAL_STATES: readonly FeatureState[] = FEATURE_STATES.filter(
   (state) => !(TERMINAL_STATES as readonly FeatureState[]).includes(state),
@@ -229,19 +233,25 @@ describe('transition() is total across every state-by-event pair', () => {
       for (const event of ALL_EVENTS) {
         const outcome = transition(state, event, BASE_CTX);
         expect(outcome, `${state} + ${event.t} returned nothing`).toBeDefined();
-        expect(typeof outcome.ok, `${state} + ${event.t} has no ok discriminator`).toBe('boolean');
+        expect(
+          typeof outcome.ok,
+          `${state} + ${event.t} has no ok discriminator`,
+        ).toBe('boolean');
         outcomes.push(outcome);
       }
     }
 
-    expect(outcomes).toHaveLength(FEATURE_STATES.length * FEATURE_EVENT_KINDS.length);
+    expect(outcomes).toHaveLength(
+      FEATURE_STATES.length * FEATURE_EVENT_KINDS.length,
+    );
     expect(outcomes).toHaveLength(165);
   });
 
   it('never throws, for any pair', () => {
     for (const state of FEATURE_STATES) {
       for (const event of ALL_EVENTS) {
-        const call = (): TransitionOutcome => transition(state, event, BASE_CTX);
+        const call = (): TransitionOutcome =>
+          transition(state, event, BASE_CTX);
         expect(call, `${state} + ${event.t} threw`).not.toThrow();
       }
     }
@@ -252,7 +262,10 @@ describe('transition() is total across every state-by-event pair', () => {
       for (const event of ALL_EVENTS) {
         const outcome = transition(state, event, BASE_CTX);
         if (outcome.ok) {
-          expect(FEATURE_STATES, `${state} + ${event.t} → ${outcome.next}`).toContain(outcome.next);
+          expect(
+            FEATURE_STATES,
+            `${state} + ${event.t} → ${outcome.next}`,
+          ).toContain(outcome.next);
         }
       }
     }
@@ -282,24 +295,32 @@ describe('transition() is total across every state-by-event pair', () => {
 
 describe('every edge the architecture diagram draws', () => {
   it('discovered --admit--> queued', () => {
-    expect(applied(transition('discovered', SAMPLE_EVENTS.admit, BASE_CTX)).next).toBe('queued');
+    expect(
+      applied(transition('discovered', SAMPLE_EVENTS.admit, BASE_CTX)).next,
+    ).toBe('queued');
   });
 
   it('queued --lease_acquired--> leased', () => {
-    expect(applied(transition('queued', SAMPLE_EVENTS.lease_acquired, BASE_CTX)).next).toBe(
-      'leased',
-    );
+    expect(
+      applied(transition('queued', SAMPLE_EVENTS.lease_acquired, BASE_CTX))
+        .next,
+    ).toBe('leased');
   });
 
   it('leased --workspace_ready--> developing', () => {
-    expect(applied(transition('leased', SAMPLE_EVENTS.workspace_ready, BASE_CTX)).next).toBe(
-      'developing',
-    );
+    expect(
+      applied(transition('leased', SAMPLE_EVENTS.workspace_ready, BASE_CTX))
+        .next,
+    ).toBe('developing');
   });
 
   it('developing --dev_committed--> gating, starting the pipeline at stage zero', () => {
     const result = applied(
-      transition('developing', SAMPLE_EVENTS.dev_committed, ctxWith({ currentStageIndex: 2 })),
+      transition(
+        'developing',
+        SAMPLE_EVENTS.dev_committed,
+        ctxWith({ currentStageIndex: 2 }),
+      ),
     );
 
     expect(result.next).toBe('gating');
@@ -313,7 +334,11 @@ describe('every edge the architecture diagram draws', () => {
    */
   it('gating --gate_passed--> gating, advancing the stage index without spending a round', () => {
     const result = applied(
-      transition('gating', SAMPLE_EVENTS.gate_passed, ctxWith({ currentStageIndex: 1 })),
+      transition(
+        'gating',
+        SAMPLE_EVENTS.gate_passed,
+        ctxWith({ currentStageIndex: 1 }),
+      ),
     );
 
     expect(result.next).toBe('gating');
@@ -322,7 +347,9 @@ describe('every edge the architecture diagram draws', () => {
   });
 
   it('gating --all_gates_passed--> publishing without spending a round', () => {
-    const result = applied(transition('gating', SAMPLE_EVENTS.all_gates_passed, BASE_CTX));
+    const result = applied(
+      transition('gating', SAMPLE_EVENTS.all_gates_passed, BASE_CTX),
+    );
 
     expect(result.next).toBe('publishing');
     expect(result.counters.round).toBe(0);
@@ -330,7 +357,11 @@ describe('every edge the architecture diagram draws', () => {
 
   it('gating --send_back--> developing, spending exactly one round', () => {
     const result = applied(
-      transition('gating', SAMPLE_EVENTS.send_back, ctxWith({ round: 1, currentStageIndex: 2 })),
+      transition(
+        'gating',
+        SAMPLE_EVENTS.send_back,
+        ctxWith({ round: 1, currentStageIndex: 2 }),
+      ),
     );
 
     expect(result.next).toBe('developing');
@@ -340,30 +371,50 @@ describe('every edge the architecture diagram draws', () => {
   });
 
   it('publishing --cr_opened--> pr_open', () => {
-    expect(applied(transition('publishing', SAMPLE_EVENTS.cr_opened, BASE_CTX)).next).toBe(
-      'pr_open',
-    );
+    expect(
+      applied(transition('publishing', SAMPLE_EVENTS.cr_opened, BASE_CTX)).next,
+    ).toBe('pr_open');
   });
 
   it('pr_open --cr_merged--> merged', () => {
-    expect(applied(transition('pr_open', SAMPLE_EVENTS.cr_merged, BASE_CTX)).next).toBe('merged');
+    expect(
+      applied(transition('pr_open', SAMPLE_EVENTS.cr_merged, BASE_CTX)).next,
+    ).toBe('merged');
   });
 
   it('pr_open --cr_closed--> abandoned', () => {
-    const result = applied(transition('pr_open', SAMPLE_EVENTS.cr_closed, BASE_CTX));
+    const result = applied(
+      transition('pr_open', SAMPLE_EVENTS.cr_closed, BASE_CTX),
+    );
     expect(result.next).toBe('abandoned');
   });
 
   it('every leased state --lease_expired--> queued', () => {
-    for (const state of ['leased', 'developing', 'gating', 'publishing'] as const) {
-      const result = applied(transition(state, SAMPLE_EVENTS.lease_expired, BASE_CTX));
+    for (const state of [
+      'leased',
+      'developing',
+      'gating',
+      'publishing',
+    ] as const) {
+      const result = applied(
+        transition(state, SAMPLE_EVENTS.lease_expired, BASE_CTX),
+      );
       expect(result.next, `${state} + lease_expired`).toBe('queued');
-      expect(result.counters.round, `${state} + lease_expired spent a round`).toBe(0);
+      expect(
+        result.counters.round,
+        `${state} + lease_expired spent a round`,
+      ).toBe(0);
     }
   });
 
   it('rejects lease_expired where no lease is held', () => {
-    for (const state of ['discovered', 'queued', 'pr_open', 'escalated', 'paused'] as const) {
+    for (const state of [
+      'discovered',
+      'queued',
+      'pr_open',
+      'escalated',
+      'paused',
+    ] as const) {
       const outcome = transition(state, SAMPLE_EVENTS.lease_expired, BASE_CTX);
       expect(outcome.ok, `${state} + lease_expired was accepted`).toBe(false);
     }
@@ -371,23 +422,25 @@ describe('every edge the architecture diagram draws', () => {
 
   it('any non-terminal state --limit_exceeded--> escalated', () => {
     for (const state of NON_TERMINAL_STATES) {
-      expect(applied(transition(state, SAMPLE_EVENTS.limit_exceeded, BASE_CTX)).next).toBe(
-        'escalated',
-      );
+      expect(
+        applied(transition(state, SAMPLE_EVENTS.limit_exceeded, BASE_CTX)).next,
+      ).toBe('escalated');
     }
   });
 
   it('any non-terminal state --unrecoverable--> escalated', () => {
     for (const state of NON_TERMINAL_STATES) {
-      expect(applied(transition(state, SAMPLE_EVENTS.unrecoverable, BASE_CTX)).next).toBe(
-        'escalated',
-      );
+      expect(
+        applied(transition(state, SAMPLE_EVENTS.unrecoverable, BASE_CTX)).next,
+      ).toBe('escalated');
     }
   });
 
   it('any non-terminal state --pause--> paused', () => {
     for (const state of NON_TERMINAL_STATES) {
-      expect(applied(transition(state, SAMPLE_EVENTS.pause, BASE_CTX)).next).toBe('paused');
+      expect(
+        applied(transition(state, SAMPLE_EVENTS.pause, BASE_CTX)).next,
+      ).toBe('paused');
     }
   });
 
@@ -399,7 +452,9 @@ describe('every edge the architecture diagram draws', () => {
   });
 
   it('paused --resume--> queued', () => {
-    expect(applied(transition('paused', SAMPLE_EVENTS.resume, BASE_CTX)).next).toBe('queued');
+    expect(
+      applied(transition('paused', SAMPLE_EVENTS.resume, BASE_CTX)).next,
+    ).toBe('queued');
   });
 
   /**
@@ -408,7 +463,9 @@ describe('every edge the architecture diagram draws', () => {
    * is `sqlite3` is a system whose users corrupt their own state.
    */
   it('escalated --resume--> queued', () => {
-    expect(applied(transition('escalated', SAMPLE_EVENTS.resume, BASE_CTX)).next).toBe('queued');
+    expect(
+      applied(transition('escalated', SAMPLE_EVENTS.resume, BASE_CTX)).next,
+    ).toBe('queued');
   });
 
   it('accepts nothing at all from a terminal state', () => {
@@ -429,7 +486,11 @@ describe('the ceilings, checked inside the transition', () => {
    */
   it('escalates instead of sending back when the next round would exceed the ceiling', () => {
     const result = applied(
-      transition('gating', SAMPLE_EVENTS.send_back, ctxWith({ round: 3, maxRounds: 3 })),
+      transition(
+        'gating',
+        SAMPLE_EVENTS.send_back,
+        ctxWith({ round: 3, maxRounds: 3 }),
+      ),
     );
 
     expect(result.next).toBe('escalated');
@@ -438,7 +499,11 @@ describe('the ceilings, checked inside the transition', () => {
 
   it('still sends back on the last round the ceiling allows', () => {
     const result = applied(
-      transition('gating', SAMPLE_EVENTS.send_back, ctxWith({ round: 2, maxRounds: 3 })),
+      transition(
+        'gating',
+        SAMPLE_EVENTS.send_back,
+        ctxWith({ round: 2, maxRounds: 3 }),
+      ),
     );
 
     expect(result.next).toBe('developing');
@@ -513,7 +578,9 @@ describe('what every applied transition must carry', () => {
         if (!outcome.ok) continue;
 
         const isSendBackToDeveloping =
-          state === 'gating' && event.t === 'send_back' && outcome.next === 'developing';
+          state === 'gating' &&
+          event.t === 'send_back' &&
+          outcome.next === 'developing';
 
         const expected = isSendBackToDeveloping ? 1 : 0;
         expect(outcome.counters.round, `${state} + ${event.t}`).toBe(expected);
@@ -540,7 +607,9 @@ describe('transition() is pure', () => {
       for (const event of ALL_EVENTS) {
         const eventBefore = structuredClone(event);
         transition(state, event, BASE_CTX);
-        expect(event, `${state} + ${event.t} mutated its event`).toEqual(eventBefore);
+        expect(event, `${state} + ${event.t} mutated its event`).toEqual(
+          eventBefore,
+        );
       }
     }
 

@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { migrateToLatest, usageRepository, type CostSource } from '../src/index.js';
+import {
+  migrateToLatest,
+  usageRepository,
+  type CostSource,
+} from '../src/index.js';
 import { priceUsageEvent } from '../src/pricing.js';
 import { MIGRATIONS_DIR, withTempDb } from './helpers/temp-db.js';
 
@@ -58,7 +62,9 @@ describe('model_prices seed', () => {
       );
       expect(sonnetStandard.length).toBeGreaterThanOrEqual(2);
 
-      const effectiveFromDates = new Set(sonnetStandard.map((r) => r.effective_from));
+      const effectiveFromDates = new Set(
+        sonnetStandard.map((r) => r.effective_from),
+      );
       // A seed where every row shares one date leaves this column present and
       // never executed (Pitfall 7) — the whole point of this assertion.
       expect(effectiveFromDates.size).toBeGreaterThanOrEqual(2);
@@ -90,8 +96,14 @@ describe('priceUsageEvent: the temporal lookup', () => {
         cacheReadInputTokens: null,
       } as const;
 
-      const before = await priceUsageEvent(db, { ...base, at: AT_BEFORE_BOUNDARY });
-      const after = await priceUsageEvent(db, { ...base, at: AT_AFTER_BOUNDARY });
+      const before = await priceUsageEvent(db, {
+        ...base,
+        at: AT_BEFORE_BOUNDARY,
+      });
+      const after = await priceUsageEvent(db, {
+        ...base,
+        at: AT_AFTER_BOUNDARY,
+      });
 
       expect(before.costSource).toBe<CostSource>('computed');
       expect(after.costSource).toBe<CostSource>('computed');
@@ -114,7 +126,10 @@ describe('priceUsageEvent: the temporal lookup', () => {
         cacheReadInputTokens: null,
       } as const;
 
-      const standard = await priceUsageEvent(db, { ...base, speed: 'standard' });
+      const standard = await priceUsageEvent(db, {
+        ...base,
+        speed: 'standard',
+      });
       const fast = await priceUsageEvent(db, { ...base, speed: 'fast' });
 
       expect(standard.costUsd).not.toBeNull();

@@ -24,27 +24,48 @@ function fixture(name: string): string {
   );
 }
 
-const SPECS: readonly { readonly label: string; readonly spec: NormalizedSpec }[] = [
-  { label: 'spec.md', spec: loadAdlTemplateSpec(fixture('spec.md'), 'feature-branch-cleanup') },
-  { label: 'checkout.feature', spec: loadGherkinSpec(fixture('checkout.feature'), 'checkout') },
-  { label: 'rules.feature', spec: loadGherkinSpec(fixture('rules.feature'), 'withdrawal-limits') },
-  { label: 'outline.feature', spec: loadGherkinSpec(fixture('outline.feature'), 'cart-totals') },
+const SPECS: readonly {
+  readonly label: string;
+  readonly spec: NormalizedSpec;
+}[] = [
+  {
+    label: 'spec.md',
+    spec: loadAdlTemplateSpec(fixture('spec.md'), 'feature-branch-cleanup'),
+  },
+  {
+    label: 'checkout.feature',
+    spec: loadGherkinSpec(fixture('checkout.feature'), 'checkout'),
+  },
+  {
+    label: 'rules.feature',
+    spec: loadGherkinSpec(fixture('rules.feature'), 'withdrawal-limits'),
+  },
+  {
+    label: 'outline.feature',
+    spec: loadGherkinSpec(fixture('outline.feature'), 'cart-totals'),
+  },
 ];
 
 const CRITERION_ID_PATTERN = /^AC-\d+$/;
 
 describe('the cross-format addressing invariant, over every fixture of both formats', () => {
-  it.each(SPECS)('$label: ids are AC-1..AC-n, no gaps, no duplicates', ({ spec }) => {
-    const ids = spec.acceptanceCriteria.map((c) => c.id);
-    expect(ids).toEqual(ids.map((_, i) => `AC-${i + 1}`));
-    expect(new Set(ids).size).toBe(ids.length);
-  });
+  it.each(SPECS)(
+    '$label: ids are AC-1..AC-n, no gaps, no duplicates',
+    ({ spec }) => {
+      const ids = spec.acceptanceCriteria.map((c) => c.id);
+      expect(ids).toEqual(ids.map((_, i) => `AC-${i + 1}`));
+      expect(new Set(ids).size).toBe(ids.length);
+    },
+  );
 
-  it.each(SPECS)('$label: every id matches the CriterionId pattern', ({ spec }) => {
-    for (const criterion of spec.acceptanceCriteria) {
-      expect(criterion.id).toMatch(CRITERION_ID_PATTERN);
-    }
-  });
+  it.each(SPECS)(
+    '$label: every id matches the CriterionId pattern',
+    ({ spec }) => {
+      for (const criterion of spec.acceptanceCriteria) {
+        expect(criterion.id).toMatch(CRITERION_ID_PATTERN);
+      }
+    },
+  );
 
   it('no criterion id carries a format-specific prefix', () => {
     // The invariant that would catch a reintroduced per-format namespace: a
@@ -58,37 +79,56 @@ describe('the cross-format addressing invariant, over every fixture of both form
     }
   });
 
-  it.each(SPECS)('$label: every text is a verbatim source slice', ({ spec }) => {
-    for (const criterion of spec.acceptanceCriteria) {
-      expect(spec.raw.slice(criterion.source.start, criterion.source.end)).toBe(criterion.text);
-    }
-  });
+  it.each(SPECS)(
+    '$label: every text is a verbatim source slice',
+    ({ spec }) => {
+      for (const criterion of spec.acceptanceCriteria) {
+        expect(
+          spec.raw.slice(criterion.source.start, criterion.source.end),
+        ).toBe(criterion.text);
+      }
+    },
+  );
 
-  it.each(SPECS)('$label: every textHash is stable across repeat parses', ({ label, spec }) => {
-    for (const criterion of spec.acceptanceCriteria) {
-      expect(criterion.textHash).toBe(criterionTextHash(criterion.text));
-    }
-    // A second parse of the same fixture produces the same hashes — this is
-    // the id-generator determinism requirement, re-proven at this layer.
-    const reparsed =
-      label === 'spec.md'
-        ? loadAdlTemplateSpec(fixture(label), spec.id)
-        : loadGherkinSpec(fixture(label), spec.id);
-    expect(reparsed.acceptanceCriteria.map((c) => c.textHash)).toEqual(
-      spec.acceptanceCriteria.map((c) => c.textHash),
-    );
-  });
+  it.each(SPECS)(
+    '$label: every textHash is stable across repeat parses',
+    ({ label, spec }) => {
+      for (const criterion of spec.acceptanceCriteria) {
+        expect(criterion.textHash).toBe(criterionTextHash(criterion.text));
+      }
+      // A second parse of the same fixture produces the same hashes — this is
+      // the id-generator determinism requirement, re-proven at this layer.
+      const reparsed =
+        label === 'spec.md'
+          ? loadAdlTemplateSpec(fixture(label), spec.id)
+          : loadGherkinSpec(fixture(label), spec.id);
+      expect(reparsed.acceptanceCriteria.map((c) => c.textHash)).toEqual(
+        spec.acceptanceCriteria.map((c) => c.textHash),
+      );
+    },
+  );
 
   it('the two formats differ only in kind and sourceFormat — addressing itself is format-blind', () => {
     const template = SPECS.find((s) => s.label === 'spec.md');
     const gherkin = SPECS.find((s) => s.label === 'checkout.feature');
     expect(template?.spec.sourceFormat).toBe('adl-template');
     expect(gherkin?.spec.sourceFormat).toBe('gherkin');
-    expect(template?.spec.acceptanceCriteria.every((c) => c.kind === 'statement')).toBe(true);
-    expect(gherkin?.spec.acceptanceCriteria.every((c) => c.kind === 'scenario')).toBe(true);
+    expect(
+      template?.spec.acceptanceCriteria.every((c) => c.kind === 'statement'),
+    ).toBe(true);
+    expect(
+      gherkin?.spec.acceptanceCriteria.every((c) => c.kind === 'scenario'),
+    ).toBe(true);
     // Both id sequences follow the identical rule regardless of kind.
-    expect(template?.spec.acceptanceCriteria.map((c) => c.id)).toEqual(['AC-1', 'AC-2', 'AC-3']);
-    expect(gherkin?.spec.acceptanceCriteria.map((c) => c.id)).toEqual(['AC-1', 'AC-2']);
+    expect(template?.spec.acceptanceCriteria.map((c) => c.id)).toEqual([
+      'AC-1',
+      'AC-2',
+      'AC-3',
+    ]);
+    expect(gherkin?.spec.acceptanceCriteria.map((c) => c.id)).toEqual([
+      'AC-1',
+      'AC-2',
+    ]);
   });
 });
 
@@ -124,13 +164,15 @@ describe('Unicode fidelity in criterion text', () => {
     expect(criterionB).toBeDefined();
 
     // Byte-exact slicing still holds for the multi-byte content.
-    expect(precomposed.slice(criterionA?.source.start, criterionA?.source.end)).toBe(
-      criterionA?.text,
-    );
+    expect(
+      precomposed.slice(criterionA?.source.start, criterionA?.source.end),
+    ).toBe(criterionA?.text);
 
     // Visually identical, NFKC-equal, but the hash treats them as different —
     // no normalisation is silently applied.
-    expect(criterionA?.text.normalize('NFKC')).toBe(criterionB?.text.normalize('NFKC'));
+    expect(criterionA?.text.normalize('NFKC')).toBe(
+      criterionB?.text.normalize('NFKC'),
+    );
     expect(criterionA?.textHash).not.toBe(criterionB?.textHash);
   });
 });

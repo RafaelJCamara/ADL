@@ -221,20 +221,32 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       )
     `.execute(trx);
 
-    await sql`create index rounds_feature_idx on rounds (feature_id, number)`.execute(trx);
+    await sql`create index rounds_feature_idx on rounds (feature_id, number)`.execute(
+      trx,
+    );
     await sql`create index stage_attempts_round_idx on stage_attempts (round_id, stage_index)`.execute(
       trx,
     );
-    await sql`create index verdicts_attempt_idx on verdicts (stage_attempt_id)`.execute(trx);
+    await sql`create index verdicts_attempt_idx on verdicts (stage_attempt_id)`.execute(
+      trx,
+    );
     // The coverage query joins on the criterion id, so it gets its own index.
     await sql`create index verdict_checked_criteria_criterion_idx on verdict_checked_criteria (criterion_id)`.execute(
       trx,
     );
     // Stall detection (LOOP-06) asks "did this fingerprint appear last round?".
-    await sql`create index findings_fingerprint_idx on findings (fingerprint)`.execute(trx);
-    await sql`create index findings_verdict_idx on findings (verdict_id)`.execute(trx);
-    await sql`create index waivers_feature_idx on waivers (feature_id)`.execute(trx);
-    await sql`create index usage_events_feature_idx on usage_events (feature_id, at)`.execute(trx);
+    await sql`create index findings_fingerprint_idx on findings (fingerprint)`.execute(
+      trx,
+    );
+    await sql`create index findings_verdict_idx on findings (verdict_id)`.execute(
+      trx,
+    );
+    await sql`create index waivers_feature_idx on waivers (feature_id)`.execute(
+      trx,
+    );
+    await sql`create index usage_events_feature_idx on usage_events (feature_id, at)`.execute(
+      trx,
+    );
     // The temporal price lookup: model + tier, latest row at or before a date.
     await sql`create index model_prices_lookup_idx on model_prices (model_id, speed, effective_from)`.execute(
       trx,

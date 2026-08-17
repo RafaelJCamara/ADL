@@ -52,18 +52,27 @@ describe('parseYamlDocument: ambiguity', () => {
     // Last-wins is how a maintainer ends up with a setting they believe is in
     // effect and is not — the exact class of quiet wrongness this file format
     // is designed against.
-    expect(() => parseYamlDocument('version: 1\nversion: 2\n')).toThrow(LoadError);
-    expect(() => parseYamlDocument('version: 1\nversion: 2\n')).toThrow(/unique|duplicate/i);
+    expect(() => parseYamlDocument('version: 1\nversion: 2\n')).toThrow(
+      LoadError,
+    );
+    expect(() => parseYamlDocument('version: 1\nversion: 2\n')).toThrow(
+      /unique|duplicate/i,
+    );
   });
 
   it('raises on a source containing more than one document', () => {
-    expect(() => parseYamlDocument('version: 1\n---\nversion: 2\n')).toThrow(LoadError);
-    expect(() => parseYamlDocument('version: 1\n---\nversion: 2\n')).toThrow(/document/i);
+    expect(() => parseYamlDocument('version: 1\n---\nversion: 2\n')).toThrow(
+      LoadError,
+    );
+    expect(() => parseYamlDocument('version: 1\n---\nversion: 2\n')).toThrow(
+      /document/i,
+    );
   });
 });
 
 describe('parseYamlDocument: deserialization', () => {
-  const PAYLOAD = "a: !!js/function 'function(){ globalThis.__adlPwned = true }'\n";
+  const PAYLOAD =
+    "a: !!js/function 'function(){ globalThis.__adlPwned = true }'\n";
 
   it('resolves an inert function-like tag to a plain string', () => {
     const value = parseYamlDocument(PAYLOAD) as { a: unknown };
@@ -72,13 +81,19 @@ describe('parseYamlDocument: deserialization', () => {
   });
 
   it('executes nothing while doing so', () => {
-    expect((globalThis as Record<string, unknown>)['__adlPwned']).toBeUndefined();
+    expect(
+      (globalThis as Record<string, unknown>)['__adlPwned'],
+    ).toBeUndefined();
     parseYamlDocument(PAYLOAD);
-    expect((globalThis as Record<string, unknown>)['__adlPwned']).toBeUndefined();
+    expect(
+      (globalThis as Record<string, unknown>)['__adlPwned'],
+    ).toBeUndefined();
   });
 
   it('treats a merge key as a literal key rather than merging', () => {
-    const value = parseYamlDocument('base: &b { x: 1 }\nchild:\n  <<: *b\n  y: 2\n') as {
+    const value = parseYamlDocument(
+      'base: &b { x: 1 }\nchild:\n  <<: *b\n  y: 2\n',
+    ) as {
       child: Record<string, unknown>;
     };
     // `<<` survives as an ordinary key. It is then an unrecognised key to
@@ -107,7 +122,9 @@ describe('parseYamlDocument: prototype pollution', () => {
     const raw = parseYamlDocument(PAYLOAD);
     const validated = z.strictObject({ version: z.literal(1) }).parse(raw);
     expect(Reflect.ownKeys(validated)).toEqual(['version']);
-    expect(Object.prototype.hasOwnProperty.call(validated, '__proto__')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(validated, '__proto__')).toBe(
+      false,
+    );
   });
 });
 
@@ -142,8 +159,14 @@ describe('parseYamlDocument: error positions', () => {
 
 describe('parseYamlDocument: ordinary sources still work', () => {
   it('parses a well-formed document to plain JavaScript values', () => {
-    const value = parseYamlDocument('version: 1\nfeatures_dir: features\npipeline: [develop]\n');
-    expect(value).toEqual({ version: 1, features_dir: 'features', pipeline: ['develop'] });
+    const value = parseYamlDocument(
+      'version: 1\nfeatures_dir: features\npipeline: [develop]\n',
+    );
+    expect(value).toEqual({
+      version: 1,
+      features_dir: 'features',
+      pipeline: ['develop'],
+    });
   });
 
   it('parses an empty source to null rather than throwing', () => {

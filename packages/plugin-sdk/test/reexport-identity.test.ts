@@ -16,12 +16,23 @@ describe('@adl/plugin-sdk re-exports @adl/core by reference', () => {
   it.each([
     ['VerdictSchema', PluginSdk.VerdictSchema, CoreVerdict.VerdictSchema],
     ['FindingSchema', PluginSdk.FindingSchema, CoreVerdict.FindingSchema],
-    ['CriterionRefSchema', PluginSdk.CriterionRefSchema, CoreVerdict.CriterionRefSchema],
+    [
+      'CriterionRefSchema',
+      PluginSdk.CriterionRefSchema,
+      CoreVerdict.CriterionRefSchema,
+    ],
     ['WaiverSchema', PluginSdk.WaiverSchema, CoreVerdict.WaiverSchema],
-    ['StageErrorSchema', PluginSdk.StageErrorSchema, CoreStage.StageErrorSchema],
-  ])('%s is the same object as the one @adl/core exports', (_name, fromSdk, fromCore) => {
-    expect(fromSdk).toBe(fromCore);
-  });
+    [
+      'StageErrorSchema',
+      PluginSdk.StageErrorSchema,
+      CoreStage.StageErrorSchema,
+    ],
+  ])(
+    '%s is the same object as the one @adl/core exports',
+    (_name, fromSdk, fromCore) => {
+      expect(fromSdk).toBe(fromCore);
+    },
+  );
 
   it('re-exports functions by reference too', () => {
     expect(PluginSdk.consumesRound).toBe(CoreVerdict.consumesRound);

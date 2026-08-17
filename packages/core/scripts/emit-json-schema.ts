@@ -115,7 +115,10 @@ function assertNamedUnionMembers(schema: unknown): void {
   if (!Array.isArray(members)) return;
 
   const anonymous = members
-    .map((m, i) => ({ i, hasRef: typeof (m as { $ref?: unknown }).$ref === 'string' }))
+    .map((m, i) => ({
+      i,
+      hasRef: typeof (m as { $ref?: unknown }).$ref === 'string',
+    }))
     .filter((m) => !m.hasRef)
     .map((m) => `oneOf[${m.i}]`);
 
@@ -187,7 +190,10 @@ function unifiedDiff(expected: string, actual: string, label: string): string {
  * fixes it — the offenders are primitives with no identity worth naming.
  */
 export function emitVerdictSchema(): { schema: unknown; serialised: string } {
-  const schema = z.toJSONSchema(VerdictSchema, { target: 'draft-2020-12', reused: 'inline' });
+  const schema = z.toJSONSchema(VerdictSchema, {
+    target: 'draft-2020-12',
+    reused: 'inline',
+  });
   assertStableDefNames(schema);
   assertNamedUnionMembers(schema);
   return { schema, serialised: serialise(schema) };
@@ -237,7 +243,9 @@ function main(): void {
       'The published contract has drifted from the enforced one. Regenerate with:\n' +
       '  pnpm --filter @adl/core emit:schema\n',
   );
-  console.error(unifiedDiff(committed.split('\r\n').join('\n'), serialised, label));
+  console.error(
+    unifiedDiff(committed.split('\r\n').join('\n'), serialised, label),
+  );
   process.exit(1);
 }
 
@@ -245,7 +253,8 @@ function main(): void {
 // never when imported — `json-schema-equivalence.test.ts` imports `emitVerdictSchema`
 // and must not trigger a filesystem write or a `process.exit` as an import side effect.
 const isDirectlyExecuted =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectlyExecuted) {
   main();
 }

@@ -3,7 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { LoadError } from '../../src/errors.js';
-import { collectScenarios, isOutline, loadGherkinSpec } from '../../src/spec/gherkin.js';
+import {
+  collectScenarios,
+  isOutline,
+  loadGherkinSpec,
+} from '../../src/spec/gherkin.js';
 
 /**
  * The Gherkin half of the intake surface (SPEC-02).
@@ -88,7 +92,8 @@ const DEGENERATE_INPUTS: readonly DegenerateInput[] = [
   {
     row: 6,
     label: 'scenario outline with no examples',
-    source: 'Feature: A\n\n  Scenario Outline: totals without a table\n    Given <n> items\n',
+    source:
+      'Feature: A\n\n  Scenario Outline: totals without a table\n    Given <n> items\n',
     parserAccepts: true,
     message: /totals without a table/,
   },
@@ -97,7 +102,8 @@ const DEGENERATE_INPUTS: readonly DegenerateInput[] = [
     label: 'two feature blocks',
     // Separated by real content on purpose: two adjacent `Feature:` lines parse
     // fine, because the second is absorbed as the first one's description.
-    source: 'Feature: A\n\n  Scenario: s\n    Given x\n\nFeature: B\n\n  Scenario: t\n    Given y\n',
+    source:
+      'Feature: A\n\n  Scenario: s\n    Given x\n\nFeature: B\n\n  Scenario: t\n    Given y\n',
     parserAccepts: false,
     message: /\(\d+:\d+\)/,
   },
@@ -121,7 +127,9 @@ const DEGENERATE_INPUTS: readonly DegenerateInput[] = [
 describe('the nine degenerate inputs from 01-RESEARCH.md Pitfall 2', () => {
   it('covers every row, so a case cannot be quietly dropped', () => {
     expect(DEGENERATE_INPUTS).toHaveLength(9);
-    expect(DEGENERATE_INPUTS.map((c) => c.row)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(DEGENERATE_INPUTS.map((c) => c.row)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ]);
   });
 
   it.each(DEGENERATE_INPUTS)('row $row — $label is refused', (input) => {
@@ -139,14 +147,16 @@ describe('the nine degenerate inputs from 01-RESEARCH.md Pitfall 2', () => {
     // Distinctness is the point. "Something is wrong with your feature file" is
     // not actionable; the author has to be told which of six different mistakes
     // they made.
-    const messages = DEGENERATE_INPUTS.filter((c) => c.parserAccepts).map((c) => {
-      try {
-        loadGherkinSpec(c.source, 'demo');
-        return 'NO ERROR';
-      } catch (error) {
-        return (error as LoadError).message;
-      }
-    });
+    const messages = DEGENERATE_INPUTS.filter((c) => c.parserAccepts).map(
+      (c) => {
+        try {
+          loadGherkinSpec(c.source, 'demo');
+          return 'NO ERROR';
+        } catch (error) {
+          return (error as LoadError).message;
+        }
+      },
+    );
     expect(messages).toHaveLength(6);
     expect(new Set(messages).size).toBe(6);
   });
@@ -173,7 +183,8 @@ describe('orphan steps (01-RESEARCH.md Pitfall 3)', () => {
     // Verified: this parses successfully with `children.length === 0`, and the
     // author's step vanishes with no error anywhere. Nothing downstream can
     // detect the omission, because nothing downstream knows it was written.
-    const source = 'Feature: A\n\n  Given an orphan step\n\n  Scenario: s\n    Given x\n';
+    const source =
+      'Feature: A\n\n  Given an orphan step\n\n  Scenario: s\n    Given x\n';
     expect(() => loadGherkinSpec(source, 'demo')).toThrow(LoadError);
     try {
       loadGherkinSpec(source, 'demo');
@@ -203,7 +214,8 @@ describe('loadGherkinSpec over checkout.feature', () => {
 
     const [ac1] = spec.acceptanceCriteria;
     expect(ac1?.kind).toBe('scenario');
-    if (ac1?.kind === 'scenario') expect(ac1.name).toBe('Paying with a valid card');
+    if (ac1?.kind === 'scenario')
+      expect(ac1.name).toBe('Paying with a valid card');
 
     // The background is preamble on the document, never a criterion. Were it
     // treated as one it would become AC-1 and shift every subsequent id.
@@ -211,7 +223,9 @@ describe('loadGherkinSpec over checkout.feature', () => {
       { keyword: 'Given', text: 'the cart contains at least one item' },
     ]);
     for (const criterion of spec.acceptanceCriteria) {
-      expect(criterion.text).not.toContain('the cart contains at least one item');
+      expect(criterion.text).not.toContain(
+        'the cart contains at least one item',
+      );
     }
   });
 
@@ -245,7 +259,9 @@ describe('loadGherkinSpec over checkout.feature', () => {
     const spec = loadGherkinSpec(CHECKOUT, 'checkout');
     expect(spec.raw).toBe(CHECKOUT);
     for (const criterion of spec.acceptanceCriteria) {
-      expect(CHECKOUT.slice(criterion.source.start, criterion.source.end)).toBe(criterion.text);
+      expect(CHECKOUT.slice(criterion.source.start, criterion.source.end)).toBe(
+        criterion.text,
+      );
     }
   });
 });
@@ -257,9 +273,15 @@ describe('loadGherkinSpec over rules.feature', () => {
     // A naive `feature.children.map(c => c.scenario)` drops both Rule-scoped
     // scenarios, which would silently lose two thirds of this spec.
     expect(spec.acceptanceCriteria).toHaveLength(3);
-    expect(spec.acceptanceCriteria.map((c) => c.id)).toEqual(['AC-1', 'AC-2', 'AC-3']);
+    expect(spec.acceptanceCriteria.map((c) => c.id)).toEqual([
+      'AC-1',
+      'AC-2',
+      'AC-3',
+    ]);
     expect(
-      spec.acceptanceCriteria.map((c) => (c.kind === 'scenario' ? c.name : c.text)),
+      spec.acceptanceCriteria.map((c) =>
+        c.kind === 'scenario' ? c.name : c.text,
+      ),
     ).toEqual([
       'Withdrawing within the daily limit',
       'Withdrawing above the daily limit',
@@ -280,15 +302,20 @@ describe('loadGherkinSpec over rules.feature', () => {
     // The Rule: heading is not part of the scenario that precedes it.
     expect(ac1?.text).not.toContain('Rule:');
     for (const criterion of spec.acceptanceCriteria) {
-      expect(RULES.slice(criterion.source.start, criterion.source.end)).toBe(criterion.text);
+      expect(RULES.slice(criterion.source.start, criterion.source.end)).toBe(
+        criterion.text,
+      );
     }
   });
 
   it('collectScenarios recurses into rules and isOutline says these are not outlines', () => {
     const spec = loadGherkinSpec(RULES, 'withdrawal-limits');
-    expect(spec.acceptanceCriteria.every((c) => c.kind === 'scenario')).toBe(true);
+    expect(spec.acceptanceCriteria.every((c) => c.kind === 'scenario')).toBe(
+      true,
+    );
     for (const criterion of spec.acceptanceCriteria) {
-      if (criterion.kind === 'scenario') expect(criterion.examples).toBeUndefined();
+      if (criterion.kind === 'scenario')
+        expect(criterion.examples).toBeUndefined();
     }
   });
 });
@@ -304,7 +331,10 @@ describe('loadGherkinSpec over outline.feature', () => {
   });
 
   it('retains the Examples table verbatim beside unexpanded step placeholders', () => {
-    const [criterion] = loadGherkinSpec(OUTLINE, 'cart-totals').acceptanceCriteria;
+    const [criterion] = loadGherkinSpec(
+      OUTLINE,
+      'cart-totals',
+    ).acceptanceCriteria;
     expect(criterion?.kind).toBe('scenario');
     if (criterion?.kind !== 'scenario') return;
 
@@ -317,14 +347,19 @@ describe('loadGherkinSpec over outline.feature', () => {
 
     // The placeholders stay as the author wrote them.
     expect(criterion.steps).toEqual([
-      { keyword: 'Given', text: 'a cart holding <quantity> items priced at 10 each' },
+      {
+        keyword: 'Given',
+        text: 'a cart holding <quantity> items priced at 10 each',
+      },
       { keyword: 'Then', text: 'the cart total is <total>' },
     ]);
 
     // And the verbatim slice covers the table, not just the steps.
     expect(criterion.text).toContain('| quantity | total |');
     expect(criterion.text).toContain('| 3        | 30    |');
-    expect(OUTLINE.slice(criterion.source.start, criterion.source.end)).toBe(criterion.text);
+    expect(OUTLINE.slice(criterion.source.start, criterion.source.end)).toBe(
+      criterion.text,
+    );
   });
 });
 

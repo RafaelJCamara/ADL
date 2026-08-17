@@ -13,7 +13,7 @@ commands:
     # an issue naming that both are required together.
     ready:
       kind: http
-      url: "http://127.0.0.1:${ADL_PORT}/health"
+      url: 'http://127.0.0.1:${ADL_PORT}/health'
   test:
     argv: [npm, test]
     timeout: 15m

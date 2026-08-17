@@ -64,9 +64,13 @@ function isHeading(node: MdNode): node is Extract<MdNode, { type: 'heading' }> {
  * from returning `[]` for a heading present but empty: those are two different
  * authoring mistakes and they get two different error messages.
  */
-function sectionNodes(children: readonly MdNode[], title: string): MdNode[] | null {
+function sectionNodes(
+  children: readonly MdNode[],
+  title: string,
+): MdNode[] | null {
   const index = children.findIndex(
-    (n) => isHeading(n) && nodeText(n).trim().toLowerCase() === title.toLowerCase(),
+    (n) =>
+      isHeading(n) && nodeText(n).trim().toLowerCase() === title.toLowerCase(),
   );
   if (index === -1) return null;
 
@@ -92,7 +96,9 @@ function verbatimSpan(node: MdNode): SourceSpan {
     // Every node produced by `fromMarkdown` over a real string carries a
     // position. If one ever does not, failing loudly beats silently emitting
     // an empty criterion that would then be hashed and cited as if real.
-    throw new LoadError('internal: markdown node is missing source position information');
+    throw new LoadError(
+      'internal: markdown node is missing source position information',
+    );
   }
   return { start, end };
 }
@@ -163,7 +169,10 @@ function contextRefs(section: readonly MdNode[] | null): ContextRef[] {
  * @param featureId The `features/<id>/` folder name (D-16).
  * @throws {LoadError} on any structural problem — always naming what is wrong.
  */
-export function loadAdlTemplateSpec(raw: string, featureId: string): NormalizedSpec {
+export function loadAdlTemplateSpec(
+  raw: string,
+  featureId: string,
+): NormalizedSpec {
   if (featureId.trim().length === 0) {
     throw new LoadError('feature id is empty');
   }
@@ -205,7 +214,9 @@ export function loadAdlTemplateSpec(raw: string, featureId: string): NormalizedS
 
   const criteriaSection = sectionNodes(children, HEADING_ACCEPTANCE_CRITERIA);
   if (criteriaSection === null) {
-    throw new LoadError(`spec has no "## ${HEADING_ACCEPTANCE_CRITERIA}" heading`);
+    throw new LoadError(
+      `spec has no "## ${HEADING_ACCEPTANCE_CRITERIA}" heading`,
+    );
   }
 
   const items = topLevelListItems(criteriaSection);
@@ -220,7 +231,11 @@ export function loadAdlTemplateSpec(raw: string, featureId: string): NormalizedS
 
   const bodies: CriterionBody[] = items.map((item) => {
     const source = verbatimSpan(item);
-    return { kind: 'statement', text: raw.slice(source.start, source.end), source };
+    return {
+      kind: 'statement',
+      text: raw.slice(source.start, source.end),
+      source,
+    };
   });
 
   // Numbering goes through the shared path rather than being done inline, so

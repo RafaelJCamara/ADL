@@ -59,15 +59,19 @@ type DurationUnit = keyof typeof UNIT_MS;
  */
 
 /** 1 – 86_400_000 ms */
-const MILLISECONDS = '(?:[1-9]\\d{0,6}|[1-7]\\d{7}|8[0-5]\\d{6}|86[0-3]\\d{5}|86400000)ms';
+const MILLISECONDS =
+  '(?:[1-9]\\d{0,6}|[1-7]\\d{7}|8[0-5]\\d{6}|86[0-3]\\d{5}|86400000)ms';
 /** 1 – 86_400 s */
-const SECONDS = '(?:[1-9]\\d{0,3}|[1-7]\\d{4}|8[0-5]\\d{3}|86[0-3]\\d{2}|86400)s';
+const SECONDS =
+  '(?:[1-9]\\d{0,3}|[1-7]\\d{4}|8[0-5]\\d{3}|86[0-3]\\d{2}|86400)s';
 /** 1 – 1_440 m */
 const MINUTES = '(?:[1-9]\\d{0,2}|1[0-3]\\d{2}|14[0-3]\\d|1440)m';
 /** 1 – 24 h */
 const HOURS = '(?:[1-9]|1\\d|2[0-4])h';
 
-const DURATION_PATTERN = new RegExp(`^(?:${MILLISECONDS}|${SECONDS}|${MINUTES}|${HOURS})$`);
+const DURATION_PATTERN = new RegExp(
+  `^(?:${MILLISECONDS}|${SECONDS}|${MINUTES}|${HOURS})$`,
+);
 
 /** Splits an already-validated duration into its number and its unit. */
 const DURATION_PARTS = /^(\d+)(ms|s|m|h)$/;
@@ -76,14 +80,11 @@ const DURATION_PARTS = /^(\d+)(ms|s|m|h)$/;
  * A duration string: digits immediately followed by `ms`, `s`, `m`, or `h`,
  * strictly positive and no greater than {@link MAX_DURATION_MS}.
  */
-export const DurationSchema = z
-  .string()
-  .regex(DURATION_PATTERN)
-  .meta({
-    id: 'Duration',
-    description:
-      'A duration as digits plus a unit — ms, s, m, or h. Strictly positive, and at most 24h.',
-  });
+export const DurationSchema = z.string().regex(DURATION_PATTERN).meta({
+  id: 'Duration',
+  description:
+    'A duration as digits plus a unit — ms, s, m, or h. Strictly positive, and at most 24h.',
+});
 
 export type Duration = z.infer<typeof DurationSchema>;
 
@@ -95,7 +96,9 @@ export type Duration = z.infer<typeof DurationSchema>;
  * unit, or a value above the ceiling.
  */
 export function parseDuration(value: string): number {
-  const parts = DurationSchema.safeParse(value).success ? DURATION_PARTS.exec(value) : null;
+  const parts = DurationSchema.safeParse(value).success
+    ? DURATION_PARTS.exec(value)
+    : null;
   if (!parts) {
     throw new LoadError(
       `Invalid duration ${JSON.stringify(value)}. Expected digits followed by a unit — ` +

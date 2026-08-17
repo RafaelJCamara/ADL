@@ -63,11 +63,19 @@ const FP = 'f'.repeat(64);
 const VALID: readonly Fixture[] = [
   {
     label: 'pass citing a criterion ref',
-    payload: { outcome: 'pass', summary: 'ok', checked: [{ kind: 'criterion', id: 'AC-1' }] },
+    payload: {
+      outcome: 'pass',
+      summary: 'ok',
+      checked: [{ kind: 'criterion', id: 'AC-1' }],
+    },
   },
   {
     label: 'pass citing a global ref',
-    payload: { outcome: 'pass', summary: 'ok', checked: [{ kind: 'global', category: 'build' }] },
+    payload: {
+      outcome: 'pass',
+      summary: 'ok',
+      checked: [{ kind: 'global', category: 'build' }],
+    },
   },
   {
     label: 'pass citing multiple mixed refs',
@@ -83,7 +91,11 @@ const VALID: readonly Fixture[] = [
   },
   {
     label: 'pass citing a high-numbered criterion id',
-    payload: { outcome: 'pass', summary: 'ok', checked: [{ kind: 'criterion', id: 'AC-42' }] },
+    payload: {
+      outcome: 'pass',
+      summary: 'ok',
+      checked: [{ kind: 'criterion', id: 'AC-42' }],
+    },
   },
   {
     label: 'send_back with one finding',
@@ -138,12 +150,22 @@ const VALID: readonly Fixture[] = [
       ],
     },
   },
-  { label: 'fail minimal', payload: { outcome: 'fail', summary: 's', reason: 'unfixable' } },
+  {
+    label: 'fail minimal',
+    payload: { outcome: 'fail', summary: 's', reason: 'unfixable' },
+  },
   {
     label: 'inconclusive minimal',
-    payload: { outcome: 'inconclusive', summary: 's', reason: 'app never became ready' },
+    payload: {
+      outcome: 'inconclusive',
+      summary: 's',
+      reason: 'app never became ready',
+    },
   },
-  { label: 'warn with an empty findings array', payload: { outcome: 'warn', summary: 's', findings: [] } },
+  {
+    label: 'warn with an empty findings array',
+    payload: { outcome: 'warn', summary: 's', findings: [] },
+  },
   {
     label: 'warn with several findings',
     payload: {
@@ -199,7 +221,10 @@ const VALID: readonly Fixture[] = [
       },
     },
   },
-  { label: 'skip without a waiver', payload: { outcome: 'skip', reason: 'no harness configured' } },
+  {
+    label: 'skip without a waiver',
+    payload: { outcome: 'skip', reason: 'no harness configured' },
+  },
   {
     label: 'finding with a full location (path, line, endLine)',
     payload: {
@@ -333,22 +358,45 @@ const VALID: readonly Fixture[] = [
 ];
 
 const INVALID: readonly Fixture[] = [
-  { label: 'a seventh, unrecognised outcome', payload: { outcome: 'approved', summary: 'x' } },
-  { label: 'missing outcome entirely', payload: { summary: 'no outcome here' } },
-  { label: 'pass with an empty checked array', payload: { outcome: 'pass', summary: 's', checked: [] } },
-  { label: 'pass with checked absent', payload: { outcome: 'pass', summary: 's' } },
-  { label: 'pass with summary absent', payload: { outcome: 'pass', checked: [{ kind: 'global', category: 'other' }] } },
+  {
+    label: 'a seventh, unrecognised outcome',
+    payload: { outcome: 'approved', summary: 'x' },
+  },
+  {
+    label: 'missing outcome entirely',
+    payload: { summary: 'no outcome here' },
+  },
+  {
+    label: 'pass with an empty checked array',
+    payload: { outcome: 'pass', summary: 's', checked: [] },
+  },
+  {
+    label: 'pass with checked absent',
+    payload: { outcome: 'pass', summary: 's' },
+  },
+  {
+    label: 'pass with summary absent',
+    payload: {
+      outcome: 'pass',
+      checked: [{ kind: 'global', category: 'other' }],
+    },
+  },
   {
     label: 'send_back with an empty findings array',
     payload: { outcome: 'send_back', summary: 's', findings: [] },
   },
-  { label: 'send_back with findings absent', payload: { outcome: 'send_back', summary: 's' } },
+  {
+    label: 'send_back with findings absent',
+    payload: { outcome: 'send_back', summary: 's' },
+  },
   {
     label: 'finding with criterionRef absent',
     payload: {
       outcome: 'send_back',
       summary: 's',
-      findings: [{ fingerprint: FP, severity: 'blocker', title: 'x', detail: '' }],
+      findings: [
+        { fingerprint: FP, severity: 'blocker', title: 'x', detail: '' },
+      ],
     },
   },
   {
@@ -369,11 +417,19 @@ const INVALID: readonly Fixture[] = [
   },
   {
     label: 'criterion id not matching the AC-n pattern',
-    payload: { outcome: 'pass', summary: 's', checked: [{ kind: 'criterion', id: 'AC-one' }] },
+    payload: {
+      outcome: 'pass',
+      summary: 's',
+      checked: [{ kind: 'criterion', id: 'AC-one' }],
+    },
   },
   {
     label: 'criterion id missing the dash',
-    payload: { outcome: 'pass', summary: 's', checked: [{ kind: 'criterion', id: 'AC1' }] },
+    payload: {
+      outcome: 'pass',
+      summary: 's',
+      checked: [{ kind: 'criterion', id: 'AC1' }],
+    },
   },
   {
     label: 'fingerprint shorter than 64 characters',
@@ -499,9 +555,15 @@ const INVALID: readonly Fixture[] = [
       ],
     },
   },
-  { label: 'a payload that is an array rather than an object', payload: [{ outcome: 'pass' }] },
+  {
+    label: 'a payload that is an array rather than an object',
+    payload: [{ outcome: 'pass' }],
+  },
   { label: 'a payload that is a bare string', payload: 'pass' },
-  { label: 'fail with an empty reason', payload: { outcome: 'fail', summary: 's', reason: '' } },
+  {
+    label: 'fail with an empty reason',
+    payload: { outcome: 'fail', summary: 's', reason: '' },
+  },
   {
     label: 'inconclusive with an empty summary',
     payload: { outcome: 'inconclusive', summary: '', reason: 'x' },
@@ -526,22 +588,36 @@ describe('json-schema-equivalence — CORE-04, D-26, Pitfall 1', () => {
     expect(INVALID.length).toBeGreaterThanOrEqual(20);
   });
 
-  it.each(VALID)('valid: $label — Zod accepts and ajv accepts', ({ label, payload }) => {
-    const zod = zodAccepts(payload);
-    const ajvResult = ajvAccepts(payload);
-    expect(zod, `Zod rejected a fixture expected to be valid: ${label}`).toBe(true);
-    expect(
-      ajvResult,
-      `ajv rejected a fixture expected to be valid: ${label}\n${ajv.errorsText(validate.errors)}`,
-    ).toBe(true);
-  });
+  it.each(VALID)(
+    'valid: $label — Zod accepts and ajv accepts',
+    ({ label, payload }) => {
+      const zod = zodAccepts(payload);
+      const ajvResult = ajvAccepts(payload);
+      expect(zod, `Zod rejected a fixture expected to be valid: ${label}`).toBe(
+        true,
+      );
+      expect(
+        ajvResult,
+        `ajv rejected a fixture expected to be valid: ${label}\n${ajv.errorsText(validate.errors)}`,
+      ).toBe(true);
+    },
+  );
 
-  it.each(INVALID)('invalid: $label — Zod rejects and ajv rejects', ({ label, payload }) => {
-    const zod = zodAccepts(payload);
-    const ajvResult = ajvAccepts(payload);
-    expect(zod, `Zod accepted a fixture expected to be invalid: ${label}`).toBe(false);
-    expect(ajvResult, `ajv accepted a fixture expected to be invalid: ${label}`).toBe(false);
-  });
+  it.each(INVALID)(
+    'invalid: $label — Zod rejects and ajv rejects',
+    ({ label, payload }) => {
+      const zod = zodAccepts(payload);
+      const ajvResult = ajvAccepts(payload);
+      expect(
+        zod,
+        `Zod accepted a fixture expected to be invalid: ${label}`,
+      ).toBe(false);
+      expect(
+        ajvResult,
+        `ajv accepted a fixture expected to be invalid: ${label}`,
+      ).toBe(false);
+    },
+  );
 
   it('reports zero disagreements across the whole corpus', () => {
     const disagreements: string[] = [];
@@ -557,7 +633,9 @@ describe('json-schema-equivalence — CORE-04, D-26, Pitfall 1', () => {
 
   it('the committed schema is byte-identical to a fresh emission from the current Zod source', () => {
     const { serialised: fresh } = emitVerdictSchema();
-    const committedBytes = readFileSync(SCHEMA_PATH, 'utf8').split('\r\n').join('\n');
+    const committedBytes = readFileSync(SCHEMA_PATH, 'utf8')
+      .split('\r\n')
+      .join('\n');
     expect(committedBytes).toBe(fresh);
   });
 });

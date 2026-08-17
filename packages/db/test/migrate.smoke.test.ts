@@ -2,13 +2,19 @@ import { existsSync } from 'node:fs';
 import { sql } from 'kysely';
 import { describe, expect, it } from 'vitest';
 
-import { FEATURES_COLUMNS, INITIAL_TABLES, migrateToLatest } from '../src/index.js';
+import {
+  FEATURES_COLUMNS,
+  INITIAL_TABLES,
+  migrateToLatest,
+} from '../src/index.js';
 import { MIGRATIONS_DIR, withTempDb } from './helpers/temp-db.js';
 
 /** Kysely's own bookkeeping, which it creates on the first migration run. */
 const KYSELY_TABLES = ['kysely_migration', 'kysely_migration_lock'];
 
-async function tableNames(db: Parameters<Parameters<typeof withTempDb>[0]>[0]['db']) {
+async function tableNames(
+  db: Parameters<Parameters<typeof withTempDb>[0]>[0]['db'],
+) {
   const result = await sql<{ name: string }>`
     select name from sqlite_master where type = 'table' order by name
   `.execute(db);
@@ -27,7 +33,9 @@ describe('0001_initial applied to a real temp SQLite file', () => {
       expect(first.results[0]?.migrationName).toBe('0001_initial');
       expect(first.results[0]?.status).toBe('Success');
       expect(first.results[0]?.direction).toBe('Up');
-      expect(first.results.filter((r) => r.migrationName === '0001_initial')).toHaveLength(1);
+      expect(
+        first.results.filter((r) => r.migrationName === '0001_initial'),
+      ).toHaveLength(1);
 
       // Re-running is the normal path — the daemon migrates on every startup.
       // If this ever applied a second time, an adopter's database would be
@@ -53,7 +61,9 @@ describe('0001_initial applied to a real temp SQLite file', () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
 
-      const info = await sql<{ name: string }>`pragma table_info(features)`.execute(db);
+      const info = await sql<{
+        name: string;
+      }>`pragma table_info(features)`.execute(db);
       const actual = info.rows.map((r) => r.name).sort();
 
       // This is the drift check in its cheapest form. Plan 01-10 adds the

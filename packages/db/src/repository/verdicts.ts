@@ -48,7 +48,9 @@ export interface VerdictsRepository {
     checked?: readonly NewCheckedCriterion[];
     findings?: readonly NewFinding[];
   }): Promise<void>;
-  findByStageAttempt(stageAttemptId: string): Promise<VerdictsTable | undefined>;
+  findByStageAttempt(
+    stageAttemptId: string,
+  ): Promise<VerdictsTable | undefined>;
   listFindings(verdictId: string): Promise<FindingsTable[]>;
   /** Fingerprints raised anywhere in a round — LOOP-06's stall-detection input. */
   fingerprintsForRound(roundId: string): Promise<string[]>;
@@ -68,10 +70,16 @@ export function verdictsRepository(db: Kysely<Database>): VerdictsRepository {
       await db.transaction().execute(async (trx) => {
         await trx.insertInto('verdicts').values(verdict).execute();
         if (checked && checked.length > 0) {
-          await trx.insertInto('verdict_checked_criteria').values([...checked]).execute();
+          await trx
+            .insertInto('verdict_checked_criteria')
+            .values([...checked])
+            .execute();
         }
         if (findings && findings.length > 0) {
-          await trx.insertInto('findings').values([...findings]).execute();
+          await trx
+            .insertInto('findings')
+            .values([...findings])
+            .execute();
         }
       });
     },
@@ -97,7 +105,11 @@ export function verdictsRepository(db: Kysely<Database>): VerdictsRepository {
       const rows = await db
         .selectFrom('findings')
         .innerJoin('verdicts', 'verdicts.id', 'findings.verdict_id')
-        .innerJoin('stage_attempts', 'stage_attempts.id', 'verdicts.stage_attempt_id')
+        .innerJoin(
+          'stage_attempts',
+          'stage_attempts.id',
+          'verdicts.stage_attempt_id',
+        )
         .select('findings.fingerprint')
         .where('stage_attempts.round_id', '=', roundId)
         .orderBy('findings.fingerprint')
@@ -106,23 +118,33 @@ export function verdictsRepository(db: Kysely<Database>): VerdictsRepository {
     },
 
     coverage(roundId) {
-      return db
-        .selectFrom('verdict_checked_criteria')
-        .innerJoin('verdicts', 'verdicts.id', 'verdict_checked_criteria.verdict_id')
-        .innerJoin('stage_attempts', 'stage_attempts.id', 'verdicts.stage_attempt_id')
-        .select([
-          'verdict_checked_criteria.criterion_id',
-          'verdict_checked_criteria.global_category',
-          'verdict_checked_criteria.ref_kind',
-          'stage_attempts.stage_id',
-        ])
-        .where('stage_attempts.round_id', '=', roundId)
-        // Only a `pass` cites coverage. A `skip` — waived or not — is a
-        // recorded absence of judgement and must never render as coverage.
-        .where('verdicts.outcome', '=', 'pass')
-        .orderBy('verdict_checked_criteria.verdict_id')
-        .orderBy('verdict_checked_criteria.position')
-        .execute();
+      return (
+        db
+          .selectFrom('verdict_checked_criteria')
+          .innerJoin(
+            'verdicts',
+            'verdicts.id',
+            'verdict_checked_criteria.verdict_id',
+          )
+          .innerJoin(
+            'stage_attempts',
+            'stage_attempts.id',
+            'verdicts.stage_attempt_id',
+          )
+          .select([
+            'verdict_checked_criteria.criterion_id',
+            'verdict_checked_criteria.global_category',
+            'verdict_checked_criteria.ref_kind',
+            'stage_attempts.stage_id',
+          ])
+          .where('stage_attempts.round_id', '=', roundId)
+          // Only a `pass` cites coverage. A `skip` — waived or not — is a
+          // recorded absence of judgement and must never render as coverage.
+          .where('verdicts.outcome', '=', 'pass')
+          .orderBy('verdict_checked_criteria.verdict_id')
+          .orderBy('verdict_checked_criteria.position')
+          .execute()
+      );
     },
 
     async insertWaiver(waiver) {

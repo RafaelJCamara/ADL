@@ -40,7 +40,10 @@ import {
  */
 
 /** Nothing moved. The default for every edge that is not a counter edge. */
-const NO_COUNTER_CHANGE: CounterDeltas = Object.freeze({ round: 0, currentStageIndex: 0 });
+const NO_COUNTER_CHANGE: CounterDeltas = Object.freeze({
+  round: 0,
+  currentStageIndex: 0,
+});
 
 /**
  * A minimal, well-typed verdict used only to *ask* the verdict layer whether a
@@ -97,12 +100,19 @@ function applied(
 }
 
 /** Reject the pair, naming both halves of it and why. */
-function invalid(state: FeatureState, event: FeatureEvent, reason: string): InvalidTransition {
+function invalid(
+  state: FeatureState,
+  event: FeatureEvent,
+  reason: string,
+): InvalidTransition {
   return { ok: false, state, event, reason };
 }
 
 /** The reason string every undrawn pair gets. */
-function noSuchEdge(state: FeatureState, event: FeatureEvent): InvalidTransition {
+function noSuchEdge(
+  state: FeatureState,
+  event: FeatureEvent,
+): InvalidTransition {
   return invalid(state, event, `no '${event.t}' edge leaves '${state}'`);
 }
 
@@ -142,7 +152,9 @@ export function transition(
 
   switch (state) {
     case 'discovered':
-      return event.t === 'admit' ? applied(state, 'queued', event, ctx) : noSuchEdge(state, event);
+      return event.t === 'admit'
+        ? applied(state, 'queued', event, ctx)
+        : noSuchEdge(state, event);
 
     case 'queued':
       return event.t === 'lease_acquired'
@@ -187,7 +199,10 @@ export function transition(
                 `${ctx.pipelineLength}-stage pipeline`,
             );
           }
-          return applied(state, 'gating', event, ctx, { round: 0, currentStageIndex: 1 });
+          return applied(state, 'gating', event, ctx, {
+            round: 0,
+            currentStageIndex: 1,
+          });
 
         case 'all_gates_passed':
           return applied(state, 'publishing', event, ctx);
@@ -238,10 +253,14 @@ export function transition(
       // The human-retry edge. An escalation a human cannot clear without
       // editing the database is an escalation that gets cleared by editing the
       // database.
-      return event.t === 'resume' ? applied(state, 'queued', event, ctx) : noSuchEdge(state, event);
+      return event.t === 'resume'
+        ? applied(state, 'queued', event, ctx)
+        : noSuchEdge(state, event);
 
     case 'paused':
-      return event.t === 'resume' ? applied(state, 'queued', event, ctx) : noSuchEdge(state, event);
+      return event.t === 'resume'
+        ? applied(state, 'queued', event, ctx)
+        : noSuchEdge(state, event);
 
     default: {
       // Exhaustiveness: a state added to `FEATURE_STATES` without a case here

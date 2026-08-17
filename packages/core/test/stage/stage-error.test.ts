@@ -45,7 +45,10 @@ const WELL_FORMED_VERDICT = {
 
 function findingCiting(id: string): Finding {
   return {
-    fingerprint: fingerprintFinding({ stageId: 'review', title: `AC ${id} is unimplemented` }),
+    fingerprint: fingerprintFinding({
+      stageId: 'review',
+      title: `AC ${id} is unimplemented`,
+    }),
     severity: 'blocker',
     title: `AC ${id} is unimplemented`,
     detail: 'no handler exists for the described request',
@@ -81,25 +84,34 @@ describe('StageErrorSchema', () => {
     }
 
     expect(
-      StageErrorSchema.safeParse({ kind: 'flaky', retryable: true, detail: 'x' }).success,
+      StageErrorSchema.safeParse({
+        kind: 'flaky',
+        retryable: true,
+        detail: 'x',
+      }).success,
     ).toBe(false);
   });
 
   it('requires a non-empty detail and rejects an empty one', () => {
-    expect(StageErrorSchema.safeParse({ kind: 'auth', retryable: false, detail: '' }).success).toBe(
-      false,
-    );
+    expect(
+      StageErrorSchema.safeParse({ kind: 'auth', retryable: false, detail: '' })
+        .success,
+    ).toBe(false);
   });
 
   it('is disjoint from Verdict at runtime, in both directions', () => {
     // The compiler refuses the confusion (type-boundary.test-d.ts); the schemas
     // refuse it too, so a payload crossing a process boundary cannot smuggle a
     // broken gate in as a judging one.
-    expect(VerdictSchema.safeParse(WELL_FORMED_STAGE_ERROR).success).toBe(false);
+    expect(VerdictSchema.safeParse(WELL_FORMED_STAGE_ERROR).success).toBe(
+      false,
+    );
     expect(StageErrorSchema.safeParse(WELL_FORMED_VERDICT).success).toBe(false);
 
     // Sanity: each really is well-formed for its own schema.
-    expect(StageErrorSchema.safeParse(WELL_FORMED_STAGE_ERROR).success).toBe(true);
+    expect(StageErrorSchema.safeParse(WELL_FORMED_STAGE_ERROR).success).toBe(
+      true,
+    );
     expect(VerdictSchema.safeParse(WELL_FORMED_VERDICT).success).toBe(true);
   });
 });
@@ -108,12 +120,27 @@ describe('stageErrorPolicy', () => {
   // Asserted for all five kinds, not sampled — a table, so adding a sixth kind
   // without deciding its policy fails here rather than defaulting silently.
   const EXPECTED: Readonly<
-    Record<StageErrorKind, { retryable: boolean; consumesRound: boolean; consumesBudget: boolean }>
+    Record<
+      StageErrorKind,
+      { retryable: boolean; consumesRound: boolean; consumesBudget: boolean }
+    >
   > = {
-    provider_error: { retryable: true, consumesRound: false, consumesBudget: false },
+    provider_error: {
+      retryable: true,
+      consumesRound: false,
+      consumesBudget: false,
+    },
     timeout: { retryable: true, consumesRound: false, consumesBudget: false },
-    unparseable: { retryable: false, consumesRound: false, consumesBudget: true },
-    binary_missing: { retryable: false, consumesRound: false, consumesBudget: false },
+    unparseable: {
+      retryable: false,
+      consumesRound: false,
+      consumesBudget: true,
+    },
+    binary_missing: {
+      retryable: false,
+      consumesRound: false,
+      consumesBudget: false,
+    },
     auth: { retryable: false, consumesRound: false, consumesBudget: false },
   };
 
@@ -161,14 +188,21 @@ describe('capRawOutput (T-1-21)', () => {
 
   it('returns head + marker + tail for an input above the cap', () => {
     const size = 33_792; // 32 KB + 1 KB
-    const raw = 'h'.repeat(RAW_REF_HEAD_BYTES) + 'x'.repeat(1024) + 't'.repeat(RAW_REF_TAIL_BYTES);
+    const raw =
+      'h'.repeat(RAW_REF_HEAD_BYTES) +
+      'x'.repeat(1024) +
+      't'.repeat(RAW_REF_TAIL_BYTES);
     expect(Buffer.byteLength(raw, 'utf8')).toBe(size);
 
     const capped = capRawOutput(raw);
     const marker = rawRefElisionMarker(1024);
 
-    expect(capped).toBe('h'.repeat(RAW_REF_HEAD_BYTES) + marker + 't'.repeat(RAW_REF_TAIL_BYTES));
-    expect(Buffer.byteLength(capped, 'utf8')).toBe(32_768 + Buffer.byteLength(marker, 'utf8'));
+    expect(capped).toBe(
+      'h'.repeat(RAW_REF_HEAD_BYTES) + marker + 't'.repeat(RAW_REF_TAIL_BYTES),
+    );
+    expect(Buffer.byteLength(capped, 'utf8')).toBe(
+      32_768 + Buffer.byteLength(marker, 'utf8'),
+    );
     // The marker names how much went missing, so a reader is never misled about
     // what they are looking at.
     expect(marker).toContain('1024');
@@ -186,7 +220,9 @@ describe('capRawOutput (T-1-21)', () => {
     const capped = capRawOutput(raw);
     expect(capped).not.toContain('�');
     // Backing off a seam costs at most three bytes per side.
-    expect(Buffer.byteLength(capped, 'utf8')).toBeGreaterThanOrEqual(32_768 - 6);
+    expect(Buffer.byteLength(capped, 'utf8')).toBeGreaterThanOrEqual(
+      32_768 - 6,
+    );
     expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(
       32_768 + Buffer.byteLength(rawRefElisionMarker(48_004), 'utf8'),
     );
@@ -218,7 +254,10 @@ describe('parseStageOutput — the ladder is bounded at one repair (D-13)', () =
   });
 
   it('warrants exactly one repair, quoting back the six valid outcome names', () => {
-    const result = parseStageOutput(JSON.stringify({ outcome: 'looks_good', summary: 'lgtm' }), 0);
+    const result = parseStageOutput(
+      JSON.stringify({ outcome: 'looks_good', summary: 'lgtm' }),
+      0,
+    );
 
     expect(result.kind).toBe('repair');
     if (result.kind !== 'repair') throw new Error('unreachable');
@@ -234,7 +273,9 @@ describe('parseStageOutput — the ladder is bounded at one repair (D-13)', () =
       'skip',
     ]);
     // …and the list really is lifted from Zod's own issue, not hardcoded twice.
-    expect(result.reprompt.issues.map((issue) => issue.code)).toContain('invalid_union');
+    expect(result.reprompt.issues.map((issue) => issue.code)).toContain(
+      'invalid_union',
+    );
   });
 
   it('parses on the repaired attempt and reports exactly one repair', () => {
@@ -270,7 +311,11 @@ describe('reconcileCriterionRefs — D-04 asymmetry by direction', () => {
 
   it('returns a finding citing only known ids unchanged, with no repair', () => {
     const finding = findingCiting('AC-2');
-    const result = reconcileCriterionRefs({ kind: 'finding', finding }, KNOWN, 0);
+    const result = reconcileCriterionRefs(
+      { kind: 'finding', finding },
+      KNOWN,
+      0,
+    );
 
     expect(result.kind).toBe('ok');
     if (result.kind !== 'ok') throw new Error('unreachable');
@@ -293,11 +338,17 @@ describe('reconcileCriterionRefs — D-04 asymmetry by direction', () => {
       ...findingCiting('AC-1'),
       criterionRef: { kind: 'global', category: 'code_quality' },
     };
-    expect(reconcileCriterionRefs({ kind: 'finding', finding }, KNOWN, 0).kind).toBe('ok');
+    expect(
+      reconcileCriterionRefs({ kind: 'finding', finding }, KNOWN, 0).kind,
+    ).toBe('ok');
   });
 
   it('warrants one repair for an unknown id on a finding', () => {
-    const result = reconcileCriterionRefs({ kind: 'finding', finding: findingCiting('AC-9') }, KNOWN, 0);
+    const result = reconcileCriterionRefs(
+      { kind: 'finding', finding: findingCiting('AC-9') },
+      KNOWN,
+      0,
+    );
 
     expect(result.kind).toBe('repair');
     if (result.kind !== 'repair') throw new Error('unreachable');
@@ -308,12 +359,19 @@ describe('reconcileCriterionRefs — D-04 asymmetry by direction', () => {
 
   it('demotes a still-unknown finding reference to global, flagged loudly', () => {
     const finding = findingCiting('AC-9');
-    const result = reconcileCriterionRefs({ kind: 'finding', finding }, KNOWN, 1);
+    const result = reconcileCriterionRefs(
+      { kind: 'finding', finding },
+      KNOWN,
+      1,
+    );
 
     expect(result.kind).toBe('demoted');
     if (result.kind !== 'demoted') throw new Error('unreachable');
     expect(result.repairAttempts).toBe(1);
-    expect(result.finding.criterionRef).toEqual({ kind: 'global', category: 'other' });
+    expect(result.finding.criterionRef).toEqual({
+      kind: 'global',
+      category: 'other',
+    });
     // Demoting a complaint is safe — but it must never be silent.
     expect(result.flag.originalCriterionId).toBe('AC-9');
     expect(result.flag.notice).toContain('AC-9');
@@ -323,7 +381,11 @@ describe('reconcileCriterionRefs — D-04 asymmetry by direction', () => {
   });
 
   it('warrants one repair for an unknown id in a pass verdict', () => {
-    const result = reconcileCriterionRefs({ kind: 'pass', verdict: passCiting('AC-1', 'AC-9') }, KNOWN, 0);
+    const result = reconcileCriterionRefs(
+      { kind: 'pass', verdict: passCiting('AC-1', 'AC-9') },
+      KNOWN,
+      0,
+    );
 
     expect(result.kind).toBe('repair');
     if (result.kind !== 'repair') throw new Error('unreachable');
@@ -331,7 +393,11 @@ describe('reconcileCriterionRefs — D-04 asymmetry by direction', () => {
   });
 
   it('sends a still-unknown pass citation down the infrastructure-failure path, never demoting it', () => {
-    const result = reconcileCriterionRefs({ kind: 'pass', verdict: passCiting('AC-1', 'AC-9') }, KNOWN, 1);
+    const result = reconcileCriterionRefs(
+      { kind: 'pass', verdict: passCiting('AC-1', 'AC-9') },
+      KNOWN,
+      1,
+    );
 
     expect(result.kind).toBe('failed');
     if (result.kind !== 'failed') throw new Error('unreachable');
