@@ -8,6 +8,9 @@ dist/
 # GSD run-scoped isolation sentinel — ephemeral, never committed
 .gsd/
 
+# Executor worktrees — scratch checkouts, merged back and discarded
+.claude/worktrees/
+
 # Editor / OS noise
 .DS_Store
 *.log
