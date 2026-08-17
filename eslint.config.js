@@ -156,6 +156,20 @@ export const baseConfigs = [
     ],
   },
   ...tseslint.configs.recommended,
+  {
+    rules: {
+      // `const { x: _dropped, ...rest } = obj` is the standard way to
+      // produce a copy of `obj` without one field; `_dropped` being
+      // "unused" is the point, not an oversight. `ignoreRestSiblings` is
+      // typescript-eslint's own documented option for exactly this pattern
+      // — it does not weaken detection of genuinely dead variables, params,
+      // or imports elsewhere.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { ignoreRestSiblings: true },
+      ],
+    },
+  },
 ];
 
 /**
