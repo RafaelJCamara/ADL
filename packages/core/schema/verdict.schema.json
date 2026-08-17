@@ -126,8 +126,7 @@
           "type": "integer"
         },
         "path": {
-          "minLength": 1,
-          "type": "string"
+          "$ref": "#/$defs/RepoRelativePath"
         }
       },
       "required": [
@@ -193,6 +192,11 @@
         "checked"
       ],
       "type": "object"
+    },
+    "RepoRelativePath": {
+      "description": "A path relative to the repository root. Absolute paths, `..` segments, drive-letter and UNC prefixes, and NUL bytes are rejected.",
+      "pattern": "^(?!\\/)(?![A-Za-z]:)(?!\\\\)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\0]+$",
+      "type": "string"
     },
     "SendBackVerdict": {
       "additionalProperties": false,

@@ -29,10 +29,7 @@ import * as z from 'zod';
  * read the filesystem and says nothing about whether a path exists — that is
  * Phase 2's question.
  *
- * **Adoption note.** `FindingLocation.path` in the verdict layer is documented
- * as workspace-relative but is currently only `z.string().min(1)`. It should
- * adopt this schema the next time the verdict shapes are touched; the two
- * fields make the same promise and only one of them currently keeps it.
+ * `FindingLocation.path` in the verdict layer adopts this same schema.
  */
 
 /*

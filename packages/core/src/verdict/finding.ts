@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { sha256Hex } from '../hash.js';
+import { RepoRelativePathSchema } from '../config/path-guard.js';
 import { CriterionRefSchema } from './criterion-ref.js';
 
 /**
@@ -18,15 +19,15 @@ export type Severity = z.infer<typeof SeveritySchema>;
 /**
  * Where in the workspace a finding points.
  *
- * `path` is **workspace-relative** — never a host path. Plan 01-07 adds the
- * shared path guard (rejecting absolute paths, `..` segments, drive letters,
- * UNC prefixes, and NUL bytes) and this schema adopts it there; until then the
- * field is documented as relative and no fixture carries a host path
- * (threat T-1-02).
+ * `path` is **workspace-relative** — never a host path. Enforced by
+ * {@link RepoRelativePathSchema} (absolute paths, `..` segments, drive
+ * letters, UNC prefixes, and NUL bytes are all rejected at schema level),
+ * since a `Finding` is persisted and later rendered into a public
+ * pull-request comment (threat T-1-02).
  */
 export const FindingLocationSchema = z
   .strictObject({
-    path: z.string().min(1),
+    path: RepoRelativePathSchema,
     line: z.int().positive().optional(),
     endLine: z.int().positive().optional(),
   })
