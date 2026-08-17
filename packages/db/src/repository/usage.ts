@@ -8,8 +8,9 @@ import type { Database, ModelPricesTable, UsageEventsTable } from '../schema.js'
  * **unpriced count** alongside the totals, rather than summing `cost_usd` and
  * letting the nulls disappear. A budget that silently drops the rows it could
  * not price has stopped enforcing without saying so (D-31); a caller that can
- * see `unpricedEvents > 0` can say "$4.12 so far, and 3 events we could not
- * price" — which is the honest sentence.
+ * see a nonzero unpriced count can report confirmed spend and unpriced spend
+ * as two separate, honest numbers instead of one number that quietly excludes
+ * some of them.
  */
 
 export type NewUsageEvent = UsageEventsTable;
