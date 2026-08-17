@@ -12,6 +12,12 @@ import {
   type MigrationProvider,
   type MigrationResult,
 } from 'kysely/migration';
+import {
+  assertMigrationsUnmodified,
+  digestMigrationFiles,
+  ensureChecksumTable,
+  wrapMigrationWithChecksum,
+} from './checksum.js';
 import type { Database } from './schema.js';
 
 /**
@@ -83,21 +89,52 @@ export interface MigrateResult {
  * to put in front of a maintainer whose database stopped halfway, and this
  * code runs in other people's installations.
  *
- * Note what is deliberately absent: nothing here writes to Kysely's own
- * `kysely_migration` table beyond letting Kysely manage it. That table has
- * exactly two columns (`name`, `timestamp`) and **no checksum**, and Kysely
- * owns its shape. ADL's checksum guard (D-30) — which catches the genuinely
- * dangerous case of an already-shipped migration file being edited — lands in
- * plan 01-10 as a separate ADL-owned table.
+ * Before anything runs: ADL's checksum table is ensured and every already-
+ * applied migration is checked against the bytes on disk (D-30,
+ * `src/checksum.ts`). Nothing here writes to Kysely's own `kysely_migration`
+ * table beyond letting Kysely manage it — that table has exactly two columns
+ * (`name`, `timestamp`) and no checksum, and Kysely owns its shape. Take a
+ * file copy of the database before calling this, in whatever the daemon's
+ * startup path is (Phase 3) — the checksum guard catches an edited migration,
+ * but a copy is the recovery path if a migration fails partway on this
+ * driver's non-transactional-DDL adapter.
  */
 export async function migrateToLatest(
   db: Kysely<Database>,
   migrationsDir: string,
 ): Promise<MigrateResult> {
-  const migrator = new Migrator({
-    db,
-    provider: new DirectoryMigrationProvider(migrationsDir),
-  });
+  await ensureChecksumTable(db);
+  await assertMigrationsUnmodified(db, migrationsDir);
+
+  const digests = await digestMigrationFiles(migrationsDir);
+  const baseProvider = new DirectoryMigrationProvider(migrationsDir);
+
+  // Every migration is handed a checksum-recording proxy of the database in
+  // place of the real one, so its own transaction records its own digest —
+  // see `wrapMigrationWithChecksum`'s doc comment for why this has to be a
+  // proxy rather than a second, nested `db.transaction()` call.
+  const provider: MigrationProvider = {
+    async getMigrations() {
+      const raw = await baseProvider.getMigrations();
+      const wrapped: Record<string, Migration> = {};
+
+      for (const [name, migration] of Object.entries(raw)) {
+        const digest = digests.get(name);
+        if (digest === undefined) {
+          // `digestMigrationFiles` and `DirectoryMigrationProvider` share the
+          // same file-matching rule, so this should be unreachable. Guarding
+          // anyway: silently applying a migration with no digest is exactly
+          // the gap this whole module exists to close.
+          throw new Error(`no digest computed for migration "${name}" — cannot record checksum`);
+        }
+        wrapped[name] = wrapMigrationWithChecksum(migration, name, digest);
+      }
+
+      return wrapped;
+    },
+  };
+
+  const migrator = new Migrator({ db, provider });
 
   const { error, results } = await migrator.migrateToLatest();
   return { results: results ?? [], error };
