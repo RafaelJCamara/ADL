@@ -63,13 +63,16 @@ const DEFAULT_AGENT_BLOCK = Object.freeze({
  * ADL's documented defaults — the third and lowest-priority input to
  * {@link mergeConfig}. Used when a field is absent from both the daemon
  * config and the repo's `adl.yml`.
+ *
+ * `limits` is derived from {@link LimitsSchema}'s own per-field `.default()`
+ * calls rather than restated as a second literal — two independently-edited
+ * copies of the same three numbers can silently diverge (a daemon config
+ * that omits `limits` entirely reads this object directly, while one that
+ * specifies `limits` partially reads `LimitsSchema.partial()`'s own
+ * defaults; only a single source of truth guarantees they always agree).
  */
 export const DEFAULT_CONFIG = Object.freeze({
-  limits: Object.freeze({
-    max_rounds: 6,
-    budget_usd: 15,
-    repeat_finding_threshold: 2,
-  }) satisfies Limits,
+  limits: Object.freeze(LimitsSchema.parse({})) satisfies Limits,
   agents: Object.freeze({
     developer: DEFAULT_AGENT_BLOCK,
     reviewer: DEFAULT_AGENT_BLOCK,
