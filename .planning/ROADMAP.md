@@ -50,12 +50,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. An `adl.yml` validates its build, start, test, and teardown commands and its explicit `ready` / `ready_timeout` contract, and resolves context files through the `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade when none are declared.
   5. A new gate stage is added to the pipeline by configuration alone — the lifecycle transition function is untouched and no schema migration is required.
 
-**Plans**: 10 plans
+**Plans**: 1/10 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Package legitimacy gate before the first install (blocking human checkpoint)
+- [x] 01-01-PLAN.md — Package legitimacy gate before the first install (blocking human checkpoint)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -386,7 +386,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Contracts | 0/10 | Planned | - |
+| 1. Core Contracts | 1/10 | In Progress|  |
 | 2. Workspace & the Exec Boundary | 0/TBD | Not started | - |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
