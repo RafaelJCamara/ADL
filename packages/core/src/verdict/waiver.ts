@@ -8,7 +8,7 @@ import { CriterionRefSchema } from './criterion-ref.js';
 export const WaiverTargetSchema = z
   .union([
     CriterionRefSchema,
-    z.object({ kind: z.literal('stage'), stageId: z.string().min(1) }).meta({
+    z.strictObject({ kind: z.literal('stage'), stageId: z.string().min(1) }).meta({
       id: 'WaiverTargetStage',
     }),
   ])
@@ -31,7 +31,7 @@ export type WaiverTarget = z.infer<typeof WaiverTargetSchema>;
  * a waiver is a recorded absence of judgement, and the PR renders it as such.
  */
 export const WaiverSchema = z
-  .object({
+  .strictObject({
     target: WaiverTargetSchema,
     /** Why the human accepted it. Free prose, but never empty. */
     reason: z.string().min(1),

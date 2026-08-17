@@ -47,10 +47,10 @@ export type GlobalCategory = z.infer<typeof GlobalCategorySchema>;
 export const CriterionRefSchema = z
   .discriminatedUnion('kind', [
     z
-      .object({ kind: z.literal('criterion'), id: CriterionIdSchema })
+      .strictObject({ kind: z.literal('criterion'), id: CriterionIdSchema })
       .meta({ id: 'CriterionRefCriterion' }),
     z
-      .object({ kind: z.literal('global'), category: GlobalCategorySchema })
+      .strictObject({ kind: z.literal('global'), category: GlobalCategorySchema })
       .meta({ id: 'CriterionRefGlobal' }),
   ])
   .meta({

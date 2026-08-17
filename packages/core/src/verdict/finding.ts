@@ -23,7 +23,7 @@ export type Severity = z.infer<typeof SeveritySchema>;
  * (threat T-1-02).
  */
 export const FindingLocationSchema = z
-  .object({
+  .strictObject({
     path: z.string().min(1),
     line: z.int().positive().optional(),
     endLine: z.int().positive().optional(),
@@ -48,7 +48,7 @@ export type FindingLocation = z.infer<typeof FindingLocationSchema>;
  * emission intact (Pattern 1, threat T-1-06).
  */
 export const FindingSchema = z
-  .object({
+  .strictObject({
     /** sha256 hex from {@link fingerprintFinding} — the stall-detection key. */
     fingerprint: z.string().length(64),
     severity: SeveritySchema,
