@@ -82,16 +82,25 @@ describe('DurationSchema', () => {
    * A brute-force sweep across every whole value either side of each unit's
    * boundary. The pattern encodes four numeric ranges by hand; this is what
    * makes "the regex is correct" an executed fact rather than a careful read.
+   *
+   * Mismatches are collected and asserted once rather than through ~90,000
+   * `expect()` calls, which is the difference between a 200 ms test and one
+   * that trips the 5 s timeout under a loaded suite.
    */
   it('agrees with the arithmetic across the whole accepted range of s, m, and h', () => {
+    const mismatches: string[] = [];
     for (const [unit, ms] of Object.entries(UNIT_MS)) {
       if (unit === 'ms') continue; // swept separately below — 86.4M cases is not a unit test
       const cap = MAX_DURATION_MS / ms;
       for (let n = 0; n <= cap + 2; n++) {
+        const value = `${n}${unit}`;
         const expected = n >= 1 && n * ms <= MAX_DURATION_MS;
-        expect(DurationSchema.safeParse(`${n}${unit}`).success, `${n}${unit}`).toBe(expected);
+        if (DurationSchema.safeParse(value).success !== expected) {
+          mismatches.push(`${value} (expected ${expected ? 'accept' : 'reject'})`);
+        }
       }
     }
+    expect(mismatches).toEqual([]);
   });
 
   it('agrees with the arithmetic at every decade boundary in milliseconds', () => {
