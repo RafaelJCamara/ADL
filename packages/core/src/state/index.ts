@@ -25,3 +25,5 @@ export {
   type TransitionOutcome,
   type TransitionResult,
 } from './feature-state.js';
+
+export { transition } from './transition.js';
