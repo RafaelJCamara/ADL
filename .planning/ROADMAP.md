@@ -50,7 +50,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. An `adl.yml` validates its build, start, test, and teardown commands and its explicit `ready` / `ready_timeout` contract, and resolves context files through the `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade when none are declared.
   5. A new gate stage is added to the pipeline by configuration alone — the lifecycle transition function is untouched and no schema migration is required.
 
-**Plans**: 9/10 plans executed
+**Plans**: 10/10 plans executed
 
 Plans:
 **Wave 1**
@@ -73,7 +73,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 01-08-PLAN.md — EffectiveConfig: clamps, interpolation, context cascade, pipeline resolution, EXEC-07 proof
+- [x] 01-08-PLAN.md — EffectiveConfig: clamps, interpolation, context cascade, pipeline resolution, EXEC-07 proof
 
 **Notes**: Pure, no I/O. Also lands the DB schema and hand-written SQL migrations (Kysely), including `usage_events` and priced-model tables, because cost recording in Phase 5 cannot be designed against data that was never collected. `criterionId` retrofitted later means re-running every agent prompt; `inconclusive` retrofitted means auditing every PR ever labelled verified.
 
@@ -386,7 +386,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Contracts | 9/10 | In Progress|  |
+| 1. Core Contracts | 10/10 | In Progress|  |
 | 2. Workspace & the Exec Boundary | 0/TBD | Not started | - |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
