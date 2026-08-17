@@ -46,7 +46,19 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A structured ADL spec and a Gherkin/BDD feature file both load into one normalized shape with individually addressable acceptance-criterion IDs, with the author's original text retained verbatim alongside.
   4. An `adl.yml` validates its build, start, test, and teardown commands and its explicit `ready` / `ready_timeout` contract, and resolves context files through the `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade when none are declared.
   5. A new gate stage is added to the pipeline by configuration alone — the lifecycle transition function is untouched and no schema migration is required.
-**Plans**: TBD
+**Plans**: 10 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Package legitimacy gate before the first install (blocking human checkpoint)
+- [ ] 01-02-PLAN.md — Tracer: a spec becomes a green, persisted round outcome on the pinned toolchain
+- [ ] 01-03-PLAN.md — Guard rails: dependency-graph lint, core purity, toolchain pin, CI matrix
+- [ ] 01-04-PLAN.md — Aggregation, the exhaustive green proof, and the published JSON Schema
+- [ ] 01-05-PLAN.md — Developer escalation, the infrastructure-failure channel, and @adl/plugin-sdk
+- [ ] 01-06-PLAN.md — Dual-format spec intake with one flat AC-n sequence
+- [ ] 01-07-PLAN.md — adl.yml: argv commands, readiness probes, bounded durations, path guard
+- [ ] 01-08-PLAN.md — EffectiveConfig: clamps, interpolation, context cascade, pipeline resolution, EXEC-07 proof
+- [ ] 01-09-PLAN.md — The lifecycle state machine, with the pipeline deliberately absent
+- [ ] 01-10-PLAN.md — Schema completion: tables, checksum guard, priced-model seed
 
 **Notes**: Pure, no I/O. Also lands the DB schema and hand-written SQL migrations (Kysely), including `usage_events` and priced-model tables, because cost recording in Phase 5 cannot be designed against data that was never collected. `criterionId` retrofitted later means re-running every agent prompt; `inconclusive` retrofitted means auditing every PR ever labelled verified.
 
@@ -308,7 +320,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Contracts | 0/TBD | Not started | - |
+| 1. Core Contracts | 0/10 | Planned | - |
 | 2. Workspace & the Exec Boundary | 0/TBD | Not started | - |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
