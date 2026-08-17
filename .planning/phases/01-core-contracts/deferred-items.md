@@ -1,14 +1,38 @@
 # Deferred Items — Phase 01 Core Contracts
 
-Out-of-scope discoveries from plan 01-08's authoritative whole-workspace
-`pnpm exec eslint .` and `pnpm exec prettier --check .` runs — the first
-point in the phase where either could run against the fully merged tree
-(`eslint.config.js` / `.prettierrc.json`, both 01-03, did not exist when
-Wave 3 plans authored these files). Per plan 01-08's own file scope and the
-dispatch instruction ("do not fix those; just report them for the phase
-verifier"), these are **not** fixed here — they live in files owned by
-other plans. 01-08's own files were reformatted and are lint-clean and
-Prettier-clean (verified — see 01-08-SUMMARY.md § Verification).
+**Status: resolved.** Originally an out-of-scope catalogue from plan 01-08's
+authoritative whole-workspace `pnpm exec eslint .` and `pnpm exec prettier
+--check .` runs — the first point in the phase where either could run
+against the fully merged tree (`eslint.config.js` / `.prettierrc.json`, both
+01-03, did not exist when Wave 3 plans authored these files). Correctly kept
+out of 01-08's own scope at the time (its dispatch instruction was "do not
+fix those; just report them for the phase verifier").
+
+The 01-REVIEW.md code review (WR-04) flagged the *aggregate* consequence:
+CI's `Lint` and `Format` steps have no `continue-on-error`, so both would
+fail on every push regardless of diff. Resolved as part of closing the phase:
+
+- **15 ESLint errors** — 4 of the 10 `Kysely<any>` occurrences in
+  `packages/db/src/checksum.ts` were genuinely avoidable (ADL's own
+  functions, always called with a concrete `Kysely<Database>`) and made
+  generic over `DB` (see 01-REVIEW.md WR-02); the other 6 are structurally
+  forced by Kysely's own `Migration.up(db: Kysely<any>)` interface and now
+  carry a scoped, documented `eslint-disable`/`eslint-enable` block instead
+  of silently failing lint. The 5 `no-unused-vars` errors were all the
+  `const { x: _dropped, ...rest } = obj` destructure-to-omit pattern;
+  `eslint.config.js` now sets `ignoreRestSiblings: true` on
+  `@typescript-eslint/no-unused-vars` repo-wide, which is typescript-eslint's
+  own documented option for exactly this idiom.
+- **55 Prettier-dirty files** — reformatted in one dedicated, format-only
+  commit (never mixed with a logic change, so `git blame` on any of these
+  files still points to the plan that actually wrote the code).
+
+`pnpm lint`, `pnpm format`, `pnpm -r typecheck`, `pnpm -r build`,
+`pnpm -r test`, and `pnpm vitest run --project root` are all green on the
+merged tree as of this resolution. The original catalogue is preserved below
+for the historical record.
+
+## Original catalogue (as of plan 01-08, now resolved)
 
 ## `pnpm lint` (`eslint .`) — 15 errors, 0 warnings, all outside 01-08's scope
 
