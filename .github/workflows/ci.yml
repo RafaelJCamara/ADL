@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Read-only by default. Nothing in this workflow writes to the repository, and
+# a token scoped wider than the job needs is a standing invitation.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify (node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Both legs always run. If only one end of the supported range breaks,
+      # cancelling the other leg destroys exactly the evidence needed to tell
+      # a Node-version problem from a general one.
+      fail-fast: false
+      matrix:
+        # 22 is the `engines` floor promised to adopters (>=22.12.0); 24 is the
+        # dev target named in .claude/CLAUDE.md. An OSS tool whose floor is
+        # never exercised is making a promise it has not checked -- and the
+        # development machine runs 22.23.2, so it cannot test both ends alone.
+        # 01-VALIDATION.md records this matrix as the phase's only manual-only
+        # verification: a human reads the first green run.
+        node-version: [22, 24]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Activate pnpm via corepack
+        # corepack honours the `packageManager` field, so this resolves the
+        # same pnpm a contributor gets. Activated AFTER setup-node so the shims
+        # land in the Node installation the rest of the job actually uses.
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0 --activate
+          pnpm --version
+
+      - name: Locate the pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-node${{ matrix.node-version }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node${{ matrix.node-version }}-pnpm-
+
+      - name: Install
+        # --frozen-lockfile is half of the version-drift mitigation (T-1-14);
+        # test/toolchain.test.ts is the other half. This one refuses to resolve
+        # anything new; that one asserts what was resolved is still compatible.
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format
+        run: pnpm format
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Test (workspace root suite)
+        # `pnpm -r` iterates the workspace PACKAGES and deliberately excludes
+        # the root, so the step above reports "3 of 4 projects" and never runs
+        # test/. Without this step the architecture-rule fixtures and the
+        # toolchain pin would sit in the repository unexecuted -- Pitfall 8
+        # arriving through a side door, with the rules once again unproven in
+        # the only place it matters.
+        run: pnpm vitest run --project root
