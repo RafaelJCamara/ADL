@@ -16,13 +16,23 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 
 ### Active
 
+**Core contracts**
+
+- [ ] Six-outcome verdict schema — `pass`, `send_back`, `fail`, `inconclusive`, `warn`, `skip` — where only `send_back` consumes a round, and `inconclusive` is structurally incapable of producing a green PR
+- [ ] Developer-side "this gate is wrong" escalation exit, so an agent facing an impossible gate has an honest alternative to subverting it
+- [ ] Every finding carries `fingerprint`, `severity`, `location`, and `criterionId`
+- [ ] Acceptance criteria are enumerable and ID'd, threading spec → developer prompt → reviewer finding → test result → PR coverage table
+
 **Loop & orchestration**
 
-- [ ] Detect undeveloped feature folders under `/features` in a target repository
+- [ ] Detect undeveloped feature folders under `/features` as a pure function of repository state — webhooks and polling only trigger re-evaluation
 - [ ] Run the developer → code review → harnesses → behaviour test → PR loop end to end
 - [ ] Route failed gates back to the developer agent with the failing verdict as context
-- [ ] Enforce a per-feature max-round limit and a per-feature token/cost budget, whichever is hit first
+- [ ] Enforce a per-feature max-round limit and a per-feature token/cost budget, whichever is hit first, checked before dispatch rather than after
+- [ ] Detect no-progress stalls via repeated-finding fingerprints, independently of round and budget caps
+- [ ] Handle provider failures (429/5xx, auth) without consuming a round or budget
 - [ ] Escalate to a human with full transcript and disagreement when a limit is hit
+- [ ] Feature claim/lock with reconciliation against open ADL pull requests, so restarts never duplicate work
 - [ ] Manager process owns detection, queue, state, config, credentials, and accounting
 - [ ] Worker runs as a separate OS process, leasing one feature at a time
 - [ ] Configurable concurrency, defaulting to 1 feature in flight
@@ -30,32 +40,39 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 **Agent roles**
 
 - [ ] Developer agent implements the feature from its spec
-- [ ] Code reviewer agent judges implementation against the feature spec plus code quality
-- [ ] Behaviour tester agent designs and runs tests for the feature, judging behaviour only — never code
+- [ ] Code reviewer agent judges implementation against the feature spec plus code quality, with fresh context — it never inherits the developer's session or transcript
+- [ ] Behaviour tester agent designs and runs tests for the feature, judging behaviour only — never code, enforced by workspace composition rather than by prompt
 - [ ] Tester's tests are committed into the repository as permanent regression coverage
+- [ ] Committed-test guardrails — assertion floor, spec-clause link, stability re-runs, and mandatory failure against the pre-feature commit
+- [ ] Protected-path enforcement — the developer cannot modify specs, gate configuration, or the tests that judge it
 
 **Harness extensibility**
 
-- [ ] Harnesses are pluggable gate stages returning a verdict (pass / fail / send-back)
+- [ ] Harnesses are pluggable gate stages returning a verdict from the six-outcome schema
 - [ ] A harness may be an AI agent or a plain command — the loop only consumes the verdict
 - [ ] Harnesses are positionable at any point in the pipeline
+- [ ] Reviewer and behaviour tester are themselves implemented on the harness interface, not special-cased
 - [ ] Ship at least one real harness (security checks) as a reference implementation
 
 **Model backends**
 
-- [ ] Model-agnostic adapter layer for agent execution
-- [ ] Claude Code headless backend
-- [ ] Anthropic API direct backend
+- [ ] `AgentBackend` port for agentic CLIs that own their own loop and tools
+- [ ] `ModelBackend` port for raw model APIs where ADL owns the loop
+- [ ] A conformance suite both adapter families pass in CI
+- [ ] Claude Code headless backend (`AgentBackend`)
+- [ ] Anthropic API direct backend (`ModelBackend` + generic agent loop)
 - [ ] OpenAI backend (API + Codex CLI)
 - [ ] Gemini backend (API + CLI)
 
 **Forge integration**
 
-- [ ] Forge abstraction covering branch, PR, and comment operations
+- [ ] Forge abstraction covering branch, change-request, and comment operations, designed around the narrowest forge's API
 - [ ] GitHub support
 - [ ] GitLab support
 - [ ] Gitea support
-- [ ] Every agent posts its own PR comment summarizing its work and outcome
+- [ ] Draft PR opened at round 1, promoted to ready when every gate is green
+- [ ] One sticky comment per agent role, edited in place with prior rounds collapsed, plus a single rollup
+- [ ] Spec-clause coverage table on the PR
 - [ ] Human approves and merges the PR — ADL never merges
 
 **Feature specs & target-repo config**
@@ -63,24 +80,31 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 - [ ] Support a structured ADL feature-spec template
 - [ ] Support Gherkin / BDD scenario files
 - [ ] `adl.yml` in the target repo declares build / start / test / teardown commands
-- [ ] `adl.yml` can point at additional context files; defaults to README when unspecified
+- [ ] `adl.yml` declares an explicit readiness contract (`ready`, `ready_timeout`) — ADL owns the app lifecycle, not the agent
+- [ ] `adl.yml` can point at additional context files; defaults to an `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade
 
 **Detection & state**
 
 - [ ] Forge webhooks for immediate detection, with polling as fallback
 - [ ] Daemon-side database as source of truth for feature state, rounds, spend, and transcripts
-- [ ] State survives daemon restart
+- [ ] State survives daemon restart, including recovery from a worker killed mid-loop
 
 **Observability & control**
 
 - [ ] HTTP API on the manager
 - [ ] CLI for status, logs, pause, and kill
 - [ ] Web dashboard over the same API
+- [ ] Per-invocation token and cost recording, degrading visibly when a backend's usage data is unreliable
 
-**Workspace**
+**Workspace & trust boundary**
 
 - [ ] Git worktree per feature on the daemon host
+- [ ] All process execution — including agent CLIs — goes through `workspace.exec()`
 - [ ] Workspace backend is an interface, so a container/sandbox backend can be added without touching the loop
+- [ ] Worker runs as a dedicated unprivileged OS user with a per-run scratch `HOME`
+- [ ] Credentials never in the worker's ambient environment; model keys injected only into the model subprocess
+- [ ] Trusted-path spec detection — default branch and write-permission authors only
+- [ ] Published threat model and `SECURITY.md` stating the trust boundary plainly before public release
 
 ### Out of Scope
 
@@ -89,8 +113,11 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 - Provisioning infrastructure for the app under test — nothing beyond what `adl.yml` starts
 - Hosting or fine-tuning models — ADL always calls somebody else's inference
 - ADL merging to the target branch autonomously — v1 always ends at human approval, even though the loop is otherwise unattended
-- Container-per-feature isolation in v1 — deferred behind the workspace-backend interface; worktrees are sufficient at concurrency 1
+- Container-per-feature isolation in v1 — worktrees are sufficient for *concurrency*, but provide no isolation; this is an accepted, documented risk mitigated by the trust-boundary requirements above, not a solved problem
 - Multi-repo fleet management as a v1 goal — the manager/worker split makes it possible later, but v1 does not commit to per-repo fairness, quotas, or credential isolation
+- Competing with dedicated AI review products — CodeRabbit, Greptile, and semgrep are consumed as harnesses rather than reimplemented
+- Harness registry, discovery, versioning, or marketplace — v1 ships the interface only
+- Issue-to-spec bridging and cost prediction — deferred until the loop is validated
 
 ## Context
 
@@ -106,7 +133,13 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 
 **Dogfooding as the bar.** v1 is not considered proven by a demo project. ADL must ship a real feature into its own repository, unattended, ending in a PR the author is willing to merge.
 
-**Scope tension (flagged during initialization).** Three forges, four model backends, and CLI + API + dashboard is a wide v1. Nothing has been cut, but the roadmap should establish a single vertical slice — one forge, one backend, CLI only — that proves the loop closes, before breadth is added. Breadth added before the loop closes is breadth built on an unvalidated assumption.
+**Scope tension (flagged during initialization, resolved after research).** Three forges, four model backends, and CLI + API + dashboard is a wide v1, and all four researchers independently recommended deferring breadth past dogfooding. The maintainer's decision, taken with that flag in hand: **v1 is the first public release**, so breadth stays in scope — a tool advertised as model-agnostic and multi-forge that ships with one of each is not credible publicly. The roadmap therefore keeps everything but treats **dogfooding as a hard gate partway through**, not as the finish line: no third backend, no second forge, no dashboard until ADL has shipped a real feature into its own repository unattended. The second agent backend is the sole exception that precedes the gate, because an adapter interface with one implementation cannot be shown to be vendor-neutral.
+
+**Why breadth is expensive before the gate.** A change to the verdict schema costs roughly 8× more once it must propagate through three forge adapters, four backend adapters, and a dashboard. Since no shipping product has a send-back gate loop, there is no evidence that anyone's contracts survive first contact — which is precisely why the contracts land in phase 1 and the gate sits before breadth.
+
+**Market position (from research).** The industry has converged on "issue in → sandboxed worker → draft PR out" (Copilot coding agent, Jules, Codex cloud, Devin, OpenHands). Two things are absent from every mainstream product, and both are ADL's core: a multi-role verdict-driven loop where a gate can reject and send work back, and gates as a first-class plugin surface. Danger.js is the closest precedent for the latter and it runs once in CI and cannot return work to an agent. The differentiator is real; the risk was only ever whether the surface area needed to reach it exhausts a solo maintainer first.
+
+**The dominant risk class is silently-wrong-but-green.** Gate subversion is measured rather than theoretical — ImpossibleBench found frontier models exploit conflicting tests up to 76% of the time, with Claude-family models specifically preferring to *modify the tests*, which is exactly what committing agent-authored tests exposes. The same work found the mitigation: an honest "this gate is wrong" exit cut cheating from 92% to 1%. That is why the verdict schema and protected paths are phase-1 contracts rather than hardening.
 
 ## Constraints
 
@@ -138,6 +171,20 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 | Dual limits: max rounds and cost budget | Developer/reviewer disagreement can loop indefinitely; rounds alone miss expensive stalls, budget alone misses cheap ones | — Pending |
 | TypeScript / Node | Strongest agent-SDK ecosystem and lowest barrier for OSS contributors | — Pending |
 | Dogfooding as the v1 success bar | A demo repo can be tuned to pass; ADL's own repo cannot | — Pending |
+| v1 is the first public release; breadth stays in scope | A tool advertised as model-agnostic and multi-forge that ships with one of each is not credible publicly — taken with the research's contrary recommendation in hand | — Pending |
+| Dogfooding is a hard gate partway through, not the finish line | Every unit of breadth multiplies the cost of a contract change; the gate keeps that multiplier low until the loop is proven | — Pending |
+| Second agent backend precedes the dogfood gate | An adapter interface with one implementation is unfalsifiable — pair a delegated-loop CLI with an owned-loop raw API to span both families | — Pending |
+| Adapter layer splits into `AgentBackend` and `ModelBackend` | Agentic CLIs return a diff plus transcript plus cost; raw APIs return one assistant turn. One interface over both means either a lowest-common-denominator adapter or rebuilding Claude Code | — Pending |
+| Six-outcome verdict schema, defined before any agent role exists | `pass/fail/send_back` cannot express "I could not verify", which becomes a false green; and without an honest "this gate is wrong" exit the agent is effectively forced to cheat | — Pending |
+| Reviewer and tester built on the harness interface, not special-cased | Two real consumers shape the plugin interface; special-casing ships it shaped around a hypothesis | — Pending |
+| Gate pipeline is data, not lifecycle states | If adding a harness requires a state-machine change and a migration, "pluggable harness" is decorative | — Pending |
+| All execution routes through `workspace.exec()` | The one leak that is expensive to retrofit — a direct `spawn` anywhere means the container backend can never work | — Pending |
+| The git commit is the checkpoint | Agent output is nondeterministic, so replay-style durable execution is impossible; at-least-once activities with idempotency keys is the only honest semantics | — Pending |
+| Acceptance-criterion IDs are the join key | Without them the product cannot answer "was every criterion actually verified" — and retrofitting means re-running every prompt | — Pending |
+| Sticky per-role PR comments, draft PR from round 1 | Four gates over five rounds is twenty comments — the AI-slop pattern maintainers are revolting against, and the shape GitHub's secondary rate limiter penalises | — Pending |
+| GitLab is the second forge, interface designed around Gitea | GitLab is genuinely different so it forces the abstraction honest; Gitea is the narrowest API so it sets the interface floor | — Pending |
+| Kysely with hand-written SQL migrations | Drizzle's stable release is still pre-1.0 with an RC pending; choosing it would schedule a known breaking migration into a nights-and-weekends project | — Pending |
+| SQLite plus a hand-rolled lease table; no Redis, no queue library | Concurrency defaults to 1 and jobs run for hours, so throughput is irrelevant — and Redis would be a hard install prerequisite for a tool pitched as "drop a daemon on your box" | — Pending |
 
 ## Evolution
 
@@ -157,4 +204,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-17 after initialization*
+*Last updated: 2026-08-17 after initialization and domain research*
