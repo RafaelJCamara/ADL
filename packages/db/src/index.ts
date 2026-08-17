@@ -8,6 +8,14 @@ export {
 } from './checksum.js';
 
 export {
+  priceUsageEvent,
+  type CostSource,
+  type CostCategory,
+  type UsageForPricing,
+  type PricedUsage,
+} from './pricing.js';
+
+export {
   type Database,
   type MetaTable,
   type ReposTable,
