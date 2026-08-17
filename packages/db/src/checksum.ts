@@ -24,7 +24,7 @@ import type { Migration } from 'kysely/migration';
 export const CHECKSUM_TABLE = 'adl_migration_checksums';
 
 /** Create ADL's checksum table if it does not already exist. Idempotent. */
-export async function ensureChecksumTable(db: Kysely<any>): Promise<void> {
+export async function ensureChecksumTable<DB>(db: Kysely<DB>): Promise<void> {
   await sql`
     create table if not exists ${sql.raw(CHECKSUM_TABLE)} (
       name       text primary key,
@@ -44,8 +44,8 @@ export async function ensureChecksumTable(db: Kysely<any>): Promise<void> {
  * written beforehand could survive a rollback the migration itself did not.
  * Writing it inside the same transaction removes both failure modes.
  */
-export async function recordMigrationChecksum(
-  trx: Kysely<any>,
+export async function recordMigrationChecksum<DB>(
+  trx: Kysely<DB>,
   name: string,
   digest: string,
 ): Promise<void> {
@@ -78,20 +78,27 @@ function migrationNameFromFile(file: string): string {
  * digest under identical keys, preserving the dev/dist migration-name parity
  * plan 01-02 established.
  */
-export async function digestMigrationFiles(migrationsDir: string): Promise<Map<string, string>> {
+export async function digestMigrationFiles(
+  migrationsDir: string,
+): Promise<Map<string, string>> {
   const files = await readdir(migrationsDir);
   const digests = new Map<string, string>();
 
   for (const file of files.sort()) {
     if (!isMigrationFile(file)) continue;
     const bytes = await readFile(join(migrationsDir, file));
-    digests.set(migrationNameFromFile(file), createHash('sha256').update(bytes).digest('hex'));
+    digests.set(
+      migrationNameFromFile(file),
+      createHash('sha256').update(bytes).digest('hex'),
+    );
   }
 
   return digests;
 }
 
-async function migrationsBookkeepingTableExists(db: Kysely<any>): Promise<boolean> {
+async function migrationsBookkeepingTableExists<DB>(
+  db: Kysely<DB>,
+): Promise<boolean> {
   const result = await sql<{ name: string }>`
     select name from sqlite_master where type = 'table' and name = 'kysely_migration'
   `.execute(db);
@@ -114,13 +121,15 @@ async function migrationsBookkeepingTableExists(db: Kysely<any>): Promise<boolea
  * tampered with the file" from "someone tampered with the evidence", and
  * treats both as equally unacceptable.
  */
-export async function assertMigrationsUnmodified(
-  db: Kysely<any>,
+export async function assertMigrationsUnmodified<DB>(
+  db: Kysely<DB>,
   migrationsDir: string,
 ): Promise<void> {
   if (!(await migrationsBookkeepingTableExists(db))) return;
 
-  const applied = await sql<{ name: string }>`select name from kysely_migration`.execute(db);
+  const applied = await sql<{
+    name: string;
+  }>`select name from kysely_migration`.execute(db);
   if (applied.rows.length === 0) return;
 
   await ensureChecksumTable(db);
@@ -185,6 +194,15 @@ export async function assertMigrationsUnmodified(
  * rolls both back together, leaving neither an applied record nor a checksum
  * row (see `checksum-guard.test.ts`'s partial-failure case).
  */
+/* eslint-disable @typescript-eslint/no-explicit-any --
+ * Kysely's own `Migration` interface (kysely/migration) is declared as
+ * `up(db: Kysely<any>): Promise<void>` — not generic — so implementing it,
+ * and building the proxy that stands in for that same `db` parameter, has no
+ * narrower type available without violating the third-party interface these
+ * two functions exist to satisfy. Verified against kysely@0.29.5's own
+ * shipped `.d.ts` (see 01-REVIEW.md WR-02). The other four functions in this
+ * module are ADL's own and are generic over `DB` instead.
+ */
 export function wrapMigrationWithChecksum(
   migration: Migration,
   name: string,
@@ -198,7 +216,11 @@ export function wrapMigrationWithChecksum(
   };
 }
 
-function reentrantTransactionProxy(db: Kysely<any>, name: string, digest: string): Kysely<any> {
+function reentrantTransactionProxy(
+  db: Kysely<any>,
+  name: string,
+  digest: string,
+): Kysely<any> {
   return new Proxy(db, {
     get(target, prop, receiver) {
       if (prop === 'transaction') {
@@ -217,3 +239,4 @@ function reentrantTransactionProxy(db: Kysely<any>, name: string, digest: string
     },
   }) as Kysely<any>;
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */
