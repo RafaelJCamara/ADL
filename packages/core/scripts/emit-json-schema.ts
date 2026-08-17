@@ -24,7 +24,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import * as z from 'zod';
 
@@ -62,7 +62,7 @@ function withSortedKeys(value: Json): Json {
 }
 
 /** The exact bytes the committed artifact must contain. */
-function serialise(schema: unknown): string {
+export function serialise(schema: unknown): string {
   return `${JSON.stringify(withSortedKeys(schema as Json), null, 2)}\n`;
 }
 
@@ -163,26 +163,39 @@ function unifiedDiff(expected: string, actual: string, label: string): string {
   return lines.join('\n');
 }
 
-function main(): void {
-  const check = process.argv.includes('--check');
-
-  // `reused: 'inline'` rather than `'ref'`, and the difference is load-bearing.
-  //
-  // Every schema carrying `.meta({ id })` lands in `$defs` under that name and is
-  // `$ref`'d, regardless of this option — that is registry-driven, and it is what
-  // makes `Finding`, `CriterionRef`, `Severity` and friends stable references.
-  // What `reused: 'ref'` additionally does is extract every *anonymous leaf* —
-  // each `z.string().min(1)`, each `z.literal('pass')` — into `$defs` under a
-  // **positional** `__schemaN` name. Measured against this schema: `'ref'`
-  // produces 50 defs of which 33 are positional; `'inline'` produces 17, all
-  // PascalCase. Positional names churn whenever anything upstream is reordered,
-  // which is exactly the meaningless-diff failure the guard below exists to
-  // prevent, and no amount of naming union *members* fixes it — the offenders are
-  // primitives with no identity worth naming.
+/**
+ * Produce the published schema and its exact serialised bytes from the
+ * current Zod source, running both `$defs`-shape guards.
+ *
+ * Exported so `json-schema-equivalence.test.ts` can assert byte-identity
+ * against the committed copy **without re-implementing the emission or
+ * serialisation logic** — a test-local re-implementation of `serialise()`
+ * would itself be able to drift from what this script actually writes,
+ * which defeats the point of a drift test.
+ *
+ * `reused: 'inline'` rather than `'ref'`, and the difference is load-bearing.
+ * Every schema carrying `.meta({ id })` lands in `$defs` under that name and
+ * is `$ref`'d, regardless of this option — that is registry-driven, and it is
+ * what makes `Finding`, `CriterionRef`, `Severity` and friends stable
+ * references. What `reused: 'ref'` additionally does is extract every
+ * *anonymous leaf* — each `z.string().min(1)`, each `z.literal('pass')` —
+ * into `$defs` under a **positional** `__schemaN` name. Measured against this
+ * schema: `'ref'` produces 50 defs of which 33 are positional; `'inline'`
+ * produces 17, all PascalCase. Positional names churn whenever anything
+ * upstream is reordered, which is exactly the meaningless-diff failure the
+ * guards below exist to prevent, and no amount of naming union *members*
+ * fixes it — the offenders are primitives with no identity worth naming.
+ */
+export function emitVerdictSchema(): { schema: unknown; serialised: string } {
   const schema = z.toJSONSchema(VerdictSchema, { target: 'draft-2020-12', reused: 'inline' });
   assertStableDefNames(schema);
   assertNamedUnionMembers(schema);
-  const serialised = serialise(schema);
+  return { schema, serialised: serialise(schema) };
+}
+
+function main(): void {
+  const check = process.argv.includes('--check');
+  const { serialised } = emitVerdictSchema();
   const label = relative(PACKAGE_ROOT, OUT_PATH).split('\\').join('/');
 
   if (!check) {
@@ -228,4 +241,11 @@ function main(): void {
   process.exit(1);
 }
 
-main();
+// Only run as a side effect when executed directly (`tsx scripts/emit-json-schema.ts`),
+// never when imported — `json-schema-equivalence.test.ts` imports `emitVerdictSchema`
+// and must not trigger a filesystem write or a `process.exit` as an import side effect.
+const isDirectlyExecuted =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectlyExecuted) {
+  main();
+}
