@@ -25,6 +25,95 @@ import { parseYamlDocument } from './yaml-parse.js';
  * `.max()`), per Pattern 1 — the one exception is the `ready` ⇒
  * `ready_timeout` cross-field rule below, which is safe precisely *because*
  * `adl.yml` is not published as JSON Schema.
+ *
+ * Every field below carries a `.describe()` string doing double duty as its
+ * own reference documentation — what it does, its default, and where its
+ * ceiling comes from, when it has one. That is a deliberate substitute for a
+ * separate markdown reference: a description travels with the field, appears
+ * in any generated output, and cannot be edited in one place while the schema
+ * changes in another.
+ *
+ * ## Four promises this schema keeps
+ *
+ * An adopter relies on these, and a later phase must not break any of them
+ * without deliberately incrementing {@link ADL_YML_VERSION}.
+ *
+ * 1. **`version: 1` is narrow.** Within a major version, ADL only adds
+ *    optional keys; a removed or renamed key requires a new version number
+ *    (01-RESEARCH.md § Open Questions 2).
+ * 2. **Interpolation is a closed set of ADL-provided variables, never general
+ *    shell expansion.** The variables are `ADL_PORT`, `ADL_FEATURE_ID`,
+ *    `ADL_ROUND`, and `ADL_VERDICT_FILE`, substituted only where this schema
+ *    documents an interpolatable string — currently the `http` readiness
+ *    probe's `url` field. An unknown variable name is a **validation error**,
+ *    never an empty-string substitution (D-21, 01-RESEARCH.md § Pitfall 10).
+ *    Plan 01-08 implements the substitution; this promise is the contract it
+ *    implements against.
+ * 3. **`limits` may only be lowered from the daemon's ceiling, and backend
+ *    and credential selection is daemon-only (D-22).** A budget the watched
+ *    repository can raise is not a budget, and a backend it can choose is a
+ *    credential-selection primitive. This schema validates the repo-supplied
+ *    value's own shape; the daemon-side clamp is 01-08's `EffectiveConfig`.
+ * 4. **Commands are explicit by design and are never auto-detected**
+ *    (`.planning/REQUIREMENTS.md` § Out of Scope) — auto-detection is
+ *    non-deterministic exactly where it matters most, so `commands` has no
+ *    default and every `adl.yml` must declare all four lifecycle commands.
+ *
+ * ## A complete `adl.yml`
+ *
+ * Kept honest by execution: `adl-yml.test.ts` extracts this block verbatim
+ * and parses it through {@link parseAdlYml}. A documentation example that has
+ * never been validated is a bug report waiting to be filed.
+ *
+ * ```yaml
+ * version: 1
+ * features_dir: features
+ *
+ * commands:
+ *   build:
+ *     argv: [npm, ci]
+ *     timeout: 10m
+ *   start:
+ *     argv: [npm, run, dev]
+ *     timeout: 2m
+ *     ready:
+ *       kind: http
+ *       url: "http://127.0.0.1:${ADL_PORT}/health"
+ *       expect: 200
+ *     ready_timeout: 30s
+ *   test:
+ *     argv: [npm, test]
+ *     timeout: 15m
+ *   teardown:
+ *     argv: [docker, compose, down]
+ *
+ * context:
+ *   files: [README.md, docs/architecture.md]
+ *   max_bytes: 200000
+ *   on_overflow: truncate
+ *
+ * pipeline:
+ *   - develop
+ *   - review
+ *   - harness: security
+ *   - test
+ *
+ * limits:
+ *   max_rounds: 6
+ *   budget_usd: 15
+ *   repeat_finding_threshold: 2
+ *
+ * agents:
+ *   developer:
+ *     backend: claude-code
+ *     model: default
+ *   reviewer:
+ *     backend: claude-code
+ *     model: default
+ *   tester:
+ *     backend: claude-code
+ *     model: default
+ * ```
  */
 
 /**
@@ -53,10 +142,24 @@ const EnvVarNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
  * runs in Phase 2 (ARCHITECTURE.md §5, threat T-1-01).
  */
 export const CommandSpecSchema = z.strictObject({
-  argv: z.array(z.string().min(1)).min(1),
-  cwd: RepoRelativePathSchema.optional(),
-  env: z.record(EnvVarNameSchema, z.string()).optional(),
-  timeout: DurationSchema.optional(),
+  argv: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe(
+      'The command as an argv array — never a shell string. No default: required, and ' +
+        'must have at least one non-empty element.',
+    ),
+  cwd: RepoRelativePathSchema.optional().describe(
+    'Working directory, relative to the repo root. Default: the repo root.',
+  ),
+  env: z
+    .record(EnvVarNameSchema, z.string())
+    .optional()
+    .describe('Extra environment variables for this command. Default: none.'),
+  timeout: DurationSchema.optional().describe(
+    'How long this command may run before ADL kills it, as a duration string (e.g. "10m"). ' +
+      'Default: no timeout enforced by this schema; ceiling is 24h (MAX_DURATION_MS).',
+  ),
 });
 
 export type CommandSpec = z.infer<typeof CommandSpecSchema>;
@@ -84,22 +187,28 @@ const TcpPortSchema = z.int().min(1).max(65_535);
 const HttpReadyProbeSchema = z
   .strictObject({
     kind: z.literal('http'),
-    url: InterpolatableUrlSchema,
-    expect: HttpStatusSchema.optional(),
+    url: InterpolatableUrlSchema.describe(
+      'The URL to poll until it responds. May reference ${ADL_PORT} — the one place this ' +
+        'schema documents ADL-provided interpolation (promise 2).',
+    ),
+    expect: HttpStatusSchema.optional().describe(
+      'The HTTP status code that counts as ready. Default: any response counts as ready. ' +
+        'Bounded 100–599 (valid HTTP status codes).',
+    ),
   })
   .meta({ id: 'HttpReadyProbe' });
 
 const TcpReadyProbeSchema = z
   .strictObject({
     kind: z.literal('tcp'),
-    port: TcpPortSchema,
+    port: TcpPortSchema.describe('The port to poll until it accepts a connection. Bounded 1–65535.'),
   })
   .meta({ id: 'TcpReadyProbe' });
 
 const LogReadyProbeSchema = z
   .strictObject({
     kind: z.literal('log'),
-    pattern: z.string().min(1),
+    pattern: z.string().min(1).describe('A literal substring to wait for in the started process\'s output.'),
   })
   .meta({ id: 'LogReadyProbe' });
 
@@ -112,7 +221,13 @@ const LogReadyProbeSchema = z
 const ExecReadyProbeSchema = z
   .strictObject({
     kind: z.literal('exec'),
-    argv: z.array(z.string().min(1)).min(1),
+    argv: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        'A command to run repeatedly until it exits zero — the universal escape hatch ' +
+          '(e.g. pg_isready) for an app with no HTTP or TCP surface.',
+      ),
   })
   .meta({ id: 'ExecReadyProbe' });
 
@@ -154,8 +269,14 @@ const GROUP_SYNTAX_REJECTION =
  * layer), so the emission hazard Pattern 1 warns about does not apply here.
  */
 export const StartCommandSpecSchema = CommandSpecSchema.extend({
-  ready: ReadyProbeSchema.optional(),
-  ready_timeout: DurationSchema.optional(),
+  ready: ReadyProbeSchema.optional().describe(
+    'A readiness probe — one of four kinds. Default: no probe (the tester races the server; ' +
+      'prefer declaring one). Required together with ready_timeout: both or neither.',
+  ),
+  ready_timeout: DurationSchema.optional().describe(
+    'How long to wait for ready before giving up, as a duration string. Required together ' +
+      'with ready: both or neither. Ceiling is 24h (MAX_DURATION_MS).',
+  ),
 }).superRefine((value, ctx) => {
   if (value.ready !== undefined && value.ready_timeout === undefined) {
     ctx.addIssue({
@@ -201,9 +322,23 @@ export type OnOverflow = z.infer<typeof OnOverflowSchema>;
  * quiet degradation this project is designed against.
  */
 export const ContextConfigSchema = z.strictObject({
-  files: z.array(RepoRelativePathSchema).default(['README.md']),
-  max_bytes: z.int().positive().max(2_000_000).default(200_000),
-  on_overflow: OnOverflowSchema.default('truncate'),
+  files: z
+    .array(RepoRelativePathSchema)
+    .default(['README.md'])
+    .describe('Repo-relative paths fed into every agent prompt. Default: ["README.md"].'),
+  max_bytes: z
+    .int()
+    .positive()
+    .max(2_000_000)
+    .default(200_000)
+    .describe(
+      'Ceiling on the assembled context, in bytes. Default: 200000. Ceiling: 2000000 — ' +
+        'past this the field itself is rejected rather than accepted at an absurd size.',
+    ),
+  on_overflow: OnOverflowSchema.default('truncate').describe(
+    'What happens when the assembled context exceeds max_bytes. Default: "truncate" ' +
+      '(head+tail, Phase 4). "error" is available so an oversized file is never silently cut.',
+  ),
 });
 
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;
@@ -226,9 +361,18 @@ export type OnSendBack = z.infer<typeof OnSendBackSchema>;
  * fail at config validation rather than mid-run.
  */
 const HarnessEntrySchema = z.strictObject({
-  harness: StageIdSchema,
-  with: z.record(z.string(), z.unknown()).optional(),
-  on_send_back: OnSendBackSchema.optional(),
+  harness: StageIdSchema.describe(
+    'The harness id, resolved (01-08) as a built-in id, then an npm package, then a ' +
+      'repo-relative path. Unrecognised ids fail at config validation, not mid-run.',
+  ),
+  with: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe('Harness-specific configuration, passed through opaquely. Default: none.'),
+  on_send_back: OnSendBackSchema.optional().describe(
+    'Whether a send_back from this stage continues the pipeline or stops it (Phase 7). ' +
+      'Default: derived from the stage\'s cost class at runtime, not by this schema.',
+  ),
 });
 
 /**
@@ -269,9 +413,35 @@ export type PipelineEntry = z.infer<typeof PipelineEntrySchema>;
  * schema validates the repo-supplied value's own shape.
  */
 export const LimitsSchema = z.strictObject({
-  max_rounds: z.int().positive().max(50).default(6),
-  budget_usd: z.number().positive().max(10_000).default(15),
-  repeat_finding_threshold: z.int().positive().max(20).default(2),
+  max_rounds: z
+    .int()
+    .positive()
+    .max(50)
+    .default(6)
+    .describe(
+      'How many develop/gate rounds a feature may run before escalating to a human. ' +
+        'Default: 6. Ceiling: 50 — needing more is a signal the feature is too large, ' +
+        'not that the limit should rise.',
+    ),
+  budget_usd: z
+    .number()
+    .positive()
+    .max(10_000)
+    .default(15)
+    .describe(
+      'Spend ceiling for one feature, in USD. Default: 15. Ceiling: 10000 — protects ' +
+        'against a config typo (an extra zero), not a real budget policy signal.',
+    ),
+  repeat_finding_threshold: z
+    .int()
+    .positive()
+    .max(20)
+    .default(2)
+    .describe(
+      'How many rounds the same finding fingerprint may recur before stall detection ' +
+        'escalates (LOOP-06). Default: 2. Ceiling: 20 — recurring that often means the ' +
+        'developer is stuck, not that the threshold needs to go higher.',
+    ),
 });
 
 export type Limits = z.infer<typeof LimitsSchema>;
@@ -289,9 +459,17 @@ export type Limits = z.infer<typeof LimitsSchema>;
  * clamp is not this schema's job — this schema validates shape only.
  */
 const AgentBlockSchema = z.strictObject({
-  backend: z.string().min(1),
-  model: z.string().min(1),
-  prompt_template: RepoRelativePathSchema.optional(),
+  backend: z
+    .string()
+    .min(1)
+    .describe(
+      'The agent backend id (e.g. "claude-code"). No default. Shape-only: daemon-only ' +
+        'per D-22, and 01-08 clamps or rejects a repo-supplied value.',
+    ),
+  model: z.string().min(1).describe('The model alias to run this role with. No default.'),
+  prompt_template: RepoRelativePathSchema.optional().describe(
+    'A repo-relative override of the default prompt template for this role. Default: none.',
+  ),
 });
 
 export const AgentsConfigSchema = z.strictObject({
@@ -308,21 +486,51 @@ export type AgentsConfig = z.infer<typeof AgentsConfigSchema>;
 
 export const AdlYmlSchema = z
   .strictObject({
-    version: z.literal(ADL_YML_VERSION),
-    features_dir: RepoRelativePathSchema.default('features'),
-    commands: CommandsSchema,
+    version: z
+      .literal(ADL_YML_VERSION)
+      .describe(
+        'The adl.yml schema version. No default — every file must state it explicitly. ' +
+          'Must equal 1; within a major version ADL only adds optional keys, so a file ' +
+          'declaring version 2 fails loudly rather than being misread against the wrong shape.',
+      ),
+    features_dir: RepoRelativePathSchema.default('features').describe(
+      'The directory, relative to the repo root, ADL watches for feature folders ' +
+        '(features/<id>/, D-16). Default: "features".',
+    ),
+    commands: CommandsSchema.describe(
+      'The four lifecycle commands — build, start, test, teardown — each an argv array, ' +
+        'never a shell string. No default: every field is required.',
+    ),
     context: ContextConfigSchema.default({
       files: ['README.md'],
       max_bytes: 200_000,
       on_overflow: 'truncate',
-    }),
-    pipeline: z.array(PipelineEntrySchema).min(1),
+    }).describe(
+      'Which repo files feed the agent prompts, and the overflow policy if they exceed ' +
+        'max_bytes. Default: { files: ["README.md"], max_bytes: 200000, on_overflow: "truncate" }.',
+    ),
+    pipeline: z
+      .array(PipelineEntrySchema)
+      .min(1)
+      .describe(
+        'The ordered list of stages a feature passes through — built-in stage names, ' +
+          'configured harnesses, or (parsed and rejected) v2 stage groups. No default: at ' +
+          'least one stage is required.',
+      ),
     limits: LimitsSchema.default({
       max_rounds: 6,
       budget_usd: 15,
       repeat_finding_threshold: 2,
-    }),
-    agents: AgentsConfigSchema.default({}),
+    }).describe(
+      'Ceilings on this loop\'s cost, clamped down — never up — by the daemon\'s own ' +
+        'ceiling (D-22). Default: { max_rounds: 6, budget_usd: 15, repeat_finding_threshold: 2 }; ' +
+        'see LimitsSchema for each field\'s individual documented ceiling.',
+    ),
+    agents: AgentsConfigSchema.default({}).describe(
+      'Per-role model selection, shape-only — backend and credential selection is ' +
+        'daemon-only (D-22) and a repo-supplied value here is clamped by EffectiveConfig, ' +
+        'not by this schema. Default: {} (no role overrides).',
+    ),
   })
   .meta({ id: 'AdlYml' });
 

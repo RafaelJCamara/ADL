@@ -23,6 +23,30 @@ function fixture(name: string): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The module's own source, used to extract and re-validate its worked example. */
+const MODULE_PATH = fileURLToPath(new URL('../../src/config/adl-yml.ts', import.meta.url));
+const MODULE_SOURCE = readFileSync(MODULE_PATH, 'utf8');
+
+/**
+ * Pulls the fenced ` ```yaml ` block out of a JSDoc comment and strips the
+ * ` * ` line prefix each line carries inside the comment. Task 3's action is
+ * explicit that this must extract the *same* block the test asserts against,
+ * rather than duplicating the example — a duplicated example is exactly the
+ * documentation drift `.describe()` exists to prevent.
+ */
+function extractYamlExample(source: string): string {
+  const fenceStart = source.indexOf('```yaml');
+  if (fenceStart === -1) throw new Error('no ```yaml fence found in module header');
+  const bodyStart = source.indexOf('\n', fenceStart) + 1;
+  const fenceEnd = source.indexOf('```', bodyStart);
+  if (fenceEnd === -1) throw new Error('```yaml fence is not closed');
+  return source
+    .slice(bodyStart, fenceEnd)
+    .split('\n')
+    .map((line) => line.replace(/^\s*\*\s?/, ''))
+    .join('\n');
+}
+
 /** Parses a fixture and asserts it validated, returning the config. */
 function parseValid(name: string) {
   const result = parseAdlYml(fixture(name));
@@ -284,5 +308,37 @@ describe('parseAdlYml: strictness and structure', () => {
     const error = parseInvalid('invalid-unknown-key.yml'); // already covers top-level; this also sanity-checks a synthetic case
     expect(error).toBeInstanceOf(LoadError);
     expect(parseAdlYml(source)).toBeInstanceOf(LoadError);
+  });
+});
+
+describe('AdlYmlSchema: self-documentation', () => {
+  it('carries a non-empty description on every top-level field', () => {
+    const missing: string[] = [];
+    for (const [key, fieldSchema] of Object.entries(AdlYmlSchema.shape)) {
+      const description = (fieldSchema as { description?: string }).description;
+      if (!description || description.trim().length === 0) missing.push(key);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('records the four promises in the module header', () => {
+    for (const phrase of [
+      'version: 1',
+      'closed set of ADL-provided variables',
+      'daemon-only',
+      'never auto-detected',
+    ]) {
+      expect(MODULE_SOURCE, phrase).toContain(phrase);
+    }
+  });
+
+  it('parses the worked example in its own module header', () => {
+    const example = extractYamlExample(MODULE_SOURCE);
+    const result = parseAdlYml(example);
+    if (result instanceof LoadError) {
+      throw new Error(`worked example in adl-yml.ts header failed to parse: ${result.message}`);
+    }
+    expect(result.version).toBe(1);
+    expect(result.commands.start.ready?.kind).toBe('http');
   });
 });
