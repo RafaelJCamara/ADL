@@ -36,7 +36,9 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "emit:schema": "tsx scripts/emit-json-schema.ts",
+    "emit:schema:check": "tsx scripts/emit-json-schema.ts --check"
   },
   "dependencies": {
     "@cucumber/gherkin": "42.0.1",

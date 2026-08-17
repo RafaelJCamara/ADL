@@ -7,7 +7,7 @@ import { InconclusiveVerdictSchema } from './verdict.js';
  * finding every gate raised, in a deterministic order.
  */
 export const SendBackBriefSchema = z
-  .object({
+  .strictObject({
     findings: z.array(FindingSchema).min(1),
   })
   .meta({
@@ -26,17 +26,17 @@ export type SendBackBrief = z.infer<typeof SendBackBriefSchema>;
  * renders as green and reads as green.
  */
 export const GreenOutcomeSchema = z
-  .object({ kind: z.literal('green') })
+  .strictObject({ kind: z.literal('green') })
   .meta({ id: 'GreenOutcome', description: 'Every gate judged, and nothing is outstanding' });
 
 /** The round produced actionable findings. The only outcome that loops. */
 export const SendBackOutcomeSchema = z
-  .object({ kind: z.literal('send_back'), brief: SendBackBriefSchema })
+  .strictObject({ kind: z.literal('send_back'), brief: SendBackBriefSchema })
   .meta({ id: 'SendBackOutcome', description: 'The developer gets a brief and another round' });
 
 /** The round cannot be resolved by looping. A human is the right recipient. */
 export const EscalateOutcomeSchema = z
-  .object({ kind: z.literal('escalate'), reason: z.string().min(1) })
+  .strictObject({ kind: z.literal('escalate'), reason: z.string().min(1) })
   .meta({ id: 'EscalateOutcome', description: 'Looping cannot resolve this; escalate to a human' });
 
 /**
@@ -48,7 +48,7 @@ export const EscalateOutcomeSchema = z
  * classification.
  */
 export const UnverifiedOutcomeSchema = z
-  .object({
+  .strictObject({
     kind: z.literal('unverified'),
     inconclusive: z.array(InconclusiveVerdictSchema).min(1),
   })

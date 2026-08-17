@@ -1,0 +1,360 @@
+{
+  "$defs": {
+    "CriterionId": {
+      "description": "Positional acceptance-criterion identifier, e.g. \"AC-3\"",
+      "pattern": "^AC-\\d+$",
+      "type": "string"
+    },
+    "CriterionRef": {
+      "description": "Points at an acceptance criterion or a global category",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CriterionRefCriterion"
+        },
+        {
+          "$ref": "#/$defs/CriterionRefGlobal"
+        }
+      ]
+    },
+    "CriterionRefCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/CriterionId"
+        },
+        "kind": {
+          "const": "criterion",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
+    },
+    "CriterionRefGlobal": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/GlobalCategory"
+        },
+        "kind": {
+          "const": "global",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "category"
+      ],
+      "type": "object"
+    },
+    "FailVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "fail",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "summary",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "description": "One thing a gate found wrong, always tied to a criterion or a global category",
+      "properties": {
+        "criterionRef": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "maxLength": 64,
+          "minLength": 64,
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/FindingLocation"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "suggestedAction": {
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "fingerprint",
+        "severity",
+        "title",
+        "detail",
+        "criterionRef"
+      ],
+      "type": "object"
+    },
+    "FindingLocation": {
+      "additionalProperties": false,
+      "description": "A workspace-relative path and optional line range",
+      "properties": {
+        "endLine": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "line": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "GlobalCategory": {
+      "description": "Category for a finding that is not tied to one acceptance criterion",
+      "enum": [
+        "code_quality",
+        "security",
+        "build",
+        "other"
+      ],
+      "type": "string"
+    },
+    "InconclusiveVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "inconclusive",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "summary",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "PassVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "checked": {
+          "items": {
+            "$ref": "#/$defs/CriterionRef"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "outcome": {
+          "const": "pass",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "summary",
+        "checked"
+      ],
+      "type": "object"
+    },
+    "SendBackVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "outcome": {
+          "const": "send_back",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "summary",
+        "findings"
+      ],
+      "type": "object"
+    },
+    "Severity": {
+      "description": "How badly a finding blocks",
+      "enum": [
+        "blocker",
+        "major",
+        "minor",
+        "nit"
+      ],
+      "type": "string"
+    },
+    "SkipVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "skip",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "waiver": {
+          "$ref": "#/$defs/Waiver"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "Waiver": {
+      "additionalProperties": false,
+      "description": "A human-granted, recorded acceptance that a gate was not satisfied",
+      "properties": {
+        "actor": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "at": {
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/WaiverTarget"
+        }
+      },
+      "required": [
+        "target",
+        "reason",
+        "actor",
+        "at"
+      ],
+      "type": "object"
+    },
+    "WaiverTarget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        {
+          "$ref": "#/$defs/WaiverTargetStage"
+        }
+      ],
+      "description": "A criterion, a global category, or an entire stage"
+    },
+    "WaiverTargetStage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "stage",
+          "type": "string"
+        },
+        "stageId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "stageId"
+      ],
+      "type": "object"
+    },
+    "WarnVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "const": "warn",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "summary",
+        "findings"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The judgement a gate returns — one of exactly six outcomes",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/PassVerdict"
+    },
+    {
+      "$ref": "#/$defs/SendBackVerdict"
+    },
+    {
+      "$ref": "#/$defs/FailVerdict"
+    },
+    {
+      "$ref": "#/$defs/InconclusiveVerdict"
+    },
+    {
+      "$ref": "#/$defs/WarnVerdict"
+    },
+    {
+      "$ref": "#/$defs/SkipVerdict"
+    }
+  ]
+}

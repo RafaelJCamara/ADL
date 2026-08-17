@@ -36,9 +36,22 @@ export const OUTCOMES = Object.freeze([
 
 export type Outcome = (typeof OUTCOMES)[number];
 
+/**
+ * Every object schema under `verdict/` is a `z.strictObject`, not a `z.object`.
+ *
+ * This is not stylistic. `z.toJSONSchema()` emits `additionalProperties: false`
+ * for these objects, so a published contract built on `z.object` would *reject*
+ * an unrecognised key that `parse()` silently *strips* — the published and the
+ * enforced contract disagreeing, which is precisely the drift D-26 and the
+ * 40-fixture equivalence test exist to make impossible. Strict resolves the
+ * disagreement in the safe direction: a gate that writes `waver` for `waiver`
+ * gets a loud validation error instead of a verdict whose waiver quietly
+ * vanished.
+ */
+
 /** A gate judged and is satisfied. Must cite what it checked (D-11). */
 export const PassVerdictSchema = z
-  .object({
+  .strictObject({
     outcome: z.literal('pass'),
     summary: z.string().min(1),
     /**
@@ -54,7 +67,7 @@ export const PassVerdictSchema = z
 
 /** A gate judged and wants changes. The only outcome that consumes a round. */
 export const SendBackVerdictSchema = z
-  .object({
+  .strictObject({
     outcome: z.literal('send_back'),
     summary: z.string().min(1),
     /** A send-back with nothing actionable in it is not a send-back. */
@@ -64,7 +77,7 @@ export const SendBackVerdictSchema = z
 
 /** A gate judged the work not fixable by another round. Escalates. */
 export const FailVerdictSchema = z
-  .object({
+  .strictObject({
     outcome: z.literal('fail'),
     summary: z.string().min(1),
     reason: z.string().min(1),
@@ -73,7 +86,7 @@ export const FailVerdictSchema = z
 
 /** The gate could not tell. Never green. Escalates when nothing is actionable. */
 export const InconclusiveVerdictSchema = z
-  .object({
+  .strictObject({
     outcome: z.literal('inconclusive'),
     summary: z.string().min(1),
     reason: z.string().min(1),
@@ -82,7 +95,7 @@ export const InconclusiveVerdictSchema = z
 
 /** Non-blocking observations. `findings` may legitimately be empty. */
 export const WarnVerdictSchema = z
-  .object({
+  .strictObject({
     outcome: z.literal('warn'),
     summary: z.string().min(1),
     findings: z.array(FindingSchema),
@@ -96,7 +109,7 @@ export const WarnVerdictSchema = z
  * changed* (D-07).
  */
 export const SkipVerdictSchema = z
-  .object({
+  .strictObject({
     outcome: z.literal('skip'),
     reason: z.string().min(1),
     waiver: WaiverSchema.optional(),
