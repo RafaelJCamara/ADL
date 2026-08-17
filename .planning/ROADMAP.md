@@ -50,7 +50,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. An `adl.yml` validates its build, start, test, and teardown commands and its explicit `ready` / `ready_timeout` contract, and resolves context files through the `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade when none are declared.
   5. A new gate stage is added to the pipeline by configuration alone — the lifecycle transition function is untouched and no schema migration is required.
 
-**Plans**: 2/10 plans executed
+**Plans**: 9/10 plans executed
 
 Plans:
 **Wave 1**
@@ -63,13 +63,13 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — Guard rails: dependency-graph lint, core purity, toolchain pin, CI matrix
-- [ ] 01-04-PLAN.md — Aggregation, the exhaustive green proof, and the published JSON Schema
-- [ ] 01-05-PLAN.md — Developer escalation, the infrastructure-failure channel, and @adl/plugin-sdk
-- [ ] 01-06-PLAN.md — Dual-format spec intake with one flat AC-n sequence
-- [ ] 01-07-PLAN.md — adl.yml: argv commands, readiness probes, bounded durations, path guard
-- [ ] 01-09-PLAN.md — The lifecycle state machine, with the pipeline deliberately absent
-- [ ] 01-10-PLAN.md — Schema completion: tables, checksum guard, priced-model seed
+- [x] 01-03-PLAN.md — Guard rails: dependency-graph lint, core purity, toolchain pin, CI matrix
+- [x] 01-04-PLAN.md — Aggregation, the exhaustive green proof, and the published JSON Schema
+- [x] 01-05-PLAN.md — Developer escalation, the infrastructure-failure channel, and @adl/plugin-sdk
+- [x] 01-06-PLAN.md — Dual-format spec intake with one flat AC-n sequence
+- [x] 01-07-PLAN.md — adl.yml: argv commands, readiness probes, bounded durations, path guard
+- [x] 01-09-PLAN.md — The lifecycle state machine, with the pipeline deliberately absent
+- [x] 01-10-PLAN.md — Schema completion: tables, checksum guard, priced-model seed
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -386,7 +386,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Contracts | 2/10 | In Progress|  |
+| 1. Core Contracts | 9/10 | In Progress|  |
 | 2. Workspace & the Exec Boundary | 0/TBD | Not started | - |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
