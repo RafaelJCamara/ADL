@@ -28,5 +28,7 @@ export { assignCriterionIds, criterionTextHash, type CriterionBody } from './cri
 
 export { loadAdlTemplateSpec, MAX_SPEC_BYTES } from './markdown.js';
 
+export { loadGherkinSpec, collectScenarios, isOutline } from './gherkin.js';
+
 export { LoadError, type SourcePosition } from '../errors.js';
 export { sha256Hex } from '../hash.js';
