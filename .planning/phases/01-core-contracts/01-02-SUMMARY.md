@@ -258,7 +258,7 @@ Five, all Rule 1/2/3 auto-fixes. Nothing architectural; no Rule 4 decision arose
 ### Two smaller corrections worth recording
 
 - **`pretest` must not shell out to `pnpm`.** The first version ran `pnpm --filter @adl/core build`, which failed because `pnpm` is not on `PATH` when corepack shims are not enabled. Replaced with `tsc -b ../core`, which uses the binary already in the package's own `node_modules/.bin` and has no PATH dependency.
-- **Literal NUL bytes removed from source.** `fingerprintFinding`'s separators were first written as raw NUL characters embedded in a template literal — invisible in an editor and trivially destroyed by a well-meaning reformat. Rewritten as an explicit `' '` escape joined across the three fields. The hash input is byte-identical; the source is now readable.
+- **Literal NUL bytes removed from source.** `fingerprintFinding`'s separators were first written as raw NUL characters embedded in a template literal — invisible in an editor and trivially destroyed by a well-meaning reformat. Rewritten as an explicit `\u0000` escape joined across the three fields. The hash input is byte-identical; the source is now readable.
 
 ---
 
