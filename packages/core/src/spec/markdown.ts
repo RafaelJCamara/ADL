@@ -1,7 +1,9 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { LoadError } from '../errors.js';
 import { sha256Hex } from '../hash.js';
-import type { AcceptanceCriterion, ContextRef, NormalizedSpec } from './types.js';
+import { assignCriterionIds, type CriterionBody } from './criterion-ids.js';
+import { SPEC_ENTRY_FILENAME } from './detect-format.js';
+import type { ContextRef, NormalizedSpec, SourceSpan } from './types.js';
 
 /**
  * The mdast node types, derived from the parser's own return type rather than
@@ -82,8 +84,8 @@ function sectionNodes(children: readonly MdNode[], title: string): MdNode[] | nu
   return out;
 }
 
-/** The exact source substring a node occupies. Never a re-serialisation. */
-function verbatimSlice(raw: string, node: MdNode): string {
+/** The exact source region a node occupies. Never a re-serialisation. */
+function verbatimSpan(node: MdNode): SourceSpan {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
   if (start === undefined || end === undefined) {
@@ -92,7 +94,7 @@ function verbatimSlice(raw: string, node: MdNode): string {
     // an empty criterion that would then be hashed and cited as if real.
     throw new LoadError('internal: markdown node is missing source position information');
   }
-  return raw.slice(start, end);
+  return { start, end };
 }
 
 /** Top-level `listItem` nodes across every list in a section (D-19). */
@@ -208,20 +210,23 @@ export function loadAdlTemplateSpec(raw: string, featureId: string): NormalizedS
 
   const items = topLevelListItems(criteriaSection);
   if (items.length === 0) {
+    // Distinct from the missing-heading error above on purpose: "you forgot the
+    // section" and "you wrote the section but left it empty" are two different
+    // authoring mistakes and deserve two different messages.
     throw new LoadError(
       `"## ${HEADING_ACCEPTANCE_CRITERIA}" contains no list items; a spec cannot enter the loop with zero criteria`,
     );
   }
 
-  const acceptanceCriteria: AcceptanceCriterion[] = items.map((item, index) => {
-    const text = verbatimSlice(raw, item);
-    return {
-      id: `AC-${index + 1}`,
-      kind: 'statement',
-      text,
-      textHash: sha256Hex(text),
-    };
+  const bodies: CriterionBody[] = items.map((item) => {
+    const source = verbatimSpan(item);
+    return { kind: 'statement', text: raw.slice(source.start, source.end), source };
   });
+
+  // Numbering goes through the shared path rather than being done inline, so
+  // the one flat `AC-n` sequence D-02 requires is enforced in a single place
+  // for both formats instead of agreed by convention in two.
+  const acceptanceCriteria = assignCriterionIds(bodies, SPEC_ENTRY_FILENAME);
 
   const intentSection = sectionNodes(children, HEADING_INTENT);
   const narrative =
