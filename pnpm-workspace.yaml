@@ -5,6 +5,9 @@ packages:
 # named here. Keeping the list explicit and short is the point: every entry is a
 # package we have decided may execute code on a contributor's machine.
 allowBuilds:
+  # `prebuild-install`, falling back to node-gyp. This is the one install-failure
+  # mode an adopter will actually report, so it is named rather than hidden.
+  better-sqlite3: true
   # Links the platform-specific esbuild binary. Vitest cannot transform
   # TypeScript without it.
   esbuild: true
