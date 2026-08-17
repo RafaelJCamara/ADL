@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ADL's own runtime directory in a watched repository
+.adl/
+
+# GSD run-scoped isolation sentinel — ephemeral, never committed
+.gsd/
+
+# Editor / OS noise
+.DS_Store
+*.log

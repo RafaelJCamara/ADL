@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    // TypeScript 6 no longer pulls every `@types/*` package into the global
+    // scope automatically. Declaring the list keeps the ambient surface
+    // deliberate: `node` is here for `node:crypto` hashing and `Buffer`
+    // byte-length, and for nothing else.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
