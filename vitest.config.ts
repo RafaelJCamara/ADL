@@ -12,6 +12,17 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
-    projects: ['packages/*/vitest.config.ts'],
+    projects: [
+      'packages/*/vitest.config.ts',
+      {
+        // The workspace-level suite: tooling assertions that belong to no
+        // single package. `--project root` addresses it, matching the
+        // per-package convention above.
+        test: {
+          name: 'root',
+          include: ['test/**/*.test.ts'],
+        },
+      },
+    ],
   },
 });
