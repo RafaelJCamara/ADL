@@ -55,3 +55,17 @@ export {
   type DeveloperOutcome,
   DEVELOPER_OUTCOME_ROUND_COST,
 } from './developer-outcome.js';
+
+export type {
+  StageKind,
+  CostClass,
+  LogChunk,
+  Workspace,
+  FeatureView,
+  StageConfig,
+  AgentRunner,
+  ArtifactSink,
+  RoundSummary,
+  StageContext,
+  Stage,
+} from './stage.js';

@@ -2,7 +2,7 @@
   "name": "@adl/plugin-sdk",
   "version": "0.0.0",
   "type": "module",
-  "description": "The published contract a third-party ADL harness depends on. Contents land in plan 01-05.",
+  "description": "The published contract a third-party ADL harness depends on — verdicts, findings, criterion identity, StageError, and the Stage interface. Re-exports @adl/core; defines nothing of its own.",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,8 +15,10 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "pretypecheck": "tsc -b ../core",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "pretest": "tsc -b ../core",
+    "test": "vitest run"
   },
   "dependencies": {
     "@adl/core": "workspace:*",
