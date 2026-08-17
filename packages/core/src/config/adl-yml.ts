@@ -254,7 +254,7 @@ export type ReadyProbe = z.infer<typeof ReadyProbeSchema>;
  * stages land. `v2` unlocks it once `mutates` and `Workspace.snapshot()`
  * exist (ARCHITECTURE.md §3).
  */
-const GROUP_SYNTAX_REJECTION =
+export const GROUP_SYNTAX_REJECTION =
   'Parallel stage groups ("group:") are a recognised future capability and are not yet supported. ' +
   'List each stage separately until v2 parallel pipelines ship.';
 
@@ -372,11 +372,22 @@ export type OnSendBack = z.infer<typeof OnSendBackSchema>;
  * registry (built-in id, then npm package, then repo-relative path) — that
  * resolution is 01-08's job, this schema validates shape only, so unknown ids
  * fail at config validation rather than mid-run.
+ *
+ * `harness` deliberately uses {@link RepoRelativePathSchema}, not
+ * {@link StageIdSchema}: D-23's resolution order includes an npm package name
+ * (which may carry `@scope/`, `/`, and digits `StageIdSchema` rejects) and a
+ * repo-relative path (which needs the traversal/absolute/NUL guard, not a
+ * bare-identifier pattern). `RepoRelativePathSchema` is broad enough to admit
+ * all three candidate shapes — a bare built-in id, a package name, or a real
+ * path — while still rejecting the traversal and absolute-path shapes that
+ * would be dangerous if this value is ever resolved as a filesystem path
+ * (01-08's `pipeline.ts`).
  */
 const HarnessEntrySchema = z.strictObject({
-  harness: StageIdSchema.describe(
+  harness: RepoRelativePathSchema.describe(
     'The harness id, resolved (01-08) as a built-in id, then an npm package, then a ' +
-      'repo-relative path. Unrecognised ids fail at config validation, not mid-run.',
+      'repo-relative path (guarded against traversal). Unrecognised ids fail at config ' +
+      'validation, not mid-run.',
   ),
   with: z
     .record(z.string(), z.unknown())

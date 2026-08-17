@@ -20,6 +20,7 @@ export {
   AgentsConfigSchema,
   CommandSpecSchema,
   ContextConfigSchema,
+  GROUP_SYNTAX_REJECTION,
   LimitsSchema,
   OnOverflowSchema,
   OnSendBackSchema,
@@ -64,3 +65,13 @@ export {
   type ContextCascadeFile,
   type ContextFilesConfig,
 } from './context-cascade.js';
+export {
+  BUILT_IN_STAGE_IDS,
+  HarnessResolutionError,
+  resolvePipeline,
+  type BuiltInStageId,
+  type HarnessRegistry,
+  type HarnessSource,
+  type PipelineEntryInput,
+  type ResolvedStage,
+} from './pipeline.js';

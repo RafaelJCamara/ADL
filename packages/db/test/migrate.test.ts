@@ -467,3 +467,122 @@ describe('findings and waivers', () => {
     });
   });
 });
+
+/**
+ * `0004_feature_state_constraint.ts` (01-08) — the CHECK constraint closing
+ * the gap `packages/core/test/state/exec-07.test.ts` checks textually:
+ * `0001_initial.ts` declared `features.state text not null` with no
+ * enumeration of its valid values. This proves the constraint actually
+ * enforces the vocabulary at the database level, not merely that the
+ * migration ran without error.
+ */
+describe('features.state is constrained to FEATURE_STATES (0004)', () => {
+  it('accepts every documented state', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const at = '2026-08-17T12:00:00.000Z';
+      const repoId = ulid();
+
+      await db
+        .insertInto('repos')
+        .values({
+          id: repoId,
+          remote_url: 'https://github.com/example/target-repo.git',
+          default_branch: 'main',
+          forge: 'github',
+          features_dir: 'features',
+          created_at: at,
+          updated_at: at,
+        })
+        .execute();
+
+      const states = [
+        'discovered',
+        'queued',
+        'leased',
+        'developing',
+        'gating',
+        'publishing',
+        'pr_open',
+        'merged',
+        'escalated',
+        'abandoned',
+        'paused',
+      ];
+
+      for (const state of states) {
+        await db
+          .insertInto('features')
+          .values({
+            id: ulid(),
+            repo_id: repoId,
+            path: `features/${state}`,
+            state,
+            state_version: 1,
+            round: 0,
+            current_stage_index: 0,
+            spec_hash: 'a'.repeat(64),
+            effective_config_json: null,
+            workspace_handle: null,
+            lease_owner: null,
+            lease_token: null,
+            lease_expires_at: null,
+            heartbeat_at: null,
+            crash_count: 0,
+            created_at: at,
+            updated_at: at,
+          })
+          .execute();
+      }
+
+      const rows = await db.selectFrom('features').select(['state']).execute();
+      expect(rows.map((r) => r.state).sort()).toEqual([...states].sort());
+    });
+  });
+
+  it('rejects a state outside the documented vocabulary', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const at = '2026-08-17T12:00:00.000Z';
+      const repoId = ulid();
+
+      await db
+        .insertInto('repos')
+        .values({
+          id: repoId,
+          remote_url: 'https://github.com/example/target-repo.git',
+          default_branch: 'main',
+          forge: 'github',
+          features_dir: 'features',
+          created_at: at,
+          updated_at: at,
+        })
+        .execute();
+
+      await expect(
+        db
+          .insertInto('features')
+          .values({
+            id: ulid(),
+            repo_id: repoId,
+            path: 'features/bogus',
+            state: 'reticulating-splines' as 'gating',
+            state_version: 1,
+            round: 0,
+            current_stage_index: 0,
+            spec_hash: 'a'.repeat(64),
+            effective_config_json: null,
+            workspace_handle: null,
+            lease_owner: null,
+            lease_token: null,
+            lease_expires_at: null,
+            heartbeat_at: null,
+            crash_count: 0,
+            created_at: at,
+            updated_at: at,
+          })
+          .execute(),
+      ).rejects.toThrow(/CHECK constraint failed/i);
+    });
+  });
+});
