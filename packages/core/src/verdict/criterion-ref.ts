@@ -26,7 +26,8 @@ export const GlobalCategorySchema = z
   .enum(['code_quality', 'security', 'build', 'other'])
   .meta({
     id: 'GlobalCategory',
-    description: 'Category for a finding that is not tied to one acceptance criterion',
+    description:
+      'Category for a finding that is not tied to one acceptance criterion',
   });
 
 export type GlobalCategory = z.infer<typeof GlobalCategorySchema>;
@@ -50,7 +51,10 @@ export const CriterionRefSchema = z
       .strictObject({ kind: z.literal('criterion'), id: CriterionIdSchema })
       .meta({ id: 'CriterionRefCriterion' }),
     z
-      .strictObject({ kind: z.literal('global'), category: GlobalCategorySchema })
+      .strictObject({
+        kind: z.literal('global'),
+        category: GlobalCategorySchema,
+      })
       .meta({ id: 'CriterionRefGlobal' }),
   ])
   .meta({
