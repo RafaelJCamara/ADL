@@ -1,0 +1,47 @@
+version: 1
+features_dir: features
+
+commands:
+  build:
+    argv: [npm, ci]
+    timeout: 10m
+  start:
+    argv: [npm, run, dev]
+    timeout: 2m
+    ready:
+      kind: http
+      url: "http://127.0.0.1:${ADL_PORT}/health"
+      expect: 200
+    ready_timeout: 30s
+  test:
+    argv: [npm, test]
+    timeout: 15m
+  teardown:
+    argv: [docker, compose, down]
+
+context:
+  files: [README.md, docs/architecture.md]
+  max_bytes: 200000
+  on_overflow: truncate
+
+pipeline:
+  - develop
+  - review
+  - harness: security
+  - test
+
+limits:
+  max_rounds: 6
+  budget_usd: 15
+  repeat_finding_threshold: 2
+
+agents:
+  developer:
+    backend: claude-code
+    model: default
+  reviewer:
+    backend: claude-code
+    model: default
+  tester:
+    backend: claude-code
+    model: default
