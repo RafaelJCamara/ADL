@@ -25,14 +25,20 @@ describe('resolvePipeline — built-in bare strings', () => {
   });
 
   it('an unknown bare name fails at resolution, naming the id', () => {
-    expect(() => resolvePipeline(['not-a-real-stage'], registry())).toThrow(HarnessResolutionError);
+    expect(() => resolvePipeline(['not-a-real-stage'], registry())).toThrow(
+      HarnessResolutionError,
+    );
     try {
       resolvePipeline(['not-a-real-stage'], registry());
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(HarnessResolutionError);
-      expect((error as HarnessResolutionError).message).toMatch(/not-a-real-stage/);
-      expect((error as HarnessResolutionError).harnessId).toBe('not-a-real-stage');
+      expect((error as HarnessResolutionError).message).toMatch(
+        /not-a-real-stage/,
+      );
+      expect((error as HarnessResolutionError).harnessId).toBe(
+        'not-a-real-stage',
+      );
     }
   });
 });
@@ -65,9 +71,9 @@ describe('resolvePipeline — harness resolution order (D-23)', () => {
   });
 
   it('an id unknown to every tier fails at resolution, naming the id', () => {
-    expect(() => resolvePipeline([{ harness: 'ghost-harness' }], registry())).toThrow(
-      HarnessResolutionError,
-    );
+    expect(() =>
+      resolvePipeline([{ harness: 'ghost-harness' }], registry()),
+    ).toThrow(HarnessResolutionError);
     try {
       resolvePipeline([{ harness: 'ghost-harness' }], registry());
       expect.unreachable();
@@ -95,20 +101,24 @@ describe('resolvePipeline — the path guard runs before any tier is consulted',
 
 describe('resolvePipeline — duplicate stage ids', () => {
   it('two entries resolving to the same stage id fail with a duplicate-id message', () => {
-    expect(() => resolvePipeline(['develop', 'develop'], registry())).toThrow(/duplicate/i);
+    expect(() => resolvePipeline(['develop', 'develop'], registry())).toThrow(
+      /duplicate/i,
+    );
   });
 
   it('a bare built-in id colliding with a harness id also fails as a duplicate', () => {
     const reg = registry({ npmPackages: new Set(['review']) });
-    expect(() => resolvePipeline(['review', { harness: 'review' }], reg)).toThrow(/duplicate/i);
+    expect(() =>
+      resolvePipeline(['review', { harness: 'review' }], reg),
+    ).toThrow(/duplicate/i);
   });
 });
 
 describe('resolvePipeline — the group: syntax is parsed and rejected', () => {
   it('resolves a group entry to a rejection naming it a future capability, not a stage', () => {
-    expect(() => resolvePipeline([{ group: [{ harness: 'security' }] }], registry())).toThrow(
-      GROUP_SYNTAX_REJECTION,
-    );
+    expect(() =>
+      resolvePipeline([{ group: [{ harness: 'security' }] }], registry()),
+    ).toThrow(GROUP_SYNTAX_REJECTION);
   });
 });
 
@@ -129,7 +139,13 @@ describe('resolvePipeline — with and on_send_back pass through', () => {
   it('carries harness-specific config and the send-back policy on the resolved stage', () => {
     const reg = registry({ repoPaths: new Set(['security']) });
     const [stage] = resolvePipeline(
-      [{ harness: 'security', with: { level: 'strict' }, on_send_back: 'stop' }],
+      [
+        {
+          harness: 'security',
+          with: { level: 'strict' },
+          on_send_back: 'stop',
+        },
+      ],
       reg,
     );
     expect(stage?.with).toEqual({ level: 'strict' });

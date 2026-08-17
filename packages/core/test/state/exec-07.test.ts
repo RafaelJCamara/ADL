@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { FEATURE_STATES } from '../../src/state/feature-state.js';
-import { resolvePipeline, type HarnessRegistry } from '../../src/config/pipeline.js';
+import {
+  resolvePipeline,
+  type HarnessRegistry,
+} from '../../src/config/pipeline.js';
 
 /**
  * The mechanical proof EXEC-07 rests on (01-RESEARCH.md § Code Examples 5,
@@ -24,11 +27,17 @@ import { resolvePipeline, type HarnessRegistry } from '../../src/config/pipeline
  * by importing `@adl/db`.
  */
 
-const TRANSITION_PATH = fileURLToPath(new URL('../../src/state/transition.ts', import.meta.url));
-const MIGRATIONS_DIR = fileURLToPath(new URL('../../../db/migrations', import.meta.url));
+const TRANSITION_PATH = fileURLToPath(
+  new URL('../../src/state/transition.ts', import.meta.url),
+);
+const MIGRATIONS_DIR = fileURLToPath(
+  new URL('../../../db/migrations', import.meta.url),
+);
 
 function hashTransitionModule(): string {
-  return createHash('sha256').update(readFileSync(TRANSITION_PATH)).digest('hex');
+  return createHash('sha256')
+    .update(readFileSync(TRANSITION_PATH))
+    .digest('hex');
 }
 
 function migrationFileNames(): string[] {
@@ -56,7 +65,10 @@ describe('EXEC-07 — adding a gate stage changes neither transition() nor the m
     const transitionHashBefore = hashTransitionModule();
     const migrationCountBefore = migrationFileNames().length;
 
-    const three = resolvePipeline(['develop', 'review', 'test'], registryWithSecurityHarness());
+    const three = resolvePipeline(
+      ['develop', 'review', 'test'],
+      registryWithSecurityHarness(),
+    );
     const four = resolvePipeline(
       ['develop', 'review', { harness: 'security' }, 'test'],
       registryWithSecurityHarness(),
@@ -86,7 +98,8 @@ describe('EXEC-07 — the state-machine persistence contract seam (plans 01-09 a
 
   // Matches `check (state in ('a', 'b', ...))` however it is wrapped across
   // lines — the constraint 01-08 added in `0004_feature_state_constraint.ts`.
-  const STATE_CHECK_PATTERN = /state\s+text\s+not\s+null\s+check\s*\(\s*state\s+in\s*\(([^)]*)\)\)/;
+  const STATE_CHECK_PATTERN =
+    /state\s+text\s+not\s+null\s+check\s*\(\s*state\s+in\s*\(([^)]*)\)\)/;
 
   it('a state CHECK constraint on the features table exists in the migration sources', () => {
     expect(migrationsText).toMatch(STATE_CHECK_PATTERN);
@@ -94,7 +107,10 @@ describe('EXEC-07 — the state-machine persistence contract seam (plans 01-09 a
 
   it('every literal in FEATURE_STATES appears in the features-table state constraint', () => {
     const match = STATE_CHECK_PATTERN.exec(migrationsText);
-    expect(match, 'no features.state CHECK constraint found in packages/db/migrations/').not.toBeNull();
+    expect(
+      match,
+      'no features.state CHECK constraint found in packages/db/migrations/',
+    ).not.toBeNull();
     const constraintText = match![1] ?? '';
 
     for (const state of FEATURE_STATES) {
@@ -110,12 +126,16 @@ describe('EXEC-07 — the state-machine persistence contract seam (plans 01-09 a
     expect(match).not.toBeNull();
     const constraintText = match![1] ?? '';
 
-    const constraintStates = [...constraintText.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    const constraintStates = [...constraintText.matchAll(/'([a-z_]+)'/g)].map(
+      (m) => m[1],
+    );
     expect(constraintStates.length).toBeGreaterThan(0);
 
     for (const state of constraintStates) {
       expect(
-        (FEATURE_STATES as readonly string[]).includes(state as (typeof FEATURE_STATES)[number]),
+        (FEATURE_STATES as readonly string[]).includes(
+          state as (typeof FEATURE_STATES)[number],
+        ),
         `the features.state CHECK constraint names "${state}", which is absent from FEATURE_STATES`,
       ).toBe(true);
     }

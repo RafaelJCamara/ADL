@@ -27,7 +27,10 @@ describe('CONTEXT_FILE_CASCADE', () => {
 
 describe('pickFirstPresent', () => {
   it('returns the first candidate the predicate reports present', () => {
-    const result = pickFirstPresent(['a', 'b', 'c'], (c) => c === 'b' || c === 'c');
+    const result = pickFirstPresent(
+      ['a', 'b', 'c'],
+      (c) => c === 'b' || c === 'c',
+    );
     expect(result).toBe('b');
   });
 
@@ -65,14 +68,20 @@ describe('pickFirstPresent', () => {
   it('performs no filesystem access itself — the predicate is the only I/O boundary', () => {
     // If pickFirstPresent touched the filesystem, this would throw or behave
     // differently under a predicate that never consults real paths at all.
-    const result = pickFirstPresent(CONTEXT_FILE_CASCADE, (c): c is ContextCascadeFile => c === 'README.md');
+    const result = pickFirstPresent(
+      CONTEXT_FILE_CASCADE,
+      (c): c is ContextCascadeFile => c === 'README.md',
+    );
     expect(result).toBe('README.md');
   });
 });
 
 describe('resolveContextFiles', () => {
   it('returns an explicit, non-empty context.files list unchanged', () => {
-    const result = resolveContextFiles({ files: ['docs/architecture.md'] }, () => true);
+    const result = resolveContextFiles(
+      { files: ['docs/architecture.md'] },
+      () => true,
+    );
     expect(result).toEqual(['docs/architecture.md']);
   });
 

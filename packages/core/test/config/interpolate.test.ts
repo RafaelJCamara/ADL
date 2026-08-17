@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { ADL_VARIABLES, interpolate, type AdlVariableName } from '../../src/config/interpolate.js';
+import {
+  ADL_VARIABLES,
+  interpolate,
+  type AdlVariableName,
+} from '../../src/config/interpolate.js';
 import { LoadError } from '../../src/errors.js';
 
 describe('interpolate — the allowlisted substitution', () => {
   it('substitutes the allocated port into a readiness probe target', () => {
-    const url = interpolate('http://127.0.0.1:${ADL_PORT}/health', { ADL_PORT: '3000' });
+    const url = interpolate('http://127.0.0.1:${ADL_PORT}/health', {
+      ADL_PORT: '3000',
+    });
     expect(url).toBe('http://127.0.0.1:3000/health');
   });
 
@@ -19,13 +25,19 @@ describe('interpolate — the allowlisted substitution', () => {
   });
 
   it('substitutes the same variable referenced twice', () => {
-    const result = interpolate('${ADL_PORT} and again ${ADL_PORT}', { ADL_PORT: '9' });
+    const result = interpolate('${ADL_PORT} and again ${ADL_PORT}', {
+      ADL_PORT: '9',
+    });
     expect(result).toBe('9 and again 9');
   });
 
   it('a variable name outside the allowlist raises a LoadError naming it', () => {
-    expect(() => interpolate('${ADL_ROUND}', { ADL_PORT: '3000' })).toThrow(LoadError);
-    expect(() => interpolate('${ADL_ROUND}', { ADL_PORT: '3000' })).toThrow(/ADL_ROUND/);
+    expect(() => interpolate('${ADL_ROUND}', { ADL_PORT: '3000' })).toThrow(
+      LoadError,
+    );
+    expect(() => interpolate('${ADL_ROUND}', { ADL_PORT: '3000' })).toThrow(
+      /ADL_ROUND/,
+    );
   });
 });
 
@@ -34,8 +46,12 @@ describe('interpolate — never reads the process environment', () => {
     const originalPath = process.env.PATH;
     process.env.PATH = '/should/never/appear';
     try {
-      expect(() => interpolate('${PATH}', { ADL_PORT: '3000' })).toThrow(LoadError);
-      expect(() => interpolate('${PATH}', { ADL_PORT: '3000' })).toThrow(/PATH/);
+      expect(() => interpolate('${PATH}', { ADL_PORT: '3000' })).toThrow(
+        LoadError,
+      );
+      expect(() => interpolate('${PATH}', { ADL_PORT: '3000' })).toThrow(
+        /PATH/,
+      );
     } finally {
       process.env.PATH = originalPath;
     }
@@ -44,10 +60,12 @@ describe('interpolate — never reads the process environment', () => {
   it('a variable naming a model API key fails validation', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-should-never-appear';
     try {
-      expect(() => interpolate('${ANTHROPIC_API_KEY}', { ADL_PORT: '3000' })).toThrow(LoadError);
-      expect(() => interpolate('${ANTHROPIC_API_KEY}', { ADL_PORT: '3000' })).toThrow(
-        /ANTHROPIC_API_KEY/,
-      );
+      expect(() =>
+        interpolate('${ANTHROPIC_API_KEY}', { ADL_PORT: '3000' }),
+      ).toThrow(LoadError);
+      expect(() =>
+        interpolate('${ANTHROPIC_API_KEY}', { ADL_PORT: '3000' }),
+      ).toThrow(/ANTHROPIC_API_KEY/);
     } finally {
       delete process.env.ANTHROPIC_API_KEY;
     }
@@ -67,7 +85,9 @@ describe('ADL_VARIABLES', () => {
       'ADL_VERDICT_FILE',
     ];
     for (const name of names) {
-      expect(Object.prototype.hasOwnProperty.call(ADL_VARIABLES, name)).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(ADL_VARIABLES, name)).toBe(
+        true,
+      );
     }
   });
 

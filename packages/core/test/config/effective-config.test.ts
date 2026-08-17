@@ -26,7 +26,9 @@ function baseRepo(overrides: Record<string, unknown> = {}): AdlYml {
   };
   const result = AdlYmlSchema.safeParse(raw);
   if (!result.success) {
-    throw new Error(`fixture failed to parse: ${JSON.stringify(result.error.issues)}`);
+    throw new Error(
+      `fixture failed to parse: ${JSON.stringify(result.error.issues)}`,
+    );
   }
   return result.data;
 }
@@ -44,7 +46,11 @@ describe('mergeConfig — limits clamp down, never up', () => {
     const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
 
     expect(config.limits.max_rounds).toBe(4);
-    expect(report.clamped).toContainEqual({ field: 'limits.max_rounds', requested: 10, ceiling: 4 });
+    expect(report.clamped).toContainEqual({
+      field: 'limits.max_rounds',
+      requested: 10,
+      ceiling: 4,
+    });
   });
 
   it('preserves a repo value that lowers max_rounds below the daemon ceiling', () => {
@@ -62,11 +68,17 @@ describe('mergeConfig — limits clamp down, never up', () => {
     const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
 
     expect(config.limits.budget_usd).toBe(5);
-    expect(report.clamped).toContainEqual({ field: 'limits.budget_usd', requested: 50, ceiling: 5 });
+    expect(report.clamped).toContainEqual({
+      field: 'limits.budget_usd',
+      requested: 50,
+      ceiling: 5,
+    });
   });
 
   it('clamps repeat_finding_threshold the same way, asserted independently', () => {
-    const daemon = DaemonConfigSchema.parse({ limits: { repeat_finding_threshold: 1 } });
+    const daemon = DaemonConfigSchema.parse({
+      limits: { repeat_finding_threshold: 1 },
+    });
     const repo = baseRepo({ limits: { repeat_finding_threshold: 5 } });
     const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
 
@@ -109,8 +121,14 @@ describe('mergeConfig — backend and model are daemon-only', () => {
 
     expect(config.agents.developer.backend).toBe('claude-code');
     expect(config.agents.developer.model).toBe('default');
-    expect(report.discarded).toContainEqual({ field: 'agents.developer.backend', requested: 'codex' });
-    expect(report.discarded).toContainEqual({ field: 'agents.developer.model', requested: 'gpt-5' });
+    expect(report.discarded).toContainEqual({
+      field: 'agents.developer.backend',
+      requested: 'codex',
+    });
+    expect(report.discarded).toContainEqual({
+      field: 'agents.developer.model',
+      requested: 'gpt-5',
+    });
   });
 
   it('asserted per role: reviewer and tester are independently daemon-only', () => {
@@ -123,8 +141,12 @@ describe('mergeConfig — backend and model are daemon-only', () => {
     });
     const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
 
-    expect(config.agents.reviewer.backend).toBe(DEFAULT_CONFIG.agents.reviewer.backend);
-    expect(config.agents.tester.backend).toBe(DEFAULT_CONFIG.agents.tester.backend);
+    expect(config.agents.reviewer.backend).toBe(
+      DEFAULT_CONFIG.agents.reviewer.backend,
+    );
+    expect(config.agents.tester.backend).toBe(
+      DEFAULT_CONFIG.agents.tester.backend,
+    );
     expect(report.discarded.map((d) => d.field)).toEqual(
       expect.arrayContaining([
         'agents.reviewer.backend',

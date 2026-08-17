@@ -134,7 +134,9 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     `.execute(trx);
 
     await sql`drop table features`.execute(trx);
-    await sql`alter table features_unconstrained rename to features`.execute(trx);
+    await sql`alter table features_unconstrained rename to features`.execute(
+      trx,
+    );
     await sql`create index features_state_idx on features (state)`.execute(trx);
   });
 }

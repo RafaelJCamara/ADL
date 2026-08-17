@@ -21,7 +21,11 @@ import { isRepoRelativePath } from './path-guard.js';
  */
 
 /** The stage ids ADL ships without any harness configuration (`ARCHITECTURE.md` §3). */
-export const BUILT_IN_STAGE_IDS = Object.freeze(['develop', 'review', 'test'] as const);
+export const BUILT_IN_STAGE_IDS = Object.freeze([
+  'develop',
+  'review',
+  'test',
+] as const);
 export type BuiltInStageId = (typeof BUILT_IN_STAGE_IDS)[number];
 
 /** Where a resolved stage's implementation ultimately comes from. */
@@ -91,7 +95,9 @@ export type PipelineEntryInput =
     }
   | { readonly group: readonly unknown[] };
 
-function isGroupEntry(entry: PipelineEntryInput): entry is { readonly group: readonly unknown[] } {
+function isGroupEntry(
+  entry: PipelineEntryInput,
+): entry is { readonly group: readonly unknown[] } {
   return typeof entry === 'object' && entry !== null && 'group' in entry;
 }
 
@@ -101,7 +107,10 @@ function isGroupEntry(entry: PipelineEntryInput): entry is { readonly group: rea
  * first and unconditionally — a candidate that fails it is rejected before
  * any tier is even consulted, regardless of what it happens to match.
  */
-function resolveHarnessId(id: string, registry: HarnessRegistry): HarnessSource {
+function resolveHarnessId(
+  id: string,
+  registry: HarnessRegistry,
+): HarnessSource {
   if (!isRepoRelativePath(id)) {
     throw new HarnessResolutionError(
       `harness id "${id}" is not a valid repo-relative path candidate — it must not be ` +
@@ -159,7 +168,9 @@ export function resolvePipeline(
     resolved.push({
       id,
       source,
-      ...(typeof entry !== 'string' && entry.with !== undefined ? { with: entry.with } : {}),
+      ...(typeof entry !== 'string' && entry.with !== undefined
+        ? { with: entry.with }
+        : {}),
       ...(typeof entry !== 'string' && entry.on_send_back !== undefined
         ? { onSendBack: entry.on_send_back }
         : {}),

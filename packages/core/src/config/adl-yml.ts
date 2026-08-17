@@ -176,7 +176,9 @@ export type CommandSpec = z.infer<typeof CommandSpecSchema>;
  * rejects `${ADL_PORT}` as an invalid host, which is exactly the value every
  * realistic fixture needs to write.
  */
-const InterpolatableUrlSchema = z.string().regex(/^https?:\/\/[^\s\0"'<>\\^`|]+$/);
+const InterpolatableUrlSchema = z
+  .string()
+  .regex(/^https?:\/\/[^\s\0"'<>\\^`|]+$/);
 
 /** HTTP status codes are 100–599. */
 const HttpStatusSchema = z.int().min(100).max(599);
@@ -201,14 +203,21 @@ const HttpReadyProbeSchema = z
 const TcpReadyProbeSchema = z
   .strictObject({
     kind: z.literal('tcp'),
-    port: TcpPortSchema.describe('The port to poll until it accepts a connection. Bounded 1–65535.'),
+    port: TcpPortSchema.describe(
+      'The port to poll until it accepts a connection. Bounded 1–65535.',
+    ),
   })
   .meta({ id: 'TcpReadyProbe' });
 
 const LogReadyProbeSchema = z
   .strictObject({
     kind: z.literal('log'),
-    pattern: z.string().min(1).describe('A literal substring to wait for in the started process\'s output.'),
+    pattern: z
+      .string()
+      .min(1)
+      .describe(
+        "A literal substring to wait for in the started process's output.",
+      ),
   })
   .meta({ id: 'LogReadyProbe' });
 
@@ -282,14 +291,16 @@ export const StartCommandSpecSchema = CommandSpecSchema.extend({
     ctx.addIssue({
       code: 'custom',
       path: ['ready_timeout'],
-      message: 'ready and ready_timeout are required together: ready_timeout is missing.',
+      message:
+        'ready and ready_timeout are required together: ready_timeout is missing.',
     });
   }
   if (value.ready === undefined && value.ready_timeout !== undefined) {
     ctx.addIssue({
       code: 'custom',
       path: ['ready'],
-      message: 'ready and ready_timeout are required together: ready is missing.',
+      message:
+        'ready and ready_timeout are required together: ready is missing.',
     });
   }
 });
@@ -392,10 +403,12 @@ const HarnessEntrySchema = z.strictObject({
   with: z
     .record(z.string(), z.unknown())
     .optional()
-    .describe('Harness-specific configuration, passed through opaquely. Default: none.'),
+    .describe(
+      'Harness-specific configuration, passed through opaquely. Default: none.',
+    ),
   on_send_back: OnSendBackSchema.optional().describe(
     'Whether a send_back from this stage continues the pipeline or stops it (Phase 7). ' +
-      'Default: derived from the stage\'s cost class at runtime, not by this schema.',
+      "Default: derived from the stage's cost class at runtime, not by this schema.",
   ),
 });
 
@@ -418,7 +431,11 @@ const GroupEntrySchema = z
  * `group:`. Position in the array is the stage's position in the pipeline —
  * this is EXEC-07's entire mechanism (ARCHITECTURE.md §3).
  */
-export const PipelineEntrySchema = z.union([StageIdSchema, HarnessEntrySchema, GroupEntrySchema]);
+export const PipelineEntrySchema = z.union([
+  StageIdSchema,
+  HarnessEntrySchema,
+  GroupEntrySchema,
+]);
 
 export type PipelineEntry = z.infer<typeof PipelineEntrySchema>;
 
@@ -490,7 +507,10 @@ const AgentBlockSchema = z.strictObject({
       'The agent backend id (e.g. "claude-code"). No default. Shape-only: daemon-only ' +
         'per D-22, and 01-08 clamps or rejects a repo-supplied value.',
     ),
-  model: z.string().min(1).describe('The model alias to run this role with. No default.'),
+  model: z
+    .string()
+    .min(1)
+    .describe('The model alias to run this role with. No default.'),
   prompt_template: RepoRelativePathSchema.optional().describe(
     'A repo-relative override of the default prompt template for this role. Default: none.',
   ),
@@ -546,9 +566,9 @@ export const AdlYmlSchema = z
       budget_usd: 15,
       repeat_finding_threshold: 2,
     }).describe(
-      'Ceilings on this loop\'s cost, clamped down — never up — by the daemon\'s own ' +
+      "Ceilings on this loop's cost, clamped down — never up — by the daemon's own " +
         'ceiling (D-22). Default: { max_rounds: 6, budget_usd: 15, repeat_finding_threshold: 2 }; ' +
-        'see LimitsSchema for each field\'s individual documented ceiling.',
+        "see LimitsSchema for each field's individual documented ceiling.",
     ),
     agents: AgentsConfigSchema.default({}).describe(
       'Per-role model selection, shape-only — backend and credential selection is ' +

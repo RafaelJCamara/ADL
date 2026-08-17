@@ -71,10 +71,9 @@ const VARIABLE_REF_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
  *
  * @throws {LoadError} naming the first unrecognised variable found.
  */
-export function interpolate<const Values extends Readonly<Record<string, string>>>(
-  template: string,
-  values: Values,
-): string {
+export function interpolate<
+  const Values extends Readonly<Record<string, string>>,
+>(template: string, values: Values): string {
   return template.replace(VARIABLE_REF_PATTERN, (_match, name: string) => {
     if (!Object.prototype.hasOwnProperty.call(values, name)) {
       throw new LoadError(

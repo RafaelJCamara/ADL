@@ -51,11 +51,15 @@ interface ColumnInfo {
   pk: number;
 }
 
-async function columnInfo(db: Kysely<Database>, table: string): Promise<ColumnInfo[]> {
+async function columnInfo(
+  db: Kysely<Database>,
+  table: string,
+): Promise<ColumnInfo[]> {
   // `pragma table_info` does not accept a bound parameter, so the table name is
   // interpolated with `sql.raw`. Every call site here passes a literal from
   // this file — no external input reaches it.
-  const result = await sql<ColumnInfo>`pragma table_info(${sql.raw(table)})`.execute(db);
+  const result =
+    await sql<ColumnInfo>`pragma table_info(${sql.raw(table)})`.execute(db);
   return result.rows;
 }
 
@@ -141,12 +145,17 @@ describe('the full migration chain against a real temp SQLite file', () => {
     await withTempDb(async ({ db }) => {
       const result = await migrateToLatest(db, MIGRATIONS_DIR);
       expect(result.error).toBeUndefined();
-      expect(result.results.map((r) => r.migrationName)).toEqual(MIGRATION_NAMES);
+      expect(result.results.map((r) => r.migrationName)).toEqual(
+        MIGRATION_NAMES,
+      );
       expect(result.results.every((r) => r.status === 'Success')).toBe(true);
       expect(MIGRATION_NAMES).toContain('0002_contracts');
 
       const names = await tableNames(db);
-      const expected = [...Object.keys(TABLE_COLUMNS), ...BOOKKEEPING_TABLES].sort();
+      const expected = [
+        ...Object.keys(TABLE_COLUMNS),
+        ...BOOKKEEPING_TABLES,
+      ].sort();
       expect([...names].sort()).toEqual(expected);
     });
   });
@@ -213,8 +222,13 @@ describe('usage_events records enough to reconstruct cost', () => {
         // A default of zero destroys the distinction, at write time and
         // permanently, between "the backend reported zero cache reads" and
         // "the backend does not report cache reads at all" (Pitfall 6).
-        expect(info?.notnull, `usage_events.${column} must be nullable`).toBe(0);
-        expect(info?.dflt_value, `usage_events.${column} must have no default`).toBeNull();
+        expect(info?.notnull, `usage_events.${column} must be nullable`).toBe(
+          0,
+        );
+        expect(
+          info?.dflt_value,
+          `usage_events.${column} must have no default`,
+        ).toBeNull();
       }
     });
   });
@@ -244,7 +258,10 @@ describe('usage_events records enough to reconstruct cost', () => {
         })
         .execute();
 
-      const row = await db.selectFrom('usage_events').selectAll().executeTakeFirstOrThrow();
+      const row = await db
+        .selectFrom('usage_events')
+        .selectAll()
+        .executeTakeFirstOrThrow();
       expect(row.cache_read_input_tokens).toBeNull();
       expect(row.cost_usd).toBeNull();
     });
@@ -358,7 +375,11 @@ describe('verdicts are rows, not a JSON blob on the attempt', () => {
       // every stored verdict. That is the whole reason `verdicts` is a table.
       const covered = await db
         .selectFrom('verdict_checked_criteria')
-        .innerJoin('verdicts', 'verdicts.id', 'verdict_checked_criteria.verdict_id')
+        .innerJoin(
+          'verdicts',
+          'verdicts.id',
+          'verdict_checked_criteria.verdict_id',
+        )
         .select(['verdict_checked_criteria.criterion_id'])
         .where('verdicts.outcome', '=', 'pass')
         .orderBy('verdict_checked_criteria.position')
@@ -433,7 +454,10 @@ describe('findings and waivers', () => {
         })
         .execute();
 
-      const finding = await db.selectFrom('findings').selectAll().executeTakeFirstOrThrow();
+      const finding = await db
+        .selectFrom('findings')
+        .selectAll()
+        .executeTakeFirstOrThrow();
       expect(finding.fingerprint).toHaveLength(64);
       expect(finding.criterion_id).toBe('AC-3');
       expect(finding.path).toBe('src/auth/login.ts');
@@ -460,7 +484,10 @@ describe('findings and waivers', () => {
         })
         .execute();
 
-      const waiver = await db.selectFrom('waivers').selectAll().executeTakeFirstOrThrow();
+      const waiver = await db
+        .selectFrom('waivers')
+        .selectAll()
+        .executeTakeFirstOrThrow();
       expect(waiver.target_stage_id).toBe('security');
       expect(waiver.actor).toBe('maintainer@example.com');
       expect(waiver.at).toBe(at);

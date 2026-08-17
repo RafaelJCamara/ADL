@@ -54,7 +54,10 @@ export type AgentRole = (typeof AGENT_ROLES)[number];
 // ---------------------------------------------------------------------------
 
 /** ADL's own baked-in fallback backend and model, used when the daemon names none. */
-const DEFAULT_AGENT_BLOCK = Object.freeze({ backend: 'claude-code', model: 'default' });
+const DEFAULT_AGENT_BLOCK = Object.freeze({
+  backend: 'claude-code',
+  model: 'default',
+});
 
 /**
  * ADL's documented defaults — the third and lowest-priority input to
@@ -89,8 +92,14 @@ export type DefaultConfig = typeof DEFAULT_CONFIG;
  * `prompt_template` flows from the repo (see {@link mergeConfig}).
  */
 const DaemonAgentBlockSchema = z.strictObject({
-  backend: z.string().min(1).describe('The agent backend id (e.g. "claude-code"). Daemon-only.'),
-  model: z.string().min(1).describe('The model alias to run this role with. Daemon-only.'),
+  backend: z
+    .string()
+    .min(1)
+    .describe('The agent backend id (e.g. "claude-code"). Daemon-only.'),
+  model: z
+    .string()
+    .min(1)
+    .describe('The model alias to run this role with. Daemon-only.'),
 });
 
 export type DaemonAgentBlock = z.infer<typeof DaemonAgentBlockSchema>;
@@ -180,7 +189,10 @@ const LIMITS_FIELDS = [
  * supplies one (D-22).
  */
 export const DAEMON_ONLY_FIELDS: readonly string[] = Object.freeze(
-  AGENT_ROLES.flatMap((role) => [`agents.${role}.backend`, `agents.${role}.model`]),
+  AGENT_ROLES.flatMap((role) => [
+    `agents.${role}.backend`,
+    `agents.${role}.model`,
+  ]),
 );
 
 /** One `limits` field the repo tried to raise above the daemon's ceiling. */
@@ -228,7 +240,11 @@ function deepFreeze<T>(value: T): T {
  * {@link DAEMON_ONLY_FIELDS} is taken from the daemon and any repo-supplied
  * value is discarded and reported.
  */
-export function mergeConfig(defaults: DefaultConfig, daemon: DaemonConfig, repo: AdlYml): MergeResult {
+export function mergeConfig(
+  defaults: DefaultConfig,
+  daemon: DaemonConfig,
+  repo: AdlYml,
+): MergeResult {
   const clamped: ClampedField[] = [];
   const discarded: DiscardedField[] = [];
 
@@ -237,7 +253,8 @@ export function mergeConfig(defaults: DefaultConfig, daemon: DaemonConfig, repo:
     max_rounds: daemon.limits.max_rounds ?? defaults.limits.max_rounds,
     budget_usd: daemon.limits.budget_usd ?? defaults.limits.budget_usd,
     repeat_finding_threshold:
-      daemon.limits.repeat_finding_threshold ?? defaults.limits.repeat_finding_threshold,
+      daemon.limits.repeat_finding_threshold ??
+      defaults.limits.repeat_finding_threshold,
   };
 
   const resolvedLimits = {} as Record<keyof Limits, number>;
@@ -259,10 +276,16 @@ export function mergeConfig(defaults: DefaultConfig, daemon: DaemonConfig, repo:
     const repoBlock = repo.agents[role];
 
     if (repoBlock?.backend !== undefined) {
-      discarded.push({ field: `agents.${role}.backend`, requested: repoBlock.backend });
+      discarded.push({
+        field: `agents.${role}.backend`,
+        requested: repoBlock.backend,
+      });
     }
     if (repoBlock?.model !== undefined) {
-      discarded.push({ field: `agents.${role}.model`, requested: repoBlock.model });
+      discarded.push({
+        field: `agents.${role}.model`,
+        requested: repoBlock.model,
+      });
     }
 
     resolvedAgents[role] = {
