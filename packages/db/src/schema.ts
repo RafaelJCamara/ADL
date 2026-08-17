@@ -24,6 +24,8 @@
  * contracts).
  */
 
+import { CHECKSUM_TABLE } from './checksum.js';
+
 /** `meta` — single key/value row set. `schema_version` gates daemon startup. */
 export interface MetaTable {
   key: string;
@@ -476,11 +478,23 @@ export const PHASE_TABLES = [
 export const DEFERRED_TABLES = ['outbox', 'forge_events', 'artifacts'] as const;
 
 /**
- * Tables whose shape is **not** ADL's to declare.
+ * Migration-mechanics tables, excluded from the drift check and from the
+ * "exactly these tables" assertion in `migrate.test.ts`.
  *
- * Kysely creates and owns `kysely_migration` and `kysely_migration_lock`, and
- * could change them under a version bump — which is precisely why D-30's
- * checksum guard builds its own table instead of adding a column to Kysely's.
- * The drift check excludes them by name for the same reason.
+ * `kysely_migration` and `kysely_migration_lock` are Kysely's own, created
+ * and owned by the library, which could change their shape under a version
+ * bump — precisely why D-30's checksum guard builds `adl_migration_checksums`
+ * as its own table rather than adding a column to Kysely's.
+ *
+ * `adl_migration_checksums` is ADL's, but it is migration infrastructure, not
+ * domain schema: `checksum.ts` reads and writes it with raw `sql` rather than
+ * through the `Database` interface, deliberately, so the checksum guard's
+ * shape can evolve without touching the hand-written contract every other
+ * table is held to. It belongs in this list for the same reason Kysely's own
+ * tables do — none of these three is what the drift check exists to police.
  */
-export const BOOKKEEPING_TABLES: readonly string[] = ['kysely_migration', 'kysely_migration_lock'];
+export const BOOKKEEPING_TABLES: readonly string[] = [
+  'kysely_migration',
+  'kysely_migration_lock',
+  CHECKSUM_TABLE,
+];

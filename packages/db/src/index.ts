@@ -1,6 +1,13 @@
 export { createDb, migrateToLatest, type MigrateResult } from './migrator.js';
 
 export {
+  CHECKSUM_TABLE,
+  ensureChecksumTable,
+  recordMigrationChecksum,
+  assertMigrationsUnmodified,
+} from './checksum.js';
+
+export {
   type Database,
   type MetaTable,
   type ReposTable,
