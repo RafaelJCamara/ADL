@@ -12,16 +12,27 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 
 ### Validated
 
-(None yet — ship to validate)
+**Core contracts** (Phase 1: Core Contracts)
+
+- [x] Six-outcome verdict schema — `pass`, `send_back`, `fail`, `inconclusive`, `warn`, `skip` — where only `send_back` consumes a round, and `inconclusive` is structurally incapable of producing a green PR (CORE-01, CORE-02)
+- [x] Developer-side "this gate is wrong" escalation exit, so an agent facing an impossible gate has an honest alternative to subverting it (CORE-03)
+- [x] Every finding carries `fingerprint`, `severity`, `location`, and `criterionId` (CORE-04)
+- [x] Acceptance criteria are enumerable and ID'd, threading spec → developer prompt → reviewer finding → test result → PR coverage table (CORE-05)
+- [x] A malformed or unparseable agent verdict is classified as an infrastructure failure, never a gate failure that costs a round (CORE-06)
+
+**Feature specs & target-repo config** (Phase 1: Core Contracts)
+
+- [x] Support a structured ADL feature-spec template (SPEC-01)
+- [x] Support Gherkin / BDD scenario files (SPEC-02)
+- [x] `adl.yml` in the target repo declares build / start / test / teardown commands (SPEC-03)
+- [x] `adl.yml` declares an explicit readiness contract (`ready`, `ready_timeout`) — ADL owns the app lifecycle, not the agent (SPEC-04)
+- [x] `adl.yml` can point at additional context files; defaults to an `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade (SPEC-05)
+
+**Extensibility** (Phase 1: Core Contracts)
+
+- [x] Adding a harness requires no change to the feature lifecycle state machine (EXEC-07)
 
 ### Active
-
-**Core contracts**
-
-- [ ] Six-outcome verdict schema — `pass`, `send_back`, `fail`, `inconclusive`, `warn`, `skip` — where only `send_back` consumes a round, and `inconclusive` is structurally incapable of producing a green PR
-- [ ] Developer-side "this gate is wrong" escalation exit, so an agent facing an impossible gate has an honest alternative to subverting it
-- [ ] Every finding carries `fingerprint`, `severity`, `location`, and `criterionId`
-- [ ] Acceptance criteria are enumerable and ID'd, threading spec → developer prompt → reviewer finding → test result → PR coverage table
 
 **Loop & orchestration**
 
@@ -74,14 +85,6 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 - [ ] One sticky comment per agent role, edited in place with prior rounds collapsed, plus a single rollup
 - [ ] Spec-clause coverage table on the PR
 - [ ] Human approves and merges the PR — ADL never merges
-
-**Feature specs & target-repo config**
-
-- [ ] Support a structured ADL feature-spec template
-- [ ] Support Gherkin / BDD scenario files
-- [ ] `adl.yml` in the target repo declares build / start / test / teardown commands
-- [ ] `adl.yml` declares an explicit readiness contract (`ready`, `ready_timeout`) — ADL owns the app lifecycle, not the agent
-- [ ] `adl.yml` can point at additional context files; defaults to an `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md` cascade
 
 **Detection & state**
 
@@ -204,4 +207,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-17 after initialization and domain research*
+*Last updated: 2026-08-17 after Phase 1 (Core Contracts) completion*
