@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Phase 12 is a hard gate.** Phases 13-18 are blocked on it. The sole breadth item permitted before the gate is the second agent backend (Phase 11), because an adapter interface with one implementation is unfalsifiable.
 
-- [ ] **Phase 1: Core Contracts** - The verdict schema, finding shape, criterion IDs, spec normalization, and `adl.yml` — settled before any I/O exists
+- [x] **Phase 1: Core Contracts** - The verdict schema, finding shape, criterion IDs, spec normalization, and `adl.yml` — settled before any I/O exists (completed 2026-08-17)
 - [ ] **Phase 2: Workspace & the Exec Boundary** - Every process launch routes through one swappable workspace, with the worker's blast radius bounded
 - [ ] **Phase 3: Manager Skeleton — State, Leases, API, CLI** - A crash-surviving control plane the maintainer can watch, pause, and kill
 - [ ] **Phase 4: First Agent Backend & Live Transcripts** - Claude Code headless makes a real commit through the workspace, streamed live
@@ -386,7 +386,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Contracts | 10/10 | In Progress|  |
+| 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 0/TBD | Not started | - |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |

@@ -11,20 +11,20 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 
 ### Core Contracts
 
-- [ ] **CORE-01**: A gate returns exactly one of six outcomes — `pass`, `send_back`, `fail`, `inconclusive`, `warn`, `skip` — and only `send_back` consumes a round
-- [ ] **CORE-02**: An `inconclusive` verdict is structurally incapable of producing a green PR, so an unverified feature can never be presented as verified
-- [ ] **CORE-03**: A developer agent that believes a gate is wrong can escalate rather than comply, giving it an honest alternative to subverting the gate
-- [ ] **CORE-04**: Every finding carries a fingerprint, severity, source location, and the acceptance-criterion ID it relates to
-- [ ] **CORE-05**: A feature spec's acceptance criteria are enumerable and individually addressable, and the original spec text is retained verbatim alongside the normalized form
-- [ ] **CORE-06**: A malformed or unparseable agent verdict is classified as an infrastructure failure, never as a gate failure that costs the developer a round
+- [x] **CORE-01**: A gate returns exactly one of six outcomes — `pass`, `send_back`, `fail`, `inconclusive`, `warn`, `skip` — and only `send_back` consumes a round
+- [x] **CORE-02**: An `inconclusive` verdict is structurally incapable of producing a green PR, so an unverified feature can never be presented as verified
+- [x] **CORE-03**: A developer agent that believes a gate is wrong can escalate rather than comply, giving it an honest alternative to subverting the gate
+- [x] **CORE-04**: Every finding carries a fingerprint, severity, source location, and the acceptance-criterion ID it relates to
+- [x] **CORE-05**: A feature spec's acceptance criteria are enumerable and individually addressable, and the original spec text is retained verbatim alongside the normalized form
+- [x] **CORE-06**: A malformed or unparseable agent verdict is classified as an infrastructure failure, never as a gate failure that costs the developer a round
 
 ### Feature Intake
 
-- [ ] **SPEC-01**: Maintainer can describe a feature using ADL's structured spec template and have it accepted
-- [ ] **SPEC-02**: Maintainer can describe a feature as Gherkin/BDD scenarios and have it accepted
-- [ ] **SPEC-03**: Maintainer declares build, start, test, and teardown commands for their repo in `adl.yml`
-- [ ] **SPEC-04**: Maintainer declares an explicit readiness signal and timeout in `adl.yml`, so ADL knows when the app is actually up
-- [ ] **SPEC-05**: Maintainer can point `adl.yml` at additional context files; absent that, ADL falls back through `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md`
+- [x] **SPEC-01**: Maintainer can describe a feature using ADL's structured spec template and have it accepted
+- [x] **SPEC-02**: Maintainer can describe a feature as Gherkin/BDD scenarios and have it accepted
+- [x] **SPEC-03**: Maintainer declares build, start, test, and teardown commands for their repo in `adl.yml`
+- [x] **SPEC-04**: Maintainer declares an explicit readiness signal and timeout in `adl.yml`, so ADL knows when the app is actually up
+- [x] **SPEC-05**: Maintainer can point `adl.yml` at additional context files; absent that, ADL falls back through `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md`
 - [ ] **SPEC-06**: ADL only acts on specs reaching it through a trusted path — default branch, authors with write permission — and ignores fork-PR specs unless explicitly opted in
 
 ### Detection & Scheduling
@@ -105,7 +105,7 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 - [ ] **EXEC-04**: A resumed zombie worker cannot write stale results over newer state
 - [ ] **EXEC-05**: Maintainer sets concurrency; it defaults to one feature in flight
 - [ ] **EXEC-06**: Feature state, rounds, spend, and transcripts survive daemon restart
-- [ ] **EXEC-07**: Adding a harness requires no change to the feature lifecycle state machine
+- [x] **EXEC-07**: Adding a harness requires no change to the feature lifecycle state machine
 
 ### Workspace & Trust Boundary
 
@@ -180,17 +180,17 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORE-01 | Phase 1 | Pending |
-| CORE-02 | Phase 1 | Pending |
-| CORE-03 | Phase 1 | Pending |
-| CORE-04 | Phase 1 | Pending |
-| CORE-05 | Phase 1 | Pending |
-| CORE-06 | Phase 1 | Pending |
-| SPEC-01 | Phase 1 | Pending |
-| SPEC-02 | Phase 1 | Pending |
-| SPEC-03 | Phase 1 | Pending |
-| SPEC-04 | Phase 1 | Pending |
-| SPEC-05 | Phase 1 | Pending |
+| CORE-01 | Phase 1 | Complete |
+| CORE-02 | Phase 1 | Complete |
+| CORE-03 | Phase 1 | Complete |
+| CORE-04 | Phase 1 | Complete |
+| CORE-05 | Phase 1 | Complete |
+| CORE-06 | Phase 1 | Complete |
+| SPEC-01 | Phase 1 | Complete |
+| SPEC-02 | Phase 1 | Complete |
+| SPEC-03 | Phase 1 | Complete |
+| SPEC-04 | Phase 1 | Complete |
+| SPEC-05 | Phase 1 | Complete |
 | SPEC-06 | Phase 5 | Pending |
 | DETECT-01 | Phase 5 | Pending |
 | DETECT-02 | Phase 10 | Pending |
@@ -250,7 +250,7 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | EXEC-04 | Phase 3 | Pending |
 | EXEC-05 | Phase 3 | Pending |
 | EXEC-06 | Phase 3 | Pending |
-| EXEC-07 | Phase 1 | Pending |
+| EXEC-07 | Phase 1 | Complete |
 | WORK-01 | Phase 2 | Pending |
 | WORK-02 | Phase 2 | Pending |
 | WORK-03 | Phase 2 | Pending |
@@ -274,6 +274,7 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | DIST-03 | Phase 18 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 92 total
 - Mapped to phases: 92 ✓
 - Unmapped: 0
