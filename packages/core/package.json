@@ -1,0 +1,54 @@
+{
+  "name": "@adl/core",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "ADL core contracts — verdicts, findings, criterion identity, normalized specs. Pure and I/O-free.",
+  "license": "MIT",
+  "main": "./dist/verdict/index.js",
+  "types": "./dist/verdict/index.d.ts",
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/verdict/index.d.ts",
+      "default": "./dist/verdict/index.js"
+    },
+    "./verdict": {
+      "types": "./dist/verdict/index.d.ts",
+      "default": "./dist/verdict/index.js"
+    },
+    "./spec": {
+      "types": "./dist/spec/index.d.ts",
+      "default": "./dist/spec/index.js"
+    },
+    "./stage": {
+      "types": "./dist/stage/index.d.ts",
+      "default": "./dist/stage/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "default": "./dist/config/index.js"
+    },
+    "./state": {
+      "types": "./dist/state/index.d.ts",
+      "default": "./dist/state/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cucumber/gherkin": "42.0.1",
+    "@cucumber/messages": "34.2.1",
+    "mdast-util-from-markdown": "2.0.3",
+    "yaml": "2.9.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "ajv": "8.20.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

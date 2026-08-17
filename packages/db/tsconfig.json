@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // rootDir is the package root rather than `src`, because `migrations/`
+    // must be compiled and shipped too — a migration that only exists as
+    // TypeScript cannot run in an adopter's installation.
+    "rootDir": ".",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "migrations/**/*.ts"]
+}

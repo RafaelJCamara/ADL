@@ -1,0 +1,25 @@
+packages:
+  - packages/*
+
+# pnpm 11 refuses to run a dependency's install/postinstall script unless it is
+# named here. Keeping the list explicit and short is the point: every entry is a
+# package we have decided may execute code on a contributor's machine.
+allowBuilds:
+  # `prebuild-install`, falling back to node-gyp. This is the one install-failure
+  # mode an adopter will actually report, so it is named rather than hidden.
+  better-sqlite3: true
+  # Links the platform-specific esbuild binary. Vitest cannot transform
+  # TypeScript without it.
+  esbuild: true
+
+# One pinned version per shared dependency, referenced as `catalog:` from every
+# package. This is what keeps TypeScript and Zod aligned across the workspace
+# without a syncing tool (D-24, C-3).
+#
+# typescript is pinned EXACTLY — no caret. npm `latest` is 7.0.2, and
+# typescript-eslint@8.67.0 peers `>=4.8.4 <6.1.0`, so an unpinned install
+# silently breaks lint (C-1).
+catalog:
+  typescript: 6.0.3
+  zod: 4.4.3
+  vitest: 4.1.10
