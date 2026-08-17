@@ -20,10 +20,14 @@ describe('0001_initial applied to a real temp SQLite file', () => {
     await withTempDb(async ({ db }) => {
       const first = await migrateToLatest(db, MIGRATIONS_DIR);
       expect(first.error).toBeUndefined();
-      expect(first.results).toHaveLength(1);
+      // `0001_initial` is applied first and applied once. The count of
+      // migrations in the chain is not this file's business — it grows with
+      // every additive migration, and `migrate.test.ts` asserts the whole
+      // chain against the files on disk.
       expect(first.results[0]?.migrationName).toBe('0001_initial');
       expect(first.results[0]?.status).toBe('Success');
       expect(first.results[0]?.direction).toBe('Up');
+      expect(first.results.filter((r) => r.migrationName === '0001_initial')).toHaveLength(1);
 
       // Re-running is the normal path — the daemon migrates on every startup.
       // If this ever applied a second time, an adopter's database would be
@@ -34,12 +38,14 @@ describe('0001_initial applied to a real temp SQLite file', () => {
     });
   });
 
-  it('creates exactly the four ADL tables plus Kysely bookkeeping', async () => {
+  it('creates the four ADL tables it is responsible for, plus Kysely bookkeeping', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
 
       const names = await tableNames(db);
-      expect([...names].sort()).toEqual([...INITIAL_TABLES, ...KYSELY_TABLES].sort());
+      for (const table of [...INITIAL_TABLES, ...KYSELY_TABLES]) {
+        expect(names).toContain(table);
+      }
     });
   });
 

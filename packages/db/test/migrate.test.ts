@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { sql, type Kysely } from 'kysely';
 import { ulid } from 'ulid';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +21,18 @@ import { MIGRATIONS_DIR, withTempDb } from './helpers/temp-db.js';
  * them; without an assertion, "we chose not to add those yet" and "we forgot"
  * look identical in a schema six months from now.
  */
+
+/**
+ * Every migration on disk, in filename order.
+ *
+ * Derived rather than hardcoded, so adding a migration does not require
+ * editing this file — and so "a migration file exists but nothing applies it"
+ * is a failure here rather than an omission nobody notices.
+ */
+const MIGRATION_NAMES = readdirSync(MIGRATIONS_DIR)
+  .filter((f) => /\.ts$/.test(f) && !f.endsWith('.d.ts'))
+  .sort()
+  .map((f) => f.replace(/\.ts$/, ''));
 
 async function tableNames(db: Kysely<Database>): Promise<string[]> {
   const result = await sql<{ name: string }>`
@@ -128,12 +141,9 @@ describe('the full migration chain against a real temp SQLite file', () => {
     await withTempDb(async ({ db }) => {
       const result = await migrateToLatest(db, MIGRATIONS_DIR);
       expect(result.error).toBeUndefined();
-      expect(result.results.map((r) => r.migrationName)).toEqual([
-        '0001_initial',
-        '0002_contracts',
-        '0003_seed_model_prices',
-      ]);
+      expect(result.results.map((r) => r.migrationName)).toEqual(MIGRATION_NAMES);
       expect(result.results.every((r) => r.status === 'Success')).toBe(true);
+      expect(MIGRATION_NAMES).toContain('0002_contracts');
 
       const names = await tableNames(db);
       const expected = [...Object.keys(TABLE_COLUMNS), ...BOOKKEEPING_TABLES].sort();
