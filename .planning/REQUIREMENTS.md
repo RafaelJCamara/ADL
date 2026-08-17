@@ -174,17 +174,112 @@ Deferred. Tracked but not in the current roadmap.
 
 ## Traceability
 
-Populated during roadmap creation.
+Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals and success criteria.
+
+**Phase 12 is a hard DOGFOOD gate.** Requirements mapped to Phases 13-18 do not begin until it passes.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(to be filled by roadmapper)_ | | |
+| CORE-01 | Phase 1 | Pending |
+| CORE-02 | Phase 1 | Pending |
+| CORE-03 | Phase 1 | Pending |
+| CORE-04 | Phase 1 | Pending |
+| CORE-05 | Phase 1 | Pending |
+| CORE-06 | Phase 1 | Pending |
+| SPEC-01 | Phase 1 | Pending |
+| SPEC-02 | Phase 1 | Pending |
+| SPEC-03 | Phase 1 | Pending |
+| SPEC-04 | Phase 1 | Pending |
+| SPEC-05 | Phase 1 | Pending |
+| SPEC-06 | Phase 5 | Pending |
+| DETECT-01 | Phase 5 | Pending |
+| DETECT-02 | Phase 10 | Pending |
+| DETECT-03 | Phase 5 | Pending |
+| DETECT-04 | Phase 10 | Pending |
+| DETECT-05 | Phase 5 | Pending |
+| LOOP-01 | Phase 5 | Pending |
+| LOOP-02 | Phase 5 | Pending |
+| LOOP-03 | Phase 6 | Pending |
+| LOOP-04 | Phase 6 | Pending |
+| LOOP-05 | Phase 6 | Pending |
+| LOOP-06 | Phase 6 | Pending |
+| LOOP-07 | Phase 6 | Pending |
+| LOOP-08 | Phase 6 | Pending |
+| LOOP-09 | Phase 7 | Pending |
+| ROLE-01 | Phase 5 | Pending |
+| ROLE-02 | Phase 7 | Pending |
+| ROLE-03 | Phase 5 | Pending |
+| ROLE-04 | Phase 7 | Pending |
+| ROLE-05 | Phase 8 | Pending |
+| ROLE-06 | Phase 8 | Pending |
+| ROLE-07 | Phase 8 | Pending |
+| ROLE-08 | Phase 8 | Pending |
+| ROLE-09 | Phase 8 | Pending |
+| ROLE-10 | Phase 8 | Pending |
+| ROLE-11 | Phase 5 | Pending |
+| HARN-01 | Phase 7 | Pending |
+| HARN-02 | Phase 7 | Pending |
+| HARN-03 | Phase 7 | Pending |
+| HARN-04 | Phase 7 | Pending |
+| HARN-05 | Phase 13 | Pending |
+| HARN-06 | Phase 13 | Pending |
+| BACK-01 | Phase 4 | Pending |
+| BACK-02 | Phase 11 | Pending |
+| BACK-03 | Phase 11 | Pending |
+| BACK-04 | Phase 11 | Pending |
+| BACK-05 | Phase 4 | Pending |
+| BACK-06 | Phase 11 | Pending |
+| BACK-07 | Phase 16 | Pending |
+| BACK-08 | Phase 16 | Pending |
+| BACK-09 | Phase 5 | Pending |
+| FORGE-01 | Phase 5 | Pending |
+| FORGE-02 | Phase 5 | Pending |
+| FORGE-03 | Phase 14 | Pending |
+| FORGE-04 | Phase 14 | Pending |
+| FORGE-05 | Phase 5 | Pending |
+| FORGE-06 | Phase 5 | Pending |
+| FORGE-07 | Phase 9 | Pending |
+| FORGE-08 | Phase 9 | Pending |
+| FORGE-09 | Phase 9 | Pending |
+| FORGE-10 | Phase 5 | Pending |
+| FORGE-11 | Phase 9 | Pending |
+| FORGE-12 | Phase 9 | Pending |
+| EXEC-01 | Phase 3 | Pending |
+| EXEC-02 | Phase 3 | Pending |
+| EXEC-03 | Phase 3 | Pending |
+| EXEC-04 | Phase 3 | Pending |
+| EXEC-05 | Phase 3 | Pending |
+| EXEC-06 | Phase 3 | Pending |
+| EXEC-07 | Phase 1 | Pending |
+| WORK-01 | Phase 2 | Pending |
+| WORK-02 | Phase 2 | Pending |
+| WORK-03 | Phase 2 | Pending |
+| WORK-04 | Phase 2 | Pending |
+| WORK-05 | Phase 2 | Pending |
+| WORK-06 | Phase 2 | Pending |
+| WORK-07 | Phase 2 | Pending |
+| WORK-08 | Phase 15 | Pending |
+| WORK-09 | Phase 15 | Pending |
+| WORK-10 | Phase 15 | Pending |
+| OBS-01 | Phase 3 | Pending |
+| OBS-02 | Phase 4 | Pending |
+| OBS-03 | Phase 3 | Pending |
+| OBS-04 | Phase 3 | Pending |
+| OBS-05 | Phase 6 | Pending |
+| OBS-06 | Phase 17 | Pending |
+| OBS-07 | Phase 17 | Pending |
+| OBS-08 | Phase 18 | Pending |
+| DIST-01 | Phase 18 | Pending |
+| DIST-02 | Phase 18 | Pending |
+| DIST-03 | Phase 18 | Pending |
 
 **Coverage:**
 - v1 requirements: 92 total
-- Mapped to phases: 0
-- Unmapped: 92 ⚠️
+- Mapped to phases: 92 ✓
+- Unmapped: 0
+
+**Per-phase counts:** P1: 12 · P2: 7 · P3: 9 · P4: 3 · P5: 15 · P6: 7 · P7: 7 · P8: 6 · P9: 5 · P10: 2 · P11: 4 · P12: 0 (validation gate) · P13: 2 · P14: 2 · P15: 3 · P16: 2 · P17: 2 · P18: 4
 
 ---
 *Requirements defined: 2026-08-17*
-*Last updated: 2026-08-17 after initial definition*
+*Last updated: 2026-08-17 after roadmap creation — traceability populated, 92/92 mapped*

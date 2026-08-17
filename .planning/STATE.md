@@ -1,0 +1,86 @@
+---
+gsd_state_version: '1.0'  # placeholder; syncStateFrontmatter overwrites on first state.* call
+status: planning
+progress:
+  total_phases: 18
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
+---
+
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated 2026-08-17)
+
+**Core value:** A feature folder goes in, and a green, human-approvable PR comes out — with the whole loop's reasoning visible in the PR — without a human orchestrating any of the handoffs.
+**Current focus:** Phase 1 — Core Contracts
+
+## Current Position
+
+Phase: 1 of 18 (Core Contracts)
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-08-17 — Roadmap created; 92/92 v1 requirements mapped across 18 phases
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: —
+- Total execution time: 0.0 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+**Recent Trend:**
+- Last 5 plans: —
+- Trend: —
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- [Roadmap]: Phase 12 is a hard DOGFOOD gate blocking Phases 13-18 — a precondition, not a milestone label.
+- [Roadmap]: Second agent backend (Phase 11) is the sole breadth item permitted before the gate; second *backend* precedes second *forge* because ordering is by abstraction risk.
+- [Roadmap]: Everything cheap-now/ruinous-later is pulled into Phases 1 and 5 — verdict schema, `criterionId`, `inconclusive`, protected paths, cost recording, forge-neutral vocabulary, sticky-comment data model, trusted-path detection.
+- [Roadmap]: First gate exercised in Phase 5 is a command gate (`npm test`), not the reviewer agent — deterministic and forceable to fail, so send-back plumbing is proven without agent nondeterminism.
+- [Research]: Kysely + hand-written SQL migrations settled; no Drizzle migration phase exists or should be added.
+
+### Pending Todos
+
+[From .planning/todos/pending/ — ideas captured during sessions]
+
+None yet.
+
+### Blockers/Concerns
+
+- **Cost-accounting spike blocks Phase 6 planning.** Cross-backend usage reporting reliability is unverified. Run it during Phase 4/5 against a real agent turn.
+- **Research flagged for Phases 4, 8, 11, 14** — unattended agentic-CLI behaviour; code-blind tester prompt design; owned-loop tool implementation over `Workspace`; GitLab API specifics.
+- **Phase 17 is UI-bearing** — `/gsd-ui-phase` should be offered before planning it.
+
+## Deferred Items
+
+Items acknowledged and carried forward from previous milestone close:
+
+| Category | Item | Status | Deferred At |
+|----------|------|--------|-------------|
+| *(none)* | | | |
+
+## Session Continuity
+
+Last session: 2026-08-17
+Stopped at: ROADMAP.md and STATE.md written; REQUIREMENTS.md traceability populated
+Resume file: None
