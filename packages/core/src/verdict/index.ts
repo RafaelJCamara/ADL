@@ -53,7 +53,16 @@ export {
 export {
   SendBackBriefSchema,
   type SendBackBrief,
+  GreenOutcomeSchema,
+  type GreenOutcome,
+  SendBackOutcomeSchema,
+  type SendBackOutcome,
+  EscalateOutcomeSchema,
+  type EscalateOutcome,
+  UnverifiedOutcomeSchema,
+  type UnverifiedOutcome,
   RoundOutcomeSchema,
   type RoundOutcome,
-  aggregate,
-} from './aggregate.js';
+} from './round-outcome.js';
+
+export { aggregate } from './aggregate.js';
