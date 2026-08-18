@@ -40,6 +40,17 @@ export {
   type CreatedWorktree,
 } from './worktree/lifecycle.js';
 
+// The disk inventory (D-20). Deliberately the MECHANISM only: it reports which
+// worktrees exist, and decides nothing about which should be reclaimed. The
+// POLICY — joining this inventory against feature state — is `sweepOrphans`,
+// and keeping the two separable is what lets the manager own the trigger and
+// the state binding without owning the parsing.
+export {
+  listManagedWorktrees,
+  parseWorktreeList,
+  type WorktreeEntry,
+} from './worktree/list.js';
+
 // Backends — implementations of the Workspace interface @adl/core declares.
 export {
   worktreeWorkspace,
