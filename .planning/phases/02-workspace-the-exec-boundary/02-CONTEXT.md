@@ -59,12 +59,26 @@ Explicitly *not* in this phase: the manager, the worker's lease/queue logic (Pha
 
 - **D-16:** GC decides a worktree is a safe-to-remove orphan by **cross-checking it against the DB's feature state** (Phase 1's schema) — list worktrees on disk, look up each by feature id, remove any whose feature is terminal or whose id doesn't exist in the DB at all. Reuses the DB as the single source of truth (EXEC-06) rather than inventing a second signal like filesystem age, which can't distinguish a slow-running feature from an abandoned one. — **Reversibility:** reversible.
 
+### Resolved During Planning (research follow-up, 2026-08-18)
+
+These four resolve the open questions raised by `02-RESEARCH.md`. The user selected the researcher's recommendation in all four.
+
+- **D-17:** The manager-owned git client of D-12 **runs through its own distinct `Workspace` instance** — a host-rooted backend carrying ADL's own env and forge credentials — rather than earning a second lint exemption. Keeps success criterion 2 literally true with exactly one exemption (`packages/workspace`), preserves D-12's substance (the *worker's* Workspace still never carries a forge token), and applies the config-poisoning neutralisation of D-19 by construction. Costs one extra registry entry. — **Reversibility:** costly — this is the shape Phase 5 (forge push) and Phase 9 (PR operations) build their git call sites against.
+
+- **D-18:** Linux privilege drop uses **`sudo -u` as the default launcher, with `setpriv --init-groups` documented as an alternative**; both gated on `os.platform() === 'linux'`, and absence of the launcher degrades to D-05's warning banner rather than a hard failure. Node's `spawn({uid, gid})` is *not* usable — it requires the caller to already be root (contradicting D-06) and does not drop supplementary groups. The install story therefore gains a NOPASSWD sudoers entry the adopting team must accept; this must be documented, not silent. — **Reversibility:** reversible — the launcher is behind one seam.
+
+- **D-19:** WORK-07's config-poisoning defence needs a **third control beyond D-08's `HOME`/`GIT_CONFIG_GLOBAL`**: per-invocation `-c key=value` neutralisation on the manager git client. Linked worktrees share the main repo's `.git/config`, so `git config core.hooksPath …` run from inside a worktree writes the *main* repo's local config, which `HOME`/`GIT_CONFIG_GLOBAL` do not cover (verified locally; git upstream will not make local-config directives safe). Both `-c` and `GIT_CONFIG_COUNT` were verified to override a poisoned value. — **Reversibility:** costly — same audit surface as D-08.
+
+- **D-20:** GC **splits mechanism from policy**. `packages/workspace` exposes `listManagedWorktrees()` and `destroy()` and takes no `@adl/db` dependency; the manager owns the sweep that joins that inventory against `featuresRepository` to apply D-16's terminal-state policy. Keeps the swappable backend database-free (D-04) and puts the DB dependency where EXEC-01 already puts it. — **Reversibility:** reversible.
+
+- **D-21:** A **Linux CI job is Wave 0 scaffolding for this phase**, not a follow-up. Two acceptance criteria (WORK-05 privilege drop, and the OS-user half of success criterion 4) cannot execute on the Windows development machine. Linux-only tests must **skip with a visible reason** on other platforms rather than passing vacuously, and the phase cannot be called done until they have run green on Linux. — **Reversibility:** reversible.
+
 ### Claude's Discretion
 
 The user selected the recommended option in all sixteen questions; nothing was explicitly delegated beyond what's noted above. Left to the researcher and planner:
 
 - Exact `LogChunk` buffering/backpressure behavior when a consumer is slow to read the stream.
-- The precise mechanism for Linux privilege drop (setuid-root helper binary vs `sudo -u` vs `su`) — D-05 only fixes that it's Linux-only in v1 and OS-gated.
+- ~~The precise mechanism for Linux privilege drop (setuid-root helper binary vs `sudo -u` vs `su`)~~ — **now decided by D-18** (`sudo -u` default, `setpriv` documented alternative).
 - Scratch root directory location/naming convention (e.g. under a configured temp root vs alongside worktrees).
 - Exact shape of the `snapshot()` restore handle from D-03, beyond "it exists on the interface."
 - Registry key naming conventions beyond `'worktree'`/`'stub'` examples from D-04.
