@@ -199,6 +199,13 @@ None — no external service configuration required.
 - **No `pnpm-workspace.yaml` change** is required by these two dependencies (§2).
 - **Carry-forward for `02-03`:** `.claude/CLAUDE.md` records two consumption details worth honouring at the call sites — `simple-git` is CJS, so import it as a default import (`import simpleGit from 'simple-git'`) under `nodenext`; and it has no dedicated `.worktree()` helper, so worktree creation goes through `git.raw(['worktree', 'add', ...])`.
 
+## Self-Check: PASSED
+
+- `.planning/phases/02-workspace-the-exec-boundary/02-01-SUMMARY.md` — FOUND
+- Commit `0d0cab2` — FOUND
+- `git status --porcelain` after commit — clean
+- `git diff --diff-filter=D HEAD~1 HEAD` — no deletions
+
 ---
 *Phase: 02-workspace-the-exec-boundary*
 *Completed: 2026-08-18*
