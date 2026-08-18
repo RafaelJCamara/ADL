@@ -91,7 +91,7 @@ Plans:
   4. The worker runs as a dedicated unprivileged OS user with a per-run scratch `HOME`; agent-written `.npmrc`, `.gitconfig`, or hooks-path configuration does not survive the run and never affects ADL's own git operations.
   5. Forge tokens and model API keys are absent from the worker's ambient environment — asserted by dumping a child process's environment in a test.
 
-**Plans**: 6/8 plans executed
+**Plans**: 8/8 plans executed
 
 Plans:
 **Wave 1**
@@ -114,11 +114,11 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 02-07-PLAN.md — Privilege drop to a dedicated OS user, visible skips, and Linux CI provisioning
+- [x] 02-07-PLAN.md — Privilege drop to a dedicated OS user, visible skips, and Linux CI provisioning
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 02-08-PLAN.md — Manager-owned git client and the shared-config neutralisation
+- [x] 02-08-PLAN.md — Manager-owned git client and the shared-config neutralisation
 
 **Notes**: `networkPolicy` and `resources` present in the workspace spec from day one with `'full'` as the v1 value, so the future container backend is a drop-in rather than a call-site sweep. This is the one mistake that is expensive to retrofit. Two further controls were added during planning on research evidence: per-invocation git-config neutralisation (D-19), because linked worktrees share the main repo's local config and neither `HOME` nor `GIT_CONFIG_GLOBAL` reaches local scope; and a Linux CI job running the privilege-drop assertions (D-21), because two acceptance criteria cannot execute on the Windows development machine.
 
@@ -414,7 +414,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
-| 2. Workspace & the Exec Boundary | 6/8 | In Progress|  |
+| 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
