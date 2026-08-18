@@ -11,6 +11,8 @@
  * is what makes D-07's guarantee structural — no caller is in a position to opt
  * a child out of the scratch home, because no caller ever sees the seam.
  */
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type {
   ExecResult,
   ExecSpec,
@@ -21,7 +23,15 @@ import type {
 import { WorkspaceError } from '../errors.js';
 import { run } from '../exec/run.js';
 import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
+import { assertWithinRoot } from '../paths.js';
 import { createWorktree, destroyWorktree } from './lifecycle.js';
+
+/** The OS error code behind a failed filesystem call, when there is one. */
+function codeOf(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code: unknown }).code)
+    : undefined;
+}
 
 /** What the worktree backend needs in order to stand a workspace up. */
 export interface WorktreeWorkspaceDeps {
@@ -58,33 +68,57 @@ export async function worktreeWorkspace(
       return run(spec, scratchHome.path, log);
     },
 
-    // read/write/snapshot are declared and not yet implemented. Plan `02-06`
-    // owns them along with the D-02 containment guard they need, and filling
-    // them in requires no change to anything above: the exec and lifecycle path
-    // is real, and these are additions to it rather than a redesign of it.
-    //
-    // The parameters are omitted rather than named with a leading underscore: a
-    // method may declare fewer parameters than the interface it satisfies, and
-    // an unused named parameter would need a lint exception that would then also
-    // apply to the real implementation.
-    read(): Promise<string> {
-      return Promise.reject(
-        new WorkspaceError(
-          'Workspace.read is implemented in plan 02-06, together with the D-02 containment guard.',
+    /**
+     * Read a file inside the worktree.
+     *
+     * The guard runs first and unconditionally (D-02). Everything after it is
+     * ordinary I/O, and its failures are re-raised as {@link WorkspaceError} so
+     * that "the path was refused" and "the file was not there" stay two
+     * distinguishable events for the caller — a raw `ENOENT` from `readFile`
+     * and a `ContainmentError` would otherwise both arrive as "read failed".
+     *
+     * The message names the caller's own relative path and the OS error code,
+     * never the resolved absolute path: the same reasoning as
+     * {@link ContainmentError}'s (T-2-28).
+     */
+    async read(relPath: string): Promise<string> {
+      const absolute = await assertWithinRoot(worktreePath, relPath);
+      try {
+        return await readFile(absolute, 'utf8');
+      } catch (error) {
+        throw new WorkspaceError(
+          `Cannot read ${JSON.stringify(relPath)} from the workspace: ${codeOf(error) ?? 'unknown error'}.`,
           deps.featureId,
-        ),
-      );
+        );
+      }
     },
 
-    write(): Promise<void> {
-      return Promise.reject(
-        new WorkspaceError(
-          'Workspace.write is implemented in plan 02-06, together with the D-02 containment guard.',
+    /**
+     * Write a file inside the worktree, creating intermediate directories.
+     *
+     * The directories are created *after* the guard has passed, so a rejected
+     * path never leaves a directory tree behind as a side effect of being
+     * refused. They are inside the root by construction: every ancestor of a
+     * contained path is itself contained.
+     */
+    async write(relPath: string, contents: string): Promise<void> {
+      const absolute = await assertWithinRoot(worktreePath, relPath);
+      try {
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFile(absolute, contents, 'utf8');
+      } catch (error) {
+        throw new WorkspaceError(
+          `Cannot write ${JSON.stringify(relPath)} into the workspace: ${codeOf(error) ?? 'unknown error'}.`,
           deps.featureId,
-        ),
-      );
+        );
+      }
     },
 
+    // snapshot is declared and not yet implemented — the rest of plan `02-06`
+    // owns it. The parameter list is empty rather than carrying underscore-
+    // prefixed names: a method may declare fewer parameters than the interface
+    // it satisfies, and an unused named parameter would need a lint exception
+    // that would then also apply to the real implementation.
     snapshot(): Promise<RestoreHandle> {
       return Promise.reject(
         new WorkspaceError(
