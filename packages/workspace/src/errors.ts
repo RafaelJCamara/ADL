@@ -25,3 +25,36 @@ export class WorkspaceError extends Error {
     Object.setPrototypeOf(this, WorkspaceError.prototype);
   }
 }
+
+/**
+ * A path was refused because it does not resolve inside the workspace root
+ * (D-02).
+ *
+ * A **sibling** of {@link WorkspaceError} rather than a subclass, and that is
+ * deliberate. Containment is the one workspace failure a test — and a caller —
+ * has to be able to name exactly: "the interface refused to address this" is a
+ * different event from "the file was not there", and if this extended
+ * `WorkspaceError` then every `instanceof WorkspaceError` assertion in the
+ * contract suite would also be satisfied by a containment rejection, so the two
+ * cases could not discriminate. `catch (e) { if (e instanceof WorkspaceError) }`
+ * treating a traversal attempt as an ordinary I/O failure is exactly the
+ * conflation that makes a guard look present while being unobservable.
+ *
+ * **The message names the candidate and the reason, and never the resolved
+ * root** (T-2-28). The root is the host's absolute scratch path; a third-party
+ * harness that provoked this rejection has no business learning where on the
+ * operator's disk ADL keeps its worktrees. The candidate is the caller's own
+ * input, so echoing it back discloses nothing it did not already have.
+ */
+export class ContainmentError extends Error {
+  override readonly name = 'ContainmentError';
+
+  /** The path that was rejected, exactly as the caller wrote it. */
+  readonly candidate: string;
+
+  constructor(candidate: string, reason: string) {
+    super(`Path ${JSON.stringify(candidate)} was rejected: ${reason}.`);
+    this.candidate = candidate;
+    Object.setPrototypeOf(this, ContainmentError.prototype);
+  }
+}

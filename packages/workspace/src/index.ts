@@ -12,8 +12,15 @@
  * implementations live here, because core is pure and I/O-free.
  */
 
-// Errors — the workspace layer's own failure type.
-export { WorkspaceError } from './errors.js';
+// Errors — the workspace layer's own failure types. `ContainmentError` is a
+// sibling of `WorkspaceError`, not a subclass, so a caller can tell "the
+// interface refused to address that path" apart from "the file was not there".
+export { ContainmentError, WorkspaceError } from './errors.js';
+
+// The D-02 containment guard. Exported because a backend living outside this
+// package must be able to enforce the same rule with the same code — a second
+// implementation would have to be argued equivalent instead of observed to be.
+export { assertWithinRoot, isWithinRoot, resolveWithinRoot } from './paths.js';
 
 // The exec boundary — the only process launch in the repository, and the per-run
 // scratch HOME it points every child's `HOME` at (D-07, D-10).
@@ -24,10 +31,17 @@ export { WorkspaceError } from './errors.js';
 // child environment is assembled is a second door into the boundary this
 // package exists to be.
 export { run } from './exec/run.js';
+//
+// `ScratchHomeTeardown` joins its producer on the barrel: `destroyScratchHome`
+// was already exported while the type of what it returns was not, so a consumer
+// could call it and then had no name for the value in their hands. That is a
+// hole rather than a boundary — plan `02-05` flagged it as a carry-forward and
+// this is the change it named.
 export {
   createScratchHome,
   destroyScratchHome,
   type ScratchHome,
+  type ScratchHomeTeardown,
 } from './exec/scratch-home.js';
 
 // The git worktree lifecycle — one worktree and one adl/<featureId> branch per
@@ -62,8 +76,35 @@ export {
   type SweepFailure,
 } from './worktree/gc.js';
 
-// Backends — implementations of the Workspace interface @adl/core declares.
+// The named backend registry (D-04) — how a `Workspace` is obtained.
+//
+// `registry.ts` is the ONLY module in this repository that names either backend
+// factory; everything else asks the registry for an id and receives a
+// `Workspace`. That is success criterion 3 stated as a property of the source
+// tree, and `test/contract/workspace-contract.test.ts` enforces it.
 export {
-  worktreeWorkspace,
-  type WorktreeWorkspaceDeps,
-} from './worktree/backend.js';
+  WORKSPACE_BACKEND_IDS,
+  workspaceRegistry,
+  type WorkspaceBackendId,
+  type WorkspaceRegistry,
+  type WorkspaceRegistryConfig,
+} from './registry.js';
+
+// Backends — implementations of the Workspace interface @adl/core declares.
+//
+// Exporting the factories here is intentional and is NOT a contradiction of the
+// rule above: the sole-construction-site assertion measures *imports*, and the
+// registry needs a way to reach them. What it forbids is another module
+// importing one, which is a different statement from this package publishing
+// them for a test or an embedder to construct directly.
+export { worktreeWorkspace } from './worktree/backend.js';
+export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
+
+// The teardown-report sink's mapping helpers. `WorkspaceSpec.onTeardown` is
+// declared in `@adl/core/stage`; these turn this package's own teardown results
+// into it, and an out-of-tree backend can reuse them.
+export {
+  report,
+  reportScratchHomeTeardown,
+  type TeardownSink,
+} from './teardown.js';
