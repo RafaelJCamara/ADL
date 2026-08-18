@@ -135,6 +135,111 @@ export interface RestoreHandle {
 }
 
 /**
+ * What one `destroy()` managed to reclaim, reported rather than discarded.
+ *
+ * This is the answer to a defect plan `02-05` recorded and could not fix:
+ * `destroyScratchHome` learned to report `removed | already-absent |
+ * not-removed`, `destroy()` awaited it and dropped the result, and a leaked
+ * scratch `HOME` on a long-running daemon was therefore invisible to the
+ * operator it costs disk to.
+ *
+ * **`destroy()` still returns `Promise<void>`, deliberately.** Two reasons, and
+ * the second is the load-bearing one. First, it is a port method that
+ * `@adl/plugin-sdk` republishes, so its signature is one-way (D-01). Second,
+ * and worse, the thing worth reporting is *`ScratchHomeTeardown`* — a
+ * worktree-backend mechanism. Putting it in the shared return type would oblige
+ * a container backend, which has no scratch directory in that sense, to model
+ * one. So the report is pushed to an optional sink instead, and the shape here
+ * is deliberately generic: a `resource` a backend names for itself, and the
+ * three outcomes any reclamation has.
+ *
+ * The sink is optional because reporting must never be the reason teardown
+ * fails, and it takes no return value because a caller cannot usefully answer.
+ * It follows `GcDeps.onFailure`, which `packages/workspace/src/worktree/gc.ts`
+ * introduced for the identical problem: a thing that must not throw and must
+ * not vanish.
+ */
+export interface WorkspaceTeardownReport {
+  /** The {@link Workspace.id} whose teardown this describes. */
+  readonly workspaceId: string;
+  /**
+   * Which of the workspace's own resources this reports on — `'worktree'`,
+   * `'scratch-home'`, `'container'`. Named by the backend, because only the
+   * backend knows what it owns.
+   */
+  readonly resource: string;
+  /** `already-absent` is what an idempotent second teardown looks like. */
+  readonly outcome: 'reclaimed' | 'already-absent' | 'not-reclaimed';
+  /**
+   * Why, when the outcome is `not-reclaimed`. An OS error code and message.
+   *
+   * Never a value out of a child's environment — this string reaches a daemon
+   * log, and WORK-06's whole point is that credentials do not travel.
+   */
+  readonly reason?: string;
+}
+
+/**
+ * What a backend needs in order to stand one workspace up.
+ *
+ * Lives in `@adl/core` rather than in `@adl/workspace` for the same reason
+ * `Stage` does: an out-of-tree backend must be able to implement the port
+ * without taking a dependency on ADL's built-in implementations of it. A
+ * container backend written by someone else imports this file and nothing from
+ * `@adl/workspace` at all.
+ */
+export interface WorkspaceSpec {
+  /** The feature this workspace belongs to; also the workspace id. */
+  readonly featureId: string;
+  /** The repository ADL is running against. */
+  readonly mainRepo: string;
+  /** Directory the backend may create its per-feature workspace under. Must already exist. */
+  readonly scratchRoot: string;
+  /** The commit-ish the feature's work branches from. */
+  readonly baseRef: string;
+  /**
+   * Optional sink for {@link WorkspaceTeardownReport}s emitted by
+   * {@link Workspace.destroy}. See that type for why the report is not a return
+   * value.
+   */
+  readonly onTeardown?: (report: WorkspaceTeardownReport) => void;
+}
+
+/**
+ * One entry in a backend's inventory of the workspaces it is currently holding.
+ *
+ * Deliberately two fields. The `featureId` is the only thing a caller can act
+ * on — reclamation decisions are made from feature *state* (D-16, WORK-04),
+ * never from what is on disk — and the `locator` exists so an operator reading
+ * a log can find the thing. Anything richer would invite a caller to make the
+ * decision from the inventory.
+ */
+export interface ManagedWorkspace {
+  readonly featureId: string;
+  /** Wherever the backend keeps it: a worktree path, a container id, a URL. */
+  readonly locator: string;
+}
+
+/**
+ * One workspace *implementation*, addressed by id (D-04).
+ *
+ * The registry that maps ids to these is the only place a concrete backend is
+ * ever named; everything else in the loop receives a {@link Workspace}. That is
+ * what makes "a second backend runs the loop unchanged" a property of the code
+ * rather than a claim — see `packages/workspace/src/registry.ts`.
+ *
+ * `list` is here rather than on {@link Workspace} because it answers a question
+ * about the *set* of workspaces, which no single instance can. It is the
+ * mechanism half of D-20: it reports what exists and decides nothing.
+ */
+export interface WorkspaceBackend {
+  /** The registry id this backend answers to — `'worktree'`, `'stub'`, later `'container'`. */
+  readonly id: string;
+  create(spec: WorkspaceSpec): Promise<Workspace>;
+  list(mainRepo: string): Promise<readonly ManagedWorkspace[]>;
+}
+
+/**
  * Exec, read, write, snapshot — the whole of what a stage may do to the world.
  *
  * A stage receives one of these through `StageContext.workspace` and has no

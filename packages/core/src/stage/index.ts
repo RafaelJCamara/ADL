@@ -68,6 +68,17 @@ export {
   type RestoreHandle,
 } from './workspace.js';
 
+// The backend side of the same port. A harness never sees these — it receives a
+// `Workspace` — so they are deliberately NOT added to `@adl/plugin-sdk`, whose
+// surface is scoped to what a third-party gate needs. An out-of-tree workspace
+// backend implements `WorkspaceBackend` from here.
+export type {
+  WorkspaceSpec,
+  WorkspaceBackend,
+  ManagedWorkspace,
+  WorkspaceTeardownReport,
+} from './workspace.js';
+
 export type {
   StageKind,
   CostClass,

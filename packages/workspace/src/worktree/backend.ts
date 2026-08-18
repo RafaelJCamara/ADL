@@ -19,11 +19,14 @@ import type {
   LogChunk,
   RestoreHandle,
   Workspace,
+  WorkspaceSpec,
 } from '@adl/core/stage';
+import { simpleGit } from 'simple-git';
 import { WorkspaceError } from '../errors.js';
 import { run } from '../exec/run.js';
 import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
 import { assertWithinRoot } from '../paths.js';
+import { report, reportScratchHomeTeardown } from '../teardown.js';
 import { createWorktree, destroyWorktree } from './lifecycle.js';
 
 /** The OS error code behind a failed filesystem call, when there is one. */
@@ -33,39 +36,46 @@ function codeOf(error: unknown): string | undefined {
     : undefined;
 }
 
-/** What the worktree backend needs in order to stand a workspace up. */
-export interface WorktreeWorkspaceDeps {
-  /** The repository ADL is running against. Worktrees are linked to this one. */
-  readonly mainRepo: string;
-  /** Directory the feature worktrees are created under. Must already exist. */
-  readonly scratchRoot: string;
-  /** The feature this workspace belongs to; also the workspace id and the directory name. */
-  readonly featureId: string;
-  /** The commit-ish the feature branches from. */
-  readonly baseRef: string;
-}
+/**
+ * Where a snapshot's commit object is anchored while the handle is live.
+ *
+ * `git stash create` produces a **dangling** commit — it writes no ref at all,
+ * which is exactly why it does not disturb the working tree. Dangling is also
+ * why it needs anchoring: an unreferenced object is a `git gc` away from
+ * disappearing, and a restore handle whose object was collected is a restore
+ * that fails at the worst possible moment. `release()` deletes the ref, which
+ * is the whole of what release means here.
+ *
+ * Deliberately NOT under `refs/heads/` — a snapshot is not a branch, and one
+ * that appeared in `git branch` output would be indistinguishable from ADL's
+ * `adl/<featureId>` branches to both the GC sweep and a human.
+ */
+const SNAPSHOT_REF_PREFIX = 'refs/adl-snapshots/';
 
 export async function worktreeWorkspace(
-  deps: WorktreeWorkspaceDeps,
+  spec: WorkspaceSpec,
 ): Promise<Workspace> {
   const { worktreePath, branch } = await createWorktree(
-    deps.mainRepo,
-    deps.scratchRoot,
-    deps.featureId,
-    deps.baseRef,
+    spec.mainRepo,
+    spec.scratchRoot,
+    spec.featureId,
+    spec.baseRef,
   );
   const scratchHome = await createScratchHome();
 
   return {
-    id: deps.featureId,
+    id: spec.featureId,
     root: worktreePath,
     scratchHome: scratchHome.path,
 
-    exec(spec: ExecSpec, log: (chunk: LogChunk) => void): Promise<ExecResult> {
+    exec(
+      execSpec: ExecSpec,
+      log: (chunk: LogChunk) => void,
+    ): Promise<ExecResult> {
       // The instance's scratch home, always, as the second argument. The backend
       // never assembles an environment itself — the runner owns that, and is the
       // only caller of the builder, so the boundary has exactly one door.
-      return run(spec, scratchHome.path, log);
+      return run(execSpec, scratchHome.path, log);
     },
 
     /**
@@ -88,7 +98,7 @@ export async function worktreeWorkspace(
       } catch (error) {
         throw new WorkspaceError(
           `Cannot read ${JSON.stringify(relPath)} from the workspace: ${codeOf(error) ?? 'unknown error'}.`,
-          deps.featureId,
+          spec.featureId,
         );
       }
     },
@@ -109,23 +119,90 @@ export async function worktreeWorkspace(
       } catch (error) {
         throw new WorkspaceError(
           `Cannot write ${JSON.stringify(relPath)} into the workspace: ${codeOf(error) ?? 'unknown error'}.`,
-          deps.featureId,
+          spec.featureId,
         );
       }
     },
 
-    // snapshot is declared and not yet implemented — the rest of plan `02-06`
-    // owns it. The parameter list is empty rather than carrying underscore-
-    // prefixed names: a method may declare fewer parameters than the interface
-    // it satisfies, and an unused named parameter would need a lint exception
-    // that would then also apply to the real implementation.
-    snapshot(): Promise<RestoreHandle> {
-      return Promise.reject(
-        new WorkspaceError(
-          'Workspace.snapshot is implemented in plan 02-06.',
-          deps.featureId,
-        ),
-      );
+    /**
+     * Capture the worktree with `git stash create`.
+     *
+     * `stash create` is the right primitive because it writes a commit object
+     * and **does not touch the working tree, the index, or the stash list** —
+     * a snapshot taken before a mutating stage must not perturb the thing it is
+     * about to observe. Verified against git 2.49: it prints the new sha on a
+     * dirty tree and prints *nothing at all* on a clean one.
+     *
+     * **Untracked files are a refusal, not a partial capture.** `stash create`
+     * has no `--include-untracked`, so a workspace carrying untracked files
+     * would yield a handle that silently omits them — and a `restore()` that
+     * quietly loses an agent's new source file is worse in every way than a
+     * `snapshot()` that declined. The paths are named so the caller can act.
+     *
+     * Two honest limits, stated because a reader will otherwise assume
+     * otherwise:
+     *
+     * - A clean tree captures `HEAD` instead. There is nothing to stash, and
+     *   the commit that IS the current state is the correct capture.
+     * - `restore()` puts the captured contents back; it does not delete files
+     *   created *after* the capture. Deleting them would mean `git clean`
+     *   inside a directory an agent is working in, which is a data-loss
+     *   primitive this backend deliberately does not hold.
+     */
+    async snapshot(): Promise<RestoreHandle> {
+      const git = simpleGit(worktreePath);
+
+      const untracked = (await git.raw(['status', '--porcelain']))
+        .split('\n')
+        .filter((line) => line.startsWith('??'))
+        .map((line) => line.slice(3).trim());
+
+      if (untracked.length > 0) {
+        throw new WorkspaceError(
+          `Cannot snapshot the workspace: git stash cannot capture untracked files, and refusing is better than capturing a partial state. Untracked: ${untracked.join(', ')}.`,
+          spec.featureId,
+        );
+      }
+
+      const created = (await git.raw(['stash', 'create'])).trim();
+      const sha =
+        created === ''
+          ? (await git.raw(['rev-parse', 'HEAD'])).trim()
+          : created;
+
+      // Anchor the object before handing out the handle. See
+      // SNAPSHOT_REF_PREFIX for why a dangling commit is not good enough.
+      const ref = `${SNAPSHOT_REF_PREFIX}${spec.featureId}/${sha}`;
+      await git.raw(['update-ref', ref, sha]);
+
+      let released = false;
+
+      return {
+        id: sha,
+
+        async restore(): Promise<void> {
+          if (released) {
+            throw new WorkspaceError(
+              `Cannot restore snapshot ${sha}: it has been released. release() is not a hint — it deletes the ref that was keeping the captured commit alive.`,
+              spec.featureId,
+            );
+          }
+          // `checkout <commit> -- .` rather than `stash apply`: apply computes
+          // a diff and CONFLICTS when the working tree has moved on, which is
+          // precisely the situation a restore exists for. Checking the tree out
+          // by path overwrites unconditionally, which is what "return to the
+          // captured state" means.
+          await git.raw(['checkout', sha, '--', '.']);
+        },
+
+        async release(): Promise<void> {
+          // Idempotent: a caller that restores, releases, and then releases
+          // again on a cleanup path is doing nothing wrong.
+          if (released) return;
+          released = true;
+          await git.raw(['update-ref', '-d', ref]);
+        },
+      };
     },
 
     /**
@@ -146,13 +223,30 @@ export async function worktreeWorkspace(
      *
      * The two-step order lives inside {@link destroyWorktree} rather than here,
      * so no call site — this one included — is in a position to get it wrong.
+     *
+     * **What was reclaimed is reported, not discarded.** `spec.onTeardown`
+     * receives one entry per resource. Plan `02-05` left this open: teardown
+     * knew whether the scratch home survived and nothing carried the answer out,
+     * so a leaked directory was invisible to the operator paying for it.
      */
     async destroy(): Promise<void> {
       // Worktree first, then the scratch home: the worktree teardown is the step
       // that can fail loudly and is worth surfacing, and leaving a temp
       // directory behind is the cheaper of the two leaks.
-      await destroyWorktree(deps.mainRepo, worktreePath, branch);
-      await destroyScratchHome(scratchHome.path);
+      await destroyWorktree(spec.mainRepo, worktreePath, branch);
+      // Only reachable when the two-step teardown did not throw, so `reclaimed`
+      // is a statement about both the worktree and its branch.
+      report(spec.onTeardown, {
+        workspaceId: spec.featureId,
+        resource: 'worktree',
+        outcome: 'reclaimed',
+      });
+
+      reportScratchHomeTeardown(
+        spec.onTeardown,
+        spec.featureId,
+        await destroyScratchHome(scratchHome.path),
+      );
     },
   };
 }
