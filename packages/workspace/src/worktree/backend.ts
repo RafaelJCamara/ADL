@@ -12,7 +12,7 @@
  * a child out of the scratch home, because no caller ever sees the seam.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import type {
   ExecResult,
   ExecSpec,
@@ -23,6 +23,13 @@ import type {
 } from '@adl/core/stage';
 import { simpleGit } from 'simple-git';
 import { WorkspaceError } from '../errors.js';
+import {
+  applyWorkerAccess,
+  privilegeLauncher,
+  reportWorkerAccess,
+  workerIdentityFromEnv,
+  type WorkerIdentity,
+} from '../exec/privilege.js';
 import { run } from '../exec/run.js';
 import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
 import { assertWithinRoot } from '../paths.js';
@@ -52,9 +59,47 @@ function codeOf(error: unknown): string | undefined {
  */
 const SNAPSHOT_REF_PREFIX = 'refs/adl-snapshots/';
 
+/** What a daemon may configure about this backend beyond the spec. */
+export interface WorktreeWorkspaceOptions {
+  /**
+   * The pre-provisioned worker identity children are dropped to (WORK-05, D-06).
+   *
+   * Defaults to `ADL_WORKER_USER` / `ADL_WORKER_GROUP` from the DAEMON's own
+   * environment. This is the one place ADL legitimately reads its own process
+   * environment, and what it reads is two non-secret names — never a
+   * credential. It lives here rather than on `WorkspaceSpec` because a spec is
+   * per feature and an OS identity is per deployment.
+   */
+  readonly worker?: WorkerIdentity;
+}
+
+/**
+ * The administrative directory git keeps for a linked worktree.
+ *
+ * Read from the worktree's own `.git` — which is a FILE containing
+ * `gitdir: <path>` — rather than assembled from `<mainRepo>/.git/worktrees/` +
+ * a guessed name. Git dedupes colliding worktree names with a numeric suffix,
+ * so the guessed form is right until the day two features share a basename, and
+ * then the worker silently cannot commit.
+ */
+async function worktreeAdminDir(
+  worktreePath: string,
+): Promise<string | undefined> {
+  try {
+    const pointer = await readFile(join(worktreePath, '.git'), 'utf8');
+    const match = /^gitdir:\s*(.+)$/m.exec(pointer);
+    return match?.[1]?.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function worktreeWorkspace(
   spec: WorkspaceSpec,
+  options: WorktreeWorkspaceOptions = {},
 ): Promise<Workspace> {
+  const worker = options.worker ?? workerIdentityFromEnv();
+
   const { worktreePath, branch } = await createWorktree(
     spec.mainRepo,
     spec.scratchRoot,
@@ -62,6 +107,40 @@ export async function worktreeWorkspace(
     spec.baseRef,
   );
   const scratchHome = await createScratchHome();
+
+  // Resolved against the DAEMON's PATH here, and again against the child's
+  // `ExecSpec.path` inside `run()`. Two resolutions rather than one because the
+  // two questions are genuinely different: this one asks "will a drop happen,
+  // and therefore does the worker need access to these directories?", and
+  // `run()`'s asks "can execa resolve the launcher from the environment this
+  // particular child gets?" (02-RESEARCH.md § Pitfall 7).
+  const privilege = await privilegeLauncher({
+    worker,
+    path: process.env.PATH ?? '',
+  });
+
+  const adminDir = await worktreeAdminDir(worktreePath);
+
+  reportWorkerAccess(
+    await applyWorkerAccess(
+      [
+        scratchHome.path,
+        worktreePath,
+        // The worker writes an index and a HEAD here in order to commit.
+        ...(adminDir === undefined ? [] : [adminDir]),
+      ],
+      {
+        mode: privilege.mode,
+        group: worker.group,
+        // Emphatically NOT in the granted set. A linked worktree shares the
+        // main repository's config, and git config names programs git executes
+        // (02-RESEARCH.md § Pitfall 5, T-2-31). Group and world write come OFF
+        // it, which is the structural half of that defence and precisely what a
+        // dedicated OS user buys.
+        protect: [join(spec.mainRepo, '.git', 'config')],
+      },
+    ),
+  );
 
   return {
     id: spec.featureId,
@@ -75,7 +154,11 @@ export async function worktreeWorkspace(
       // The instance's scratch home, always, as the second argument. The backend
       // never assembles an environment itself — the runner owns that, and is the
       // only caller of the builder, so the boundary has exactly one door.
-      return run(execSpec, scratchHome.path, log);
+      //
+      // The worker identity travels the same way and for the same reason: no
+      // caller of `exec()` is in a position to opt a child out of the privilege
+      // drop, because no caller of `exec()` ever sees the seam (WORK-05).
+      return run(execSpec, scratchHome.path, log, worker);
     },
 
     /**

@@ -32,6 +32,39 @@ export { assertWithinRoot, isWithinRoot, resolveWithinRoot } from './paths.js';
 // package exists to be.
 export { run } from './exec/run.js';
 //
+// The privilege drop (WORK-05, D-05, D-18). Exported because the absence of the
+// drop is an operator-facing fact, not an internal detail: a manager building a
+// status view needs `privilegeWarning` and `PrivilegeMode` to say what a run
+// was and was not contained by, and an out-of-tree backend needs
+// `applyWorkerAccess` to grant its own directories the same way rather than
+// inventing a second, unreviewed chmod policy.
+export {
+  ADL_WARNING_PREFIX,
+  applyWorkerAccess,
+  createPrivilegeWarner,
+  parseGroupEntries,
+  privilegeLauncher,
+  privilegeWarning,
+  readGroupEntries,
+  reportWorkerAccess,
+  resolveGroupId,
+  resolveUserIds,
+  warnPrivilegeModeOnce,
+  workerAccessWarning,
+  workerIdentityFromEnv,
+  WORKER_GROUP_VAR,
+  WORKER_USER_VAR,
+  type GroupEntry,
+  type PrivilegeConfig,
+  type PrivilegeDecision,
+  type PrivilegeMode,
+  type PrivilegeWarningSink,
+  type UserIds,
+  type WorkerAccessConfig,
+  type WorkerAccessReport,
+  type WorkerIdentity,
+} from './exec/privilege.js';
+//
 // `ScratchHomeTeardown` joins its producer on the barrel: `destroyScratchHome`
 // was already exported while the type of what it returns was not, so a consumer
 // could call it and then had no name for the value in their hands. That is a
@@ -97,7 +130,10 @@ export {
 // registry needs a way to reach them. What it forbids is another module
 // importing one, which is a different statement from this package publishing
 // them for a test or an embedder to construct directly.
-export { worktreeWorkspace } from './worktree/backend.js';
+export {
+  worktreeWorkspace,
+  type WorktreeWorkspaceOptions,
+} from './worktree/backend.js';
 export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
 
 // The teardown-report sink's mapping helpers. `WorkspaceSpec.onTeardown` is

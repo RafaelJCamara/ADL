@@ -17,14 +17,48 @@ import { execa } from 'execa';
 import type { ExecResult, ExecSpec, LogChunk } from '@adl/core/stage';
 import { WorkspaceError } from '../errors.js';
 import { buildChildEnv } from './env.js';
+import {
+  privilegeLauncher,
+  warnPrivilegeModeOnce,
+  type WorkerIdentity,
+} from './privilege.js';
 
 export async function run(
   spec: ExecSpec,
   scratchHome: string,
   log: (chunk: LogChunk) => void,
+  /**
+   * The pre-provisioned worker identity to drop to (WORK-05, D-18).
+   *
+   * Defaulted to the empty identity rather than to `workerIdentityFromEnv()`,
+   * so that reading the daemon's environment happens in exactly one place — the
+   * backend factory — and a direct caller of `run()` gets the drop only if it
+   * asked for it. An empty identity yields the `worker-user-unset` mode, which
+   * warns rather than throwing.
+   */
+  worker: WorkerIdentity = {},
 ): Promise<ExecResult> {
-  const [file, ...args] = spec.argv;
+  if (spec.argv.length === 0) {
+    throw new WorkspaceError(
+      'ExecSpec.argv is empty — there is no command to run.',
+    );
+  }
+
+  // Decided per exec rather than per workspace, because the launcher must be
+  // resolvable from the CHILD's PATH and `ExecSpec.path` is per exec
+  // (02-RESEARCH.md § Pitfall 7). The warning is once per process, so a
+  // workspace running fifty commands undropped says so once.
+  const privilege = await privilegeLauncher({ worker, path: spec.path });
+  warnPrivilegeModeOnce(privilege.mode);
+
+  // The prefix WRAPS the argv; it does not replace the command. `prefix` is
+  // empty for every non-dropped mode, so there is no branch here and the
+  // dropped and undropped paths cannot drift apart.
+  const [file, ...args] = [...privilege.prefix, ...spec.argv];
   if (file === undefined) {
+    // Unreachable — the emptiness check above already ran against spec.argv.
+    // Present because `noUncheckedIndexedAccess` is on and a non-null assertion
+    // here would be the one place in this file the compiler was overruled.
     throw new WorkspaceError(
       'ExecSpec.argv is empty — there is no command to run.',
     );
@@ -40,6 +74,13 @@ export async function run(
     // it. Note the second-order effect this has on binary resolution: execa
     // then resolves `file` from `env.PATH` rather than the parent's PATH
     // (execa#366), which is why `ExecSpec.path` is a required field.
+    //
+    // Under the privilege drop this environment is handed to `sudo`, not to the
+    // command. `sudo` resets the environment by default, which would discard
+    // the scratch HOME and every neutraliser in it — so the launcher prefix
+    // carries `--preserve-env`, and the sudoers entry the README documents
+    // carries the `SETENV` tag that permits it. Neither is optional; see
+    // `exec/privilege.ts` § launcherPrefix.
     extendEnv: false,
     env: buildChildEnv(spec, scratchHome),
 
@@ -56,6 +97,13 @@ export async function run(
     // An agent CLI spawns its own children. Killing only the direct child
     // leaves that subtree running, and a leaked subtree keeps spending budget
     // after the round it belonged to has ended (T-2-07).
+    //
+    // Known limitation under the privilege drop: the direct child is `sudo`,
+    // which runs as root and re-execs as the worker user, so a signal ADL sends
+    // reaches a process it does not own. Recorded in
+    // `.planning/phases/02-workspace-the-exec-boundary/deferred-items.md`
+    // rather than half-solved here — it needs a deliberate design (a process
+    // group, or a `kill` routed back through the launcher), not a flag.
     killDescendants: true,
     // We stream; nothing accumulates in memory. Without this, a chatty agent's
     // output is buffered in full by execa in addition to being streamed

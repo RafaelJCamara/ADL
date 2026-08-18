@@ -13,6 +13,15 @@
  * still-open file handle (T-2-20). Deletion is hygiene on top of that. Reading
  * it the other way round — treating the delete as the control — is what leads to
  * a teardown that throws mid-cleanup and takes the rest of the teardown with it.
+ *
+ * **The mode this directory ends up with is not decided here.** `mkdtemp`
+ * creates it `0700`, owned by the daemon user, which is correct whenever the
+ * privilege drop did not happen. When it did, the worker user is a different
+ * identity and needs to write its own `HOME` — so `exec/privilege.ts`'s
+ * `applyWorkerAccess` widens the directory to the shared group (group rwx, no
+ * world bit, T-2-35) after the worktree backend has created both. Kept there
+ * rather than here so that this module has no opinion about OS identity and
+ * stays the same on every platform.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
