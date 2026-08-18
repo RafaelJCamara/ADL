@@ -88,6 +88,15 @@ describe('createWorktree: the feature-id guard', () => {
 
   // Each of these becomes a directory name and a git ref. The guard runs
   // before git is touched at all, so none of them can reach the filesystem.
+  //
+  // The second group is WR-08: every one of them is legal in a DIRECTORY name
+  // and illegal (or worse, meaningful) in a refname, which is why the old
+  // separator-and-NUL guard let them through. `*` is the one that hurts —
+  // `git branch --list 'adl/*'` matched every existing ADL branch, so a feature
+  // called `*` could not be created and the error named someone else's branch —
+  // and `.` is the one that is dangerous: `join(scratchRoot, '.')` is the
+  // scratch root ITSELF, so a teardown would have removed every live feature's
+  // worktree.
   const rejected: ReadonlyArray<readonly [string, string]> = [
     ['an empty id', ''],
     ['a whitespace-only id', '   '],
@@ -95,6 +104,20 @@ describe('createWorktree: the feature-id guard', () => {
     ['a backslash', 'feat\\one'],
     ['a NUL byte', 'feat\0one'],
     ['a parent-directory segment', '..'],
+    ['a refname glob star', '*'],
+    ['a glob star inside the id', 'feat-*'],
+    ['a glob question mark', 'feat-?'],
+    ['a character class', 'feat-[ab]'],
+    ['a revision tilde', 'feat~1'],
+    ['a revision caret', 'feat^1'],
+    ['a refspec colon', 'feat:one'],
+    ['the current directory', '.'],
+    ['a leading dot', '.hidden'],
+    ['a leading dash', '-detach'],
+    ['an embedded space', 'feat one'],
+    ['a reflog selector', 'feat@{0}'],
+    ['a lock suffix', 'feat.lock'],
+    ['a trailing dot', 'feat.'],
   ];
 
   for (const [label, featureId] of rejected) {
@@ -116,6 +139,32 @@ describe('createWorktree: the feature-id guard', () => {
       );
     });
   }
+
+  // WR-08. `baseRef` arrives from `WorkspaceSpec` — configuration or feature
+  // metadata, which D-22 records as untrusted — and reaches
+  // `git worktree add -b <branch> <path> <baseRef>` in a positional slot. git
+  // accepts `--detach`, `--no-checkout`, `--lock` and `--reason=<x>` there, so
+  // without `--end-of-options` a flag-shaped ref is a flag. `manager-git.ts`
+  // already carried the terminator on `revParse`; the lifecycle did not.
+  it.each([['--detach'], ['--no-checkout'], ['--lock']])(
+    'treats a baseRef of %s as a revision and not a flag',
+    async (baseRef) => {
+      const featureId = `flagref-${baseRef.replace(/[^a-z]/g, '')}`;
+
+      // Fails, and specifically fails as a bad REVISION. Without the
+      // terminator, `--detach` is obeyed and the worktree is created — the
+      // assertion below on `exists` is what would catch that, since a rejected
+      // creation must leave nothing behind either way.
+      await expect(
+        createWorktree(repo.mainRepo, repo.scratchRoot, featureId, baseRef),
+      ).rejects.toThrow(/invalid reference|not a valid|unknown revision/i);
+
+      expect(await exists(join(repo.scratchRoot, featureId))).toBe(false);
+      expect(await adlBranches(repo.git)).not.toContain(
+        branchNameFor(featureId),
+      );
+    },
+  );
 
   it('refuses to reuse a live feature’s worktree', async () => {
     const created = await createWorktree(
@@ -181,7 +230,12 @@ describe('destroyWorktree: both halves, in order, more than once', () => {
     expect(await exists(worktreePath)).toBe(true);
     expect(await adlBranches(repo.git)).toContain(branch);
 
-    await destroyWorktree(repo.mainRepo, worktreePath, branch);
+    // WR-04: what teardown DID is returned, not discarded. `destroy()` cannot
+    // report `reclaimed` honestly without this, and it reported it
+    // unconditionally until the return type existed.
+    await expect(
+      destroyWorktree(repo.mainRepo, worktreePath, branch),
+    ).resolves.toBe('removed');
 
     // Both halves, asserted independently. This is the whole point of the
     // test: plan 02-03 watched the worktree assertion PASS while the branch
@@ -221,14 +275,64 @@ describe('destroyWorktree: both halves, in order, more than once', () => {
       'HEAD',
     );
 
-    await destroyWorktree(repo.mainRepo, worktreePath, branch);
-    // The GC backstop re-runs teardown over whatever a crash left behind, so
-    // "already gone" must resolve rather than throw.
     await expect(
       destroyWorktree(repo.mainRepo, worktreePath, branch),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe('removed');
+    // The GC backstop re-runs teardown over whatever a crash left behind, so
+    // "already gone" must resolve rather than throw — AND must say so. The old
+    // signature returned `void`, which is why `destroy()` was able to report
+    // `reclaimed` about a resource that had not been there (WR-04).
+    await expect(
+      destroyWorktree(repo.mainRepo, worktreePath, branch),
+    ).resolves.toBe('already-absent');
 
     expect(await adlBranches(repo.git)).not.toContain(branch);
+  });
+
+  it('stays idempotent when the daemon is running in a translated locale', async () => {
+    // WR-03. `isWorktreeAlreadyGone` keys on git's stderr, and git localises
+    // its messages through gettext. Until CR-02 was fixed, this child inherited
+    // the daemon's LANG/LC_ALL, so on a French or Japanese host the regex
+    // missed, teardown rethrew, and `sweepOrphans` reported every
+    // already-collected worktree as a permanent failure — on exactly the
+    // crash-recovery path the backstop exists for.
+    //
+    // The variables are set on THIS process, which is the whole shape of the
+    // bug: the fix is that they do not travel. `test/git/adl-git.test.ts`
+    // asserts the child's own view (LC_ALL=C regardless of what is set here);
+    // this case asserts the behaviour that depended on it, so the property is
+    // covered from both ends. On a host with no French locale data git falls
+    // back to English and this case is merely a regression guard; on one with
+    // it, it is the finding.
+    const previous = {
+      LANG: process.env.LANG,
+      LC_ALL: process.env.LC_ALL,
+      LC_MESSAGES: process.env.LC_MESSAGES,
+    };
+    process.env.LANG = 'fr_FR.UTF-8';
+    process.env.LC_ALL = 'fr_FR.UTF-8';
+    process.env.LC_MESSAGES = 'fr_FR.UTF-8';
+
+    try {
+      const { worktreePath, branch } = await createWorktree(
+        repo.mainRepo,
+        repo.scratchRoot,
+        'locale-1',
+        'HEAD',
+      );
+
+      await expect(
+        destroyWorktree(repo.mainRepo, worktreePath, branch),
+      ).resolves.toBe('removed');
+      await expect(
+        destroyWorktree(repo.mainRepo, worktreePath, branch),
+      ).resolves.toBe('already-absent');
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it('finishes a teardown that died between the two steps', async () => {
@@ -243,7 +347,13 @@ describe('destroyWorktree: both halves, in order, more than once', () => {
     await repo.git.raw(['worktree', 'remove', '--force', worktreePath]);
     expect(await adlBranches(repo.git)).toContain(branch);
 
-    await destroyWorktree(repo.mainRepo, worktreePath, branch);
+    // The WORKTREE was already absent — and the report describes the worktree,
+    // so that is what comes back even though this call really did delete a
+    // branch. See `destroyWorktree`'s docblock for why the more conservative
+    // half is the honest one to name here.
+    await expect(
+      destroyWorktree(repo.mainRepo, worktreePath, branch),
+    ).resolves.toBe('already-absent');
 
     expect(await adlBranches(repo.git)).not.toContain(branch);
   });

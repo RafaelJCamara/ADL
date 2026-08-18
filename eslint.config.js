@@ -164,6 +164,61 @@ const SPAWN_SYNTAX = FORBIDDEN_SPAWN_SPECIFIERS.flatMap((specifier) => {
 const WORKSPACE_EXEMPTION = ['packages/workspace/**/*.ts'];
 
 /**
+ * The exemption's one carve-out: `simple-git` is banned again inside the
+ * workspace package's SOURCE.
+ *
+ * 02-REVIEW.md CR-01/CR-02 is what this is made of. The package-wide exemption
+ * above is correct for `execa` — `packages/workspace/src/exec/run.ts` is the
+ * one process launch, and the package's own suite has to stand up temp
+ * repositories and exercise it. It was NOT correct for `simple-git`: three
+ * modules under `src/` built `simpleGit(...)` handles that spawned `git` with
+ * no configuration neutralisation (CR-01) and with the daemon's entire
+ * environment, credentials included (CR-02, `simple-git@3.36.0` passes
+ * `env: this.env`, which is `undefined` unless `.env()` was called, and
+ * `spawn` with `env: undefined` inherits `process.env` in full). Every one of
+ * those commands reads `<mainRepo>/.git/config` — the file an agent inside a
+ * linked worktree can write.
+ *
+ * `packages/workspace/src/git/adl-git.ts` is now the only way `src/` reaches
+ * `git`, and it goes through `run()` like everything else. This entry is what
+ * makes a fourth `simpleGit(...)` in `src/` a red build rather than a review
+ * finding.
+ *
+ * Scoped to `src/` and not the whole package on purpose. `test/helpers/temp-repo.ts`
+ * and `test/git/*.test.ts` legitimately hold `simple-git` handles: the fixture
+ * needs a git handle that is NOT the subject, and the CR-01/CR-02 control cases
+ * exist specifically to show what a bare `simpleGit` child does. A ban that
+ * covered the tests would delete the control that proves the ban is worth
+ * having.
+ *
+ * `test/contract/workspace-contract.test.ts` asserts the same property by
+ * reading the source tree, so the boundary survives an edit to this file — the
+ * same belt-and-braces the registry's sole-construction-site rule already has.
+ */
+const WORKSPACE_SRC = ['packages/workspace/src/**/*.ts'];
+
+const SIMPLE_GIT_IN_SRC_MESSAGE =
+  'simple-git is banned inside packages/workspace/src (02-REVIEW.md CR-01, CR-02). It spawns git with no configuration neutralisation and — because it passes `env: undefined` to spawn unless `.env()` was called — with the daemon\'s ENTIRE environment, forge token and model key included. Every git command ADL runs reads <mainRepo>/.git/config, which is the file an agent inside a linked worktree can write, and git config names programs git executes. Use `adlGit()` from src/git/adl-git.ts: it carries NEUTRALISE_ARGS, the zero-inherit child environment, a forced C locale, and an exit code.';
+
+const WORKSPACE_SRC_RULES = {
+  'no-restricted-imports': [
+    'error',
+    { paths: [{ name: 'simple-git', message: SIMPLE_GIT_IN_SRC_MESSAGE }] },
+  ],
+  'no-restricted-syntax': [
+    'error',
+    {
+      selector: `CallExpression[callee.name='require'][arguments.0.value=${specifierPattern('simple-git')}]`,
+      message: `require('simple-git'): ${SIMPLE_GIT_IN_SRC_MESSAGE}`,
+    },
+    {
+      selector: `ImportExpression[source.value=${specifierPattern('simple-git')}]`,
+      message: `import('simple-git'): ${SIMPLE_GIT_IN_SRC_MESSAGE}`,
+    },
+  ],
+};
+
+/**
  * The complete rule object for every file that is neither `@adl/core` source
  * nor exempt. Core and verdict sources get the same bans merged into THEIR
  * objects below, because a rule may be configured only once per file.
@@ -340,6 +395,18 @@ export const architectureConfigs = [
       'test/lint/fixtures/verdict-*.ts',
     ],
     rules: SPAWN_BAN_RULES,
+  },
+  {
+    // The carve-out inside the one exemption. No other entry configures either
+    // of these two rules for this glob — `adl/no-direct-spawn` above ignores
+    // the whole workspace package — so this adds a configuration rather than
+    // replacing one, which is the distinction 02-RESEARCH.md § Pitfall 1 is
+    // about. `test/lint/no-restricted-imports.test.ts` asserts the RESOLVED
+    // options for a real source path under it, so that stays true by
+    // measurement rather than by reading.
+    name: 'adl/no-simple-git-in-workspace-src',
+    files: WORKSPACE_SRC,
+    rules: WORKSPACE_SRC_RULES,
   },
   {
     name: 'adl/core-purity',

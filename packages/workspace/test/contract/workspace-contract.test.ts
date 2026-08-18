@@ -188,3 +188,91 @@ describe('the registry is the only place a backend is named', () => {
     }
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The same shape, for the other boundary this package claims to have
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `src/` may not name `simple-git`. At all. Anywhere.
+ *
+ * 02-REVIEW.md CR-01 and CR-02. The reason this is a source-tree assertion and
+ * not only a lint rule is written on the lint rule itself
+ * (`adl/no-simple-git-in-workspace-src` in `eslint.config.js`): the boundary has
+ * to survive an edit to the lint config, and a guard that reads the tree names
+ * the offending file rather than reporting it among five packages' worth of
+ * ESLint output.
+ *
+ * The measurement is deliberately CRUDER than the registry guard above — the
+ * bare identifier, not an import statement — because after `adlGit` exists there
+ * is no legitimate reason for `src/` to contain the string, and the evasions
+ * that matter (a handle built through a dynamic `import()`, a re-export, a
+ * `createRequire`) are exactly the ones an import-statement regex cannot see.
+ * Comments are stripped first, so the prose in `adl-git.ts` explaining why this
+ * rule exists does not trip it; that prose is the one place the words belong.
+ */
+const SIMPLE_GIT_MENTION = /simple-git|simpleGit/;
+
+/** Everything outside a comment. The prose about this rule must not trip it. */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
+/** The one module allowed to build a git argv for ADL's own account. */
+const SOLE_GIT_CHOKEPOINT = 'git/adl-git.ts';
+
+describe('no module under src/ reaches git through simple-git', () => {
+  it('finds no source file naming simple-git or simpleGit', async () => {
+    const files = await typescriptSources(SRC_ROOT);
+    expect(files.length).toBeGreaterThan(5);
+
+    const offenders: string[] = [];
+
+    for (const file of files) {
+      const name = relative(SRC_ROOT, file).replaceAll('\\', '/');
+      if (SIMPLE_GIT_MENTION.test(withoutComments(await readFile(file, 'utf8')))) {
+        offenders.push(
+          `${name} — simple-git spawns git with no configuration neutralisation (02-RESEARCH.md § Pitfall 5) and, because it passes \`env: undefined\` to spawn unless .env() was called, with the daemon's ENTIRE environment including the forge token (02-REVIEW.md CR-01, CR-02). Route it through adlGit() in src/${SOLE_GIT_CHOKEPOINT}, which carries NEUTRALISE_ARGS, the zero-inherit child environment, a forced C locale, and an exit code.`,
+        );
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('confirms the replacement exists and really carries the overrides', async () => {
+    // Without this, deleting `adlGit` outright would make the assertion above
+    // pass — a green guard over an empty property, which is the same way the
+    // registry case one directory over can go vacuous.
+    const chokepoint = await readFile(
+      join(SRC_ROOT, SOLE_GIT_CHOKEPOINT),
+      'utf8',
+    );
+
+    expect(chokepoint).toContain('export function adlGit(');
+    expect(withoutComments(chokepoint)).toContain('NEUTRALISE_ARGS');
+  });
+
+  it('names every module that runs git for ADL, so a new one is a visible diff', async () => {
+    const files = await typescriptSources(SRC_ROOT);
+    const reaching: string[] = [];
+
+    for (const file of files) {
+      const name = relative(SRC_ROOT, file).replaceAll('\\', '/');
+      if (name === SOLE_GIT_CHOKEPOINT) continue;
+      if (/\badlGit\s*\(/.test(withoutComments(await readFile(file, 'utf8')))) {
+        reaching.push(name);
+      }
+    }
+
+    // Not an upper bound on how many modules MAY run git — it is a record of
+    // which ones DO. A new entry here is a deliberate line in a diff rather
+    // than a fourth quiet git call site, which is precisely how the three
+    // simple-git handles this guard replaced came to exist unnoticed.
+    expect(reaching.sort()).toEqual([
+      'worktree/backend.ts',
+      'worktree/lifecycle.ts',
+      'worktree/list.ts',
+    ]);
+  });
+});
