@@ -32,7 +32,62 @@
  * unnecessary — but harmless — on Windows. The case therefore RUNS everywhere,
  * which is strictly better than skipping visibly. `test/helpers/platform.ts` is
  * deliberately not imported: a gate that can never fire is the decoration D-21
- * and T-2-33 exist to prevent, arriving from the other direction.
+ * and T-2-33 exist to prevent, arriving from the other direction. That
+ * conclusion survived contact with Linux: reproduced on git 2.43, a
+ * `post-index-change` hook at mode `0755` fires during `git status`, and the
+ * same hook at `0644` does not. The `chmod` above is load-bearing on POSIX and
+ * it is already there.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * **WHO POISONS THE CONFIGURATION, AND WHY IT IS NOT ALWAYS THE AGENT**
+ *
+ * Plan `02-08` wrote every poisoning step as `feature.exec` — the agent's own
+ * workspace — and that is right on the maintainer's Windows machine and on any
+ * deployment without WORK-05's privilege drop. On Linux with the drop active it
+ * is not merely inconvenient, it is *false*: the agent cannot write the main
+ * repository's configuration at all, for two independent reasons, and the first
+ * CI run on Ubuntu turned all eleven of these cases red at once.
+ *
+ * Both reasons were reproduced on Linux (git 2.43) rather than inferred from an
+ * exit code:
+ *
+ * 1. **Ownership.** The worker is a different OS user from the one that owns the
+ *    repository, so git's `safe.directory` check refuses before it looks at a
+ *    single permission bit. `git config <key> <value>` inside the worktree exits
+ *    **128** with `fatal: not in a git directory`; `git status` in the main
+ *    repository exits 128 with `fatal: detected dubious ownership`. Note the
+ *    trap in the read path: `git config --get <key>` under the same conditions
+ *    exits **1** with no output — byte-for-byte indistinguishable from "that key
+ *    is unset".
+ * 2. **Permission.** Even with ownership resolved, `applyWorkerAccess` takes
+ *    group and world write off `<mainRepo>/.git/config` and never grants the
+ *    worker write on `.git` itself, so the lock file cannot be created. That
+ *    path exits **255** with `error: could not lock config file … Permission
+ *    denied`. This is layer 2 of the very defence this suite is about, working.
+ *
+ * The 128 seen in CI is therefore reason 1, and reason 2 is standing behind it.
+ * Neither is a fault in the suite's subject: **layer 1 — the per-invocation `-c`
+ * neutralisation — is what these cases exist to prove, and it must be proven on
+ * every platform ADL runs on, including the ones where layer 2 does not exist.**
+ *
+ * So the poisoning step branches on whether the drop is actually in force, and
+ * the branch is an *assertion* rather than a skip:
+ *
+ * - Drop not in force (Windows, macOS, an unprovisioned Linux host) — the agent
+ *   poisons, exactly as `02-08` wrote it, and the write is required to succeed.
+ *   That is the threat modelled in its own words.
+ * - Drop in force — the agent's write is required to **fail**, which is layer 2
+ *   asserted rather than assumed, and then the same write is performed *from the
+ *   same linked worktree* by the identity that owns the repository. The claim
+ *   under test in `leaks a hooks path …` is that a write performed inside a
+ *   linked worktree lands in the MAIN repository; that claim is about git's
+ *   worktree semantics and not about which uid ran the command, so it is proven
+ *   identically in both branches.
+ *
+ * Nothing is skipped, no assertion is relaxed, and the drop-in-force branch adds
+ * one the suite did not have. `test/helpers/platform.ts` stays unimported for
+ * the same reason as before.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 import {
   chmod,
@@ -45,6 +100,10 @@ import {
 import { join } from 'node:path';
 import type { Workspace } from '@adl/core/stage';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  privilegeLauncher,
+  workerIdentityFromEnv,
+} from '../../src/exec/privilege.js';
 import {
   managerGitClient,
   NEUTRALISED_CONFIG,
@@ -63,6 +122,16 @@ let client: ManagerGitClient;
 let hooksDir: string;
 /** ADL's own git home. Inside the fixture, so the suite touches no real one. */
 let adlHome: string;
+/**
+ * Whether WORK-05's privilege drop is actually in force for this run.
+ *
+ * Decided by the same function the worktree backend uses, against the same
+ * environment, rather than by `process.platform === 'linux'`. A Linux host with
+ * no `ADL_WORKER_USER` provisioned runs its agents as the daemon user and CAN
+ * poison; a platform predicate would get that case wrong in the direction that
+ * hides a failure.
+ */
+let workerIsDropped = false;
 
 /**
  * Git wants forward slashes in configuration values on Windows; a backslash is
@@ -71,21 +140,80 @@ let adlHome: string;
  */
 const asConfigPath = (path: string): string => path.replaceAll('\\', '/');
 
-/** Run a command as the AGENT does — through the feature workspace. */
-async function asAgent(argv: readonly string[]): Promise<number | null> {
-  const result = await feature.exec(
+/** One invocation's exit code and both of its streams. */
+interface Outcome {
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * Run one command through a workspace and keep BOTH streams.
+ *
+ * `02-08` discarded the output here — "the output is not the subject; the effect
+ * on the main repository is" — and that was the reason the first Linux CI run
+ * cost a diagnosis instead of reporting one. Eleven cases failed with
+ * `expected 128 to be +0` and git's own `fatal:` line, which says exactly what
+ * happened, was thrown away one frame from the assertion. Every expectation
+ * below is given {@link diagnose} as its message, so a future red run on a
+ * platform nobody has in front of them arrives with git's explanation attached.
+ */
+async function runIn(
+  workspace: Workspace,
+  argv: readonly string[],
+  cwd: string,
+): Promise<Outcome> {
+  const out: string[] = [];
+  const err: string[] = [];
+
+  const result = await workspace.exec(
     {
       argv,
-      cwd: feature.root,
+      cwd,
       path: process.env.PATH ?? '',
       networkPolicy: 'full',
       resources: {},
     },
-    () => {
-      // The output is not the subject; the effect on the main repository is.
+    (chunk) => {
+      (chunk.stream === 'stdout' ? out : err).push(chunk.text);
     },
   );
-  return result.exitCode;
+
+  return {
+    exitCode: result.exitCode,
+    stdout: out.join('\n'),
+    stderr: err.join('\n'),
+  };
+}
+
+/** The assertion message an unexpected exit code should have carried. */
+function diagnose(what: string, outcome: Outcome): string {
+  return [
+    `${what} exited ${String(outcome.exitCode)}.`,
+    `git stderr: ${outcome.stderr.trim() || '(none)'}`,
+    `git stdout: ${outcome.stdout.trim() || '(none)'}`,
+    `privilege drop in force: ${String(workerIsDropped)}`,
+  ].join('\n');
+}
+
+/** Run a command as the AGENT does — through the feature workspace. */
+function asAgent(argv: readonly string[]): Promise<Outcome> {
+  return runIn(feature, argv, feature.root);
+}
+
+/**
+ * Run a command inside the agent's worktree as the identity that OWNS the
+ * repository — ADL's own workspace, pointed at the feature's root.
+ *
+ * The cwd is the linked worktree and only the uid differs from
+ * {@link asAgent}, which is what makes this a faithful stand-in for the
+ * poisoning step when the privilege drop is in force: the property being
+ * demonstrated is that a configuration write performed *inside a linked
+ * worktree* lands in the *main* repository, and that is a fact about git's
+ * worktree layout rather than about who ran the command.
+ */
+function inWorktreeAsOwner(argv: readonly string[]): Promise<Outcome> {
+  return runIn(host, argv, feature.root);
 }
 
 /**
@@ -96,18 +224,66 @@ async function asAgent(argv: readonly string[]): Promise<number | null> {
  * `managerGitClient` has no exported route to it, which is the property
  * `manager-git.test.ts` asserts.
  */
-async function unneutralised(argv: readonly string[]): Promise<number | null> {
-  const result = await host.exec(
-    {
-      argv,
-      cwd: host.root,
-      path: process.env.PATH ?? '',
-      networkPolicy: 'full',
-      resources: {},
-    },
-    () => {},
-  );
-  return result.exitCode;
+function unneutralised(argv: readonly string[]): Promise<Outcome> {
+  return runIn(host, argv, host.root);
+}
+
+/**
+ * Put `value` at `key` in the MAIN repository, by writing it from inside the
+ * agent's linked worktree — and assert what the agent was able to do.
+ *
+ * See the module docblock for why this branches. In short: with the privilege
+ * drop in force the agent's write MUST be refused, and that refusal is layer 2
+ * of the § Pitfall 5 defence being asserted rather than assumed; without it the
+ * agent's write MUST succeed, which is the threat in its own words. Either way
+ * the value ends up in `<mainRepo>/.git/config`, which is what the rest of the
+ * suite is about.
+ */
+async function poisonFromWorktree(key: string, value: string): Promise<void> {
+  const agent = await asAgent(['git', 'config', key, value]);
+
+  if (!workerIsDropped) {
+    expect(
+      agent.exitCode,
+      diagnose(`the agent's \`git config ${key}\``, agent),
+    ).toBe(0);
+    return;
+  }
+
+  // Deliberately `not.toBe(0)` and not a specific code. Today this is git's
+  // ownership refusal (128); once a deployment teaches git to trust a
+  // daemon-owned repository it becomes the permission refusal (255). Both are
+  // the worker being unable to write the main repository's configuration, which
+  // is the property worth asserting, and pinning either number would turn the
+  // eventual fix into a spurious failure here.
+  expect(
+    agent.exitCode,
+    diagnose(
+      `the agent's \`git config ${key}\` was expected to be REFUSED under the privilege drop (layer 2, T-2-31) and`,
+      agent,
+    ),
+  ).not.toBe(0);
+
+  const owner = await inWorktreeAsOwner(['git', 'config', key, value]);
+  expect(
+    owner.exitCode,
+    diagnose(
+      `\`git config ${key}\` inside the worktree, as the repository owner,`,
+      owner,
+    ),
+  ).toBe(0);
+}
+
+/** Undo {@link poisonFromWorktree}, through whichever identity performed it. */
+async function unpoisonFromWorktree(key: string): Promise<void> {
+  const argv = ['git', 'config', '--unset-all', key];
+  const outcome = workerIsDropped
+    ? await inWorktreeAsOwner(argv)
+    : await asAgent(argv);
+  expect(
+    outcome.exitCode,
+    diagnose(`\`git config --unset-all ${key}\``, outcome),
+  ).toBe(0);
 }
 
 /**
@@ -194,6 +370,32 @@ beforeAll(async () => {
   });
 
   client = managerGitClient(host);
+
+  // The same decision the worktree backend made when it created `feature`,
+  // against the same environment and the same PATH.
+  workerIsDropped =
+    (
+      await privilegeLauncher({
+        worker: workerIdentityFromEnv(),
+        path: process.env.PATH ?? '',
+      })
+    ).mode === 'dropped';
+
+  // `poisonFromWorktree` asserts that a DROPPED agent's config write is
+  // refused, and "refused" is satisfied by any non-zero exit — including a
+  // launcher that could not start, or a `git` the worker cannot execute. Both
+  // would make the assertion pass while proving nothing about layer 2, so the
+  // drop is proven functional here, once, before anything relies on it.
+  if (workerIsDropped) {
+    const probe = await asAgent(['git', '--version']);
+    if (probe.exitCode !== 0) {
+      throw new Error(
+        'The privilege drop is in force but the worker could not run `git` at all, so this suite cannot tell a ' +
+          'layer-2 refusal from a broken launcher. Fix the drop before reading anything below as evidence.\n' +
+          diagnose('`git --version` as the dropped worker', probe),
+      );
+    }
+  }
 });
 
 afterAll(async () => {
@@ -204,16 +406,11 @@ afterAll(async () => {
 
 describe('the poisoned configuration path a linked worktree opens', () => {
   it('leaks a hooks path written inside the worktree into the MAIN repository', async () => {
-    // The write is performed the way an agent would perform it: a git command
-    // run inside the workspace ADL handed it, with no privileges beyond that.
-    expect(
-      await asAgent([
-        'git',
-        'config',
-        'core.hooksPath',
-        asConfigPath(hooksDir),
-      ]),
-    ).toBe(0);
+    // The write is performed from inside the workspace ADL handed the agent,
+    // with no privileges beyond that — by the agent itself wherever the agent
+    // is able to, and by the repository's owner where WORK-05's drop stops it.
+    // See the module docblock; the branch is asserted, not skipped.
+    await poisonFromWorktree('core.hooksPath', asConfigPath(hooksDir));
 
     // Read back from the MAIN repository, which the agent was never given a
     // path to. `repo.git` is the test's own handle on it — deliberately not the
@@ -233,15 +430,37 @@ describe('the poisoned configuration path a linked worktree opens', () => {
     const sentinel = join(hooksDir, 'FIRED-control');
     await plantHook(sentinel);
 
-    expect(await unneutralised(['git', 'status', '--porcelain=v1', '-z'])).toBe(
-      0,
-    );
+    const status = await unneutralised([
+      'git',
+      'status',
+      '--porcelain=v1',
+      '-z',
+    ]);
+    expect(
+      status.exitCode,
+      diagnose('the unneutralised `git status`', status),
+    ).toBe(0);
 
     // If this ever goes red, the interesting question is not "did the test
     // break" but "did git change its behaviour" — in which case the assertion
     // below has quietly stopped proving anything and this suite is the only
     // thing that would say so.
-    expect(await exists(sentinel)).toBe(true);
+    //
+    // The message names the two things that have actually caused it: the hook
+    // was never reachable because `core.hooksPath` did not get poisoned (which
+    // is what happened on the first Linux CI run), or it was reachable and git
+    // declined to run it. `git status` prints an `advice.ignoredHook` hint in
+    // the second case, so the stderr above tells the two apart.
+    const effective = (
+      await repo.git.raw(['config', '--get', 'core.hooksPath'])
+    ).trim();
+    expect(
+      await exists(sentinel),
+      `The planted post-index-change hook did not run during an UNNEUTRALISED git status, so the ` +
+        `neutralised case below proves nothing.\n` +
+        `core.hooksPath in the main repository: ${effective === '' ? '(unset — the poisoning step did not take)' : effective}\n` +
+        diagnose('that status', status),
+    ).toBe(true);
   });
 
   it('does not execute the planted hook during a manager-side operation', async () => {
@@ -252,7 +471,11 @@ describe('the poisoned configuration path a linked worktree opens', () => {
     // still sitting in .git/config — only the client differs.
     await expect(client.status()).resolves.toBeInstanceOf(Array);
 
-    expect(await exists(sentinel)).toBe(false);
+    expect(
+      await exists(sentinel),
+      'The planted hook RAN during a manager-side operation. NEUTRALISE_ARGS did not reach this ' +
+        'invocation — 02-RESEARCH.md § Pitfall 5 is open.',
+    ).toBe(false);
   });
 
   it('still sees the poisoned value in the file — the fix is per-invocation, not a cleanup', async () => {
@@ -261,8 +484,22 @@ describe('the poisoned configuration path a linked worktree opens', () => {
     // race against an agent that can rewrite it at any moment, and it would
     // silently destroy an operator's legitimate configuration. ADL overrides;
     // it does not edit the user's file.
+    //
+    // The empty string is called out by name in the message because it is the
+    // ambiguous answer: `git config --get` on an unset key exits 1 with no
+    // output, and simple-git resolves rather than rejects on an exit-1-with-no-
+    // stderr, so "the manager cleaned it up" and "it was never written" arrive
+    // here looking identical.
+    const inFile = (
+      await repo.git.raw(['config', '--get', 'core.hooksPath'])
+    ).trim();
     expect(
-      (await repo.git.raw(['config', '--get', 'core.hooksPath'])).trim(),
+      inFile,
+      inFile === ''
+        ? 'core.hooksPath is absent from the main repository. Either something removed it — which is the ' +
+            'behaviour this case exists to forbid — or the poisoning step never took, in which case every ' +
+            'assertion above it was vacuous. Check the CONTROL case first.'
+        : 'core.hooksPath in the main repository is not the value that was planted.',
     ).toBe(asConfigPath(hooksDir));
   });
 });
@@ -286,6 +523,11 @@ describe('the poisoned configuration path a linked worktree opens', () => {
  * simple-git's refusal protects nobody here: an agent does not use simple-git,
  * it runs `git`. Poisoning through the workspace exec is therefore both the only
  * route that works and the only route that models the threat.
+ *
+ * `poisonFromWorktree` is a workspace exec in both of its branches, so that
+ * remains true where the drop is in force — what changes there is the uid, not
+ * the mechanism, and the branch asserts the agent's own attempt was refused
+ * before it falls back. See the module docblock.
  */
 describe('every neutralised key, one at a time', () => {
   // Driven by the list rather than by hand-written cases: this is what makes
@@ -298,7 +540,7 @@ describe('every neutralised key, one at a time', () => {
 
     it(`sees ${JSON.stringify(neutralised)} for ${key} however the repository is poisoned`, async () => {
       const poison = `POISONED-${key}`;
-      expect(await asAgent(['git', 'config', key, poison])).toBe(0);
+      await poisonFromWorktree(key, poison);
 
       try {
         // The poison really is in the main repository's file — otherwise the
@@ -308,11 +550,17 @@ describe('every neutralised key, one at a time', () => {
         ).toContain(poison);
 
         const effective = await client.effectiveConfig(key);
+        const seen = `the manager client saw ${JSON.stringify(effective)} for ${key}`;
 
-        expect(effective).toBe(neutralised);
-        expect(effective).not.toBe(poison);
+        expect(effective, `${seen}, not the neutralised value.`).toBe(
+          neutralised,
+        );
+        expect(
+          effective,
+          `${seen} — the agent's poison reached ADL's own git.`,
+        ).not.toBe(poison);
       } finally {
-        expect(await asAgent(['git', 'config', '--unset-all', key])).toBe(0);
+        await unpoisonFromWorktree(key);
       }
     });
   }
