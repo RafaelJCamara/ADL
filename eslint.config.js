@@ -14,10 +14,11 @@ import tseslint from 'typescript-eslint';
  *
  * | Rule                       | Implements | Extended by |
  * |----------------------------|------------|-------------|
- * | `no-restricted-imports`    | D-27 — the dependency-graph rule lands WITH the workspace, before any adapter exists to break it. `@adl/core` sits at the bottom of the graph and imports no sibling workspace package, so a third-party harness author can depend on it without dragging in a database driver. | Phase 2's no-direct-spawn rule; Phase 11's ban on backend-name comparisons outside the adapters directory |
+ * | `no-restricted-imports`    | D-27 — the dependency-graph rule lands WITH the workspace, before any adapter exists to break it. `@adl/core` sits at the bottom of the graph and imports no sibling workspace package, so a third-party harness author can depend on it without dragging in a database driver. | Phase 11's ban on backend-name comparisons outside the adapters directory |
  * | `no-restricted-imports` (builtins) | 01-RESEARCH.md § Architectural Responsibility Map — `@adl/core` is pure and I/O-free. Enforcing that by lint costs one config block now; discovering a stray `readFileSync` in Phase 5 costs a refactor. It is also what keeps core's suite inside 01-VALIDATION.md's five-second quick-run budget. | Phase 2, when the filesystem finally gets an owner |
  * | `no-restricted-properties` | 01-RESEARCH.md § Pitfall 10, threat T-1-12 — stops plan 01-08's `${ADL_PORT}` interpolator growing into a read primitive over the daemon's environment, which per WORK-06 is where credentials live. | Phase 8, when the config surface grows |
  * | `no-restricted-syntax`     | 01-RESEARCH.md § Pitfall 1, threat T-1-06 — `z.toJSONSchema()` discards `.refine()` with no error and no warning, so a refined verdict schema publishes a contract strictly WEAKER than the one `parse()` enforces. A third-party command gate would validate its own output as good and then have it rejected as malformed down the CORE-06 infrastructure-failure path. | Phase 13, when the published schema meets a genuinely third-party harness |
+ * | `no-restricted-imports` + `no-restricted-syntax` (the spawn ban, `adl/no-direct-spawn`) | WORK-02 and Phase 2 success criterion 2 — every process ADL starts goes through `Workspace.exec()`, so the container backend in v2 is a registry entry rather than a repository-wide call-site sweep. This is a BUILD property, not a review property: a direct `spawn` reaching the OS process table bypasses the zero-inherit environment, the scratch `HOME`, the privilege drop, and the git-config neutralisation all at once. Composed against 02-RESEARCH.md § Pitfall 1 (overlapping flat-config entries REPLACE rather than merge, so a careless glob silently deletes the two bans above) and § Pitfall 2 (`no-restricted-imports` is blind to `require()` and dynamic `import()`, so the ban is otherwise bypassable by changing the import form). | Phase 3, when the manager→worker `fork()` seam lands as a named export of `packages/workspace` rather than as a second exemption |
  *
  * `dependency-cruiser` was evaluated and not adopted — 01-RESEARCH.md
  * § Package Legitimacy Audit records the verdict; D-27 specifies this
@@ -74,6 +75,114 @@ const FORBIDDEN_CORE_SIBLINGS = [
   },
 ];
 
+const SPAWN_MESSAGE =
+  'Direct process launch is banned outside packages/workspace (WORK-02). Every process ADL starts — including the agent CLIs — goes through Workspace.exec(), which is what makes the container backend in v2 a registry entry rather than a repository-wide call-site sweep. The Phase 3 manager→worker seam is not an exception: fork() lands as a named export of packages/workspace too, so the exemption count stays at one. If you need to run something, take the Workspace instance the caller already has.';
+
+/**
+ * The banned specifiers, listed EXACTLY ONCE in this file.
+ *
+ * Both `no-restricted-imports` (the static-import layer) and
+ * `no-restricted-syntax` (the `require()` / dynamic-`import()` layer) are
+ * derived from `FORBIDDEN_SPAWN_SPECIFIERS` below, and that derivation is the
+ * whole mechanism by which the two layers cannot come to cover different sets.
+ * An earlier draft hand-wrote the syntax selectors against `child_process`
+ * alone; `await import('execa')` outside the workspace then passed BOTH layers
+ * while `pnpm lint` stayed green. `execa@10` is ESM-only, so reaching it
+ * through a dynamic `import()` is the idiomatic form rather than an exotic
+ * bypass — which made two of the four specifiers unreachable by accident.
+ *
+ * The prefixed and the bare spelling of the builtin are separate entries for
+ * the reason `FORBIDDEN_CORE_BUILTINS` already gives: they resolve to the same
+ * module, and banning one leaves the rule bypassable by dropping five
+ * characters. `execa` and `simple-git` are here because each spawns a process
+ * internally; `simple-git` in particular is why D-17 exists — ADL's own git
+ * client routes through its own Workspace instance rather than earning a
+ * second exemption.
+ *
+ * Exported so the lint suite can iterate it. ESLint loads only the default
+ * export, so a named export beside it changes nothing about resolution.
+ */
+export const FORBIDDEN_SPAWN_SPECIFIERS = Object.freeze([
+  'node:child_process',
+  'child_process',
+  'execa',
+  'simple-git',
+]);
+
+/** The static-import layer, derived from the tuple. */
+const FORBIDDEN_SPAWN = FORBIDDEN_SPAWN_SPECIFIERS.map((name) => ({
+  name,
+  message: `${name}: ${SPAWN_MESSAGE}`,
+}));
+
+/**
+ * Anchor a specifier at both ends and escape every regex metacharacter in it,
+ * so a specifier added to the tuple later cannot yield a selector matching more
+ * than it names. `-` is deliberately NOT escaped: `\-` is an error under the
+ * `u` flag and means nothing outside a character class anyway.
+ */
+function specifierPattern(specifier) {
+  return `/^${specifier.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$/`;
+}
+
+/**
+ * The `require()` / dynamic-`import()` layer — two selectors per specifier,
+ * derived from the same tuple as `FORBIDDEN_SPAWN`.
+ *
+ * 02-RESEARCH.md § Pitfall 2 reproduced, against this repository's own eslint
+ * 10.8.1, that `no-restricted-imports` reports the static form and reports
+ * NEITHER of the other two. The attribute paths below (`callee.name`,
+ * `arguments.0.value`, `source.value`) are the shapes that pitfall verified
+ * working; only the pattern each carries is computed here.
+ */
+const SPAWN_SYNTAX = FORBIDDEN_SPAWN_SPECIFIERS.flatMap((specifier) => {
+  const pattern = specifierPattern(specifier);
+  return [
+    {
+      selector: `CallExpression[callee.name='require'][arguments.0.value=${pattern}]`,
+      message: `require('${specifier}'): ${SPAWN_MESSAGE}`,
+    },
+    {
+      selector: `ImportExpression[source.value=${pattern}]`,
+      message: `import('${specifier}'): ${SPAWN_MESSAGE}`,
+    },
+  ];
+});
+
+/**
+ * The one and only exemption from the spawn ban.
+ *
+ * It covers the whole package rather than just `src/` because the package's own
+ * test suite has to stand up a temp git repository and exercise the exec path
+ * to prove any of this works, and success criterion 2's wording is "outside the
+ * workspace module" — not "outside the workspace module's source directory".
+ *
+ * A SECOND entry here makes success criterion 2 false while the rule still
+ * looks like it is enforcing something, which is strictly worse than having no
+ * rule at all: the build stays green and the boundary is gone.
+ */
+const WORKSPACE_EXEMPTION = ['packages/workspace/**/*.ts'];
+
+/**
+ * The complete rule object for every file that is neither `@adl/core` source
+ * nor exempt. Core and verdict sources get the same bans merged into THEIR
+ * objects below, because a rule may be configured only once per file.
+ */
+const SPAWN_BAN_RULES = {
+  'no-restricted-imports': ['error', { paths: FORBIDDEN_SPAWN }],
+  'no-restricted-syntax': ['error', ...SPAWN_SYNTAX],
+};
+
+/**
+ * The spawn entries `@adl/core` does not already ban. `child_process` in both
+ * spellings is on the purity list already, so appending blindly would give core
+ * a duplicated restricted path.
+ */
+const CORE_SPAWN_ADDITIONS = FORBIDDEN_SPAWN.filter(
+  (entry) =>
+    !FORBIDDEN_CORE_BUILTINS.some((existing) => existing.name === entry.name),
+);
+
 /**
  * The `@adl/core` purity and dependency-graph rules.
  *
@@ -82,12 +191,21 @@ const FORBIDDEN_CORE_SIBLINGS = [
  * per file, so registering them as two entries would mean the second silently
  * replaced the first — precisely the kind of decorative rule this plan exists
  * to prevent.
+ *
+ * Phase 2 extends this object rather than registering a second entry over the
+ * same glob, for exactly that reason: 02-RESEARCH.md § Pitfall 1 reproduced an
+ * overlapping spawn entry silently erasing the `node:fs` ban here, with every
+ * existing lint test still passing.
  */
 const CORE_PURITY_RULES = {
   'no-restricted-imports': [
     'error',
-    { paths: FORBIDDEN_CORE_BUILTINS, patterns: FORBIDDEN_CORE_SIBLINGS },
+    {
+      paths: [...FORBIDDEN_CORE_BUILTINS, ...CORE_SPAWN_ADDITIONS],
+      patterns: FORBIDDEN_CORE_SIBLINGS,
+    },
   ],
+  'no-restricted-syntax': ['error', ...SPAWN_SYNTAX],
   'no-restricted-properties': [
     'error',
     {
@@ -106,10 +224,17 @@ const CORE_PURITY_RULES = {
  * about the schemas that get PUBLISHED as JSON Schema (D-26). Elsewhere — the
  * `adl.yml` config schema, for instance — a `.superRefine()` is safe precisely
  * because that schema is never emitted.
+ *
+ * The spawn selectors are spread in FIRST, and that merge is mandatory rather
+ * than tidy: `packages/core/src/verdict/**` is matched by the core entry AND by
+ * the verdict entry, and whichever one configures `no-restricted-syntax` last
+ * replaces the other outright. Without this line the verdict directory would be
+ * the one place in the repository where a dynamic `import('execa')` lints clean.
  */
 const VERDICT_SCHEMA_RULES = {
   'no-restricted-syntax': [
     'error',
+    ...SPAWN_SYNTAX,
     {
       selector:
         "CallExpression[callee.type='MemberExpression'][callee.property.name='refine']",
@@ -178,6 +303,22 @@ export const baseConfigs = [
  */
 export const architectureConfigs = [
   {
+    // Registered FIRST, and its `ignores` carve out every glob that a later
+    // entry configures the same two rules for. Both halves matter: the order
+    // keeps the reading order of this array honest, and the carve-outs are what
+    // stop this broad entry from being the "later entry" that replaces core's
+    // purity ban (02-RESEARCH.md § Pitfall 1).
+    name: 'adl/no-direct-spawn',
+    files: ['**/*.ts'],
+    ignores: [
+      ...WORKSPACE_EXEMPTION,
+      'packages/core/src/**/*.ts',
+      'test/lint/fixtures/core-*.ts',
+      'test/lint/fixtures/verdict-*.ts',
+    ],
+    rules: SPAWN_BAN_RULES,
+  },
+  {
     name: 'adl/core-purity',
     files: ['packages/core/src/**/*.ts'],
     rules: CORE_PURITY_RULES,
@@ -196,6 +337,11 @@ export const architectureConfigs = [
     name: 'adl/verdict-schema-fixtures',
     files: ['test/lint/fixtures/verdict-*.ts'],
     rules: VERDICT_SCHEMA_RULES,
+  },
+  {
+    name: 'adl/no-direct-spawn-fixtures',
+    files: ['test/lint/fixtures/spawn-*.ts'],
+    rules: SPAWN_BAN_RULES,
   },
 ];
 
