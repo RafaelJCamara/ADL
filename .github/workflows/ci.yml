@@ -73,8 +73,82 @@ jobs:
       - name: Format
         run: pnpm format
 
+      - name: Provision the unprivileged worker user
+        # Two of Phase 2's acceptance criteria -- WORK-05's privilege drop, and
+        # the OS-user half of success criterion 4 -- have no subject without a
+        # second OS identity on the machine. The development machine is Windows,
+        # where they skip with a stated reason (D-05, D-21), so this job is the
+        # only place they can actually execute. Without this step they would
+        # skip here too, and the phase would be signed off on evidence that was
+        # never produced (T-2-33).
+        #
+        # Every command is idempotent: a re-run on a warm runner must not fail
+        # on "group already exists".
+        run: |
+          set -euo pipefail
+          me=$(id -un)
+
+          # D-06: the worker is PRE-PROVISIONED, never created by the daemon at
+          # runtime -- which is what keeps the long-running manager from ever
+          # needing root-capable permissions. This step is the install script an
+          # adopting team runs once; packages/workspace/README.md is the same
+          # thing written for a human.
+          getent group adl-worker >/dev/null || sudo groupadd --system adl-worker
+          id -u adl-worker >/dev/null 2>&1 || sudo useradd \
+            --system --gid adl-worker \
+            --no-create-home --shell /usr/sbin/nologin \
+            adl-worker
+
+          # The daemon user joins the shared group. Setting a directory's group
+          # requires membership of it, so without this applyWorkerAccess
+          # degrades with EPERM and the worker cannot write its own scratch HOME.
+          sudo usermod --append --groups adl-worker "$me"
+
+          # SETENV, not a bare NOPASSWD. `sudo` resets the environment by
+          # default, and the environment it would reset is the zero-inherit one
+          # buildChildEnv constructs from nothing -- the scratch HOME and every
+          # git and npm neutraliser inside it. The launcher passes
+          # --preserve-env; SETENV is what permits that.
+          #
+          # !secure_path is the same class of reason: sudo would otherwise
+          # replace the child's PATH with its own, silently overriding
+          # ExecSpec.path and reintroducing Pitfall 7 in a form that appears
+          # only under the drop.
+          #
+          # The grant is to run commands as ONE specific unprivileged user
+          # (T-2-34) -- not `(ALL)`, which is a different and much larger thing.
+          sudoers=$(mktemp)
+          {
+            echo "$me ALL=(adl-worker) NOPASSWD:SETENV: ALL"
+            echo "Defaults>adl-worker !secure_path"
+          } > "$sudoers"
+          # Validated BEFORE installation. A syntax error in a file under
+          # /etc/sudoers.d breaks sudo for the remainder of the job, and the
+          # failure would look nothing like its cause.
+          sudo visudo --check --quiet --file="$sudoers"
+          sudo install -m 0440 -o root -g root "$sudoers" /etc/sudoers.d/adl-worker
+
+          # Printed so the human reading this run at the 02-07 checkpoint can
+          # see the identity exists rather than infer it from a green tick.
+          getent passwd adl-worker
+          getent group adl-worker
+          sudo --non-interactive --user adl-worker -- id
+
+          # What turns the skip into an execution. test/helpers/platform.ts
+          # reads these two, and on Linux with them unset the privilege cases
+          # FAIL rather than skip -- that asymmetry is the whole point of D-21.
+          echo "ADL_WORKER_USER=adl-worker" >> "$GITHUB_ENV"
+          echo "ADL_WORKER_GROUP=adl-worker" >> "$GITHUB_ENV"
+
       - name: Test
-        run: pnpm -r test
+        # The command is unchanged; only the credentials it runs under are.
+        # `usermod` above added this user to the adl-worker group, but
+        # supplementary group membership is established when credentials are
+        # created -- the already-running runner process does not pick it up, and
+        # chown(2) refuses a group the caller is not in. `sg` re-establishes the
+        # group list for this one command, which is what lets applyWorkerAccess
+        # give the worker its scratch HOME instead of degrading with EPERM.
+        run: sg adl-worker -c "pnpm -r test"
 
       - name: Test (workspace root suite)
         # `pnpm -r` iterates the workspace PACKAGES and deliberately excludes

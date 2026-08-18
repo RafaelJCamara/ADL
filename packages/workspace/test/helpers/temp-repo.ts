@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // Named import for the reason `src/worktree/lifecycle.ts` documents at length:
@@ -72,6 +79,20 @@ export async function openTempRepo(): Promise<OpenedTempRepo> {
   };
 
   try {
+    // `mkdtemp` creates the root `0700`, which is right for a temp directory and
+    // wrong for this fixture the moment WORK-05's privilege drop is active: the
+    // worker is a DIFFERENT OS user, and without traverse permission on this
+    // one directory it cannot reach the worktree it is supposed to be working
+    // in — every exec-based case would then fail for a reason that has nothing
+    // to do with the code under test.
+    //
+    // `0711` and not `0755`: traverse, deliberately without list. A real
+    // deployment's repository and scratch root are ordinary `0755` directories
+    // and need nothing done to them; this line exists because `mkdtemp` is
+    // stricter than the world the code actually runs in. Skipped on Windows,
+    // where the mode bits mean nothing.
+    if (process.platform !== 'win32') await chmod(dir, 0o711);
+
     await mkdir(mainRepo);
     // `git worktree add` creates the leaf directory but not its parent.
     await mkdir(scratchRoot);
