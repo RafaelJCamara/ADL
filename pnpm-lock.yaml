@@ -129,6 +129,9 @@ importers:
         specifier: 3.36.0
         version: 3.36.0
     devDependencies:
+      '@adl/db':
+        specifier: workspace:*
+        version: link:../db
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1

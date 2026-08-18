@@ -36,8 +36,31 @@ export {
   branchNameFor,
   createWorktree,
   destroyWorktree,
+  featureIdFromBranch,
   type CreatedWorktree,
 } from './worktree/lifecycle.js';
+
+// The disk inventory (D-20). Deliberately the MECHANISM only: it reports which
+// worktrees exist, and decides nothing about which should be reclaimed. The
+// POLICY — joining this inventory against feature state — is `sweepOrphans`,
+// and keeping the two separable is what lets the manager own the trigger and
+// the state binding without owning the parsing.
+export {
+  listManagedWorktrees,
+  parseWorktreeList,
+  type WorktreeEntry,
+} from './worktree/list.js';
+
+// The GC backstop (D-15, D-16, D-20) — the POLICY half. It reaches feature
+// state through an injected lookup rather than importing @adl/db, so the
+// swappable backend layer carries no database dependency. The manager binds
+// the lookup and owns the trigger; both are Phase 3.
+export {
+  sweepOrphans,
+  type FeatureStateLookup,
+  type GcDeps,
+  type SweepFailure,
+} from './worktree/gc.js';
 
 // Backends — implementations of the Workspace interface @adl/core declares.
 export {
