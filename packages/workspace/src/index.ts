@@ -30,7 +30,7 @@ export { assertWithinRoot, isWithinRoot, resolveWithinRoot } from './paths.js';
 // caller; publishing it would invite a second one, and a second place where a
 // child environment is assembled is a second door into the boundary this
 // package exists to be.
-export { run } from './exec/run.js';
+export { run, type ExecOwner } from './exec/run.js';
 //
 // The privilege drop (WORK-05, D-05, D-18). Exported because the absence of the
 // drop is an operator-facing fact, not an internal detail: a manager building a
@@ -135,6 +135,43 @@ export {
   type WorktreeWorkspaceOptions,
 } from './worktree/backend.js';
 export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
+//
+// ADL's own workspace (D-17). Registered as `'host-git'`, and the reason it is a
+// backend rather than a second `adl/no-direct-spawn` exemption is written out at
+// the top of `git/host-backend.ts`. `defaultHostGitHome` is exported because an
+// operator-facing status view has to be able to say where ADL's git home is
+// without constructing a workspace to ask.
+export {
+  defaultHostGitHome,
+  hostGitWorkspace,
+  type HostGitWorkspaceOptions,
+} from './git/host-backend.js';
+
+// The manager-owned git client (D-12) and the neutralisation every one of its
+// invocations carries (D-19, WORK-07).
+//
+// `NEUTRALISED_CONFIG` and `NEUTRALISE_ARGS` are exported for two audiences and
+// neither of them is "a caller who wants to build their own git argv": the
+// poisoned-config suite iterates the list so that trimming it makes the proof
+// smaller rather than making it fail, and an operator-facing view has to be able
+// to state what ADL overrides. T-2-42 — "the neutralisation disables something
+// an operator legitimately relies on" — is *accepted* rather than mitigated, and
+// an accepted risk is only acceptable while it is discoverable, which is why
+// README.md § What ADL's own git overrides lists every entry and why
+// `test/git/manager-git.test.ts` fails when the two drift apart.
+//
+// What is deliberately NOT exported is the argv builder inside
+// `managerGitClient`. It is the reason there is no reachable path to a git
+// invocation without the overrides, and publishing it would be publishing the
+// bypass.
+export {
+  managerGitClient,
+  NEUTRALISE_ARGS,
+  NEUTRALISED_CONFIG,
+  type GitStatusEntry,
+  type ManagerGitClient,
+  type ManagerGitClientOptions,
+} from './git/manager-git.js';
 
 // The teardown-report sink's mapping helpers. `WorkspaceSpec.onTeardown` is
 // declared in `@adl/core/stage`; these turn this package's own teardown results

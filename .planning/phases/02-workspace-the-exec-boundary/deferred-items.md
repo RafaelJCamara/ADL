@@ -83,3 +83,75 @@ survives — the answer may already be "no" via the process-group behaviour exec
 uses on POSIX, in which case this closes with a test rather than a change.
 
 **Status:** open. Not blocking Phase 2 — no caller cancels an exec yet.
+
+## D-2-06-1: the GC sweep cannot see a leaked `refs/adl-snapshots/*` ref
+
+**Carried forward by:** plan `02-06` (which created the namespace), and
+**decided** by plan `02-08` — the last plan of the phase — as *defer, with a
+reproduction*. Recorded here rather than left implicit, because a reclamation
+gap in a phase whose stated point is reclamation should not be discoverable only
+by reading a summary's last bullet.
+
+**What goes wrong:** `Workspace.snapshot()` anchors its `git stash create`
+commit under `refs/adl-snapshots/<featureId>/<sha>` and `release()` deletes that
+ref. A process that dies between the two leaves the ref behind, and
+`sweepOrphans` cannot collect it: the sweep iterates
+`listManagedWorktrees(mainRepo)`, and by the time anyone would want to collect
+the ref, the worktree it belonged to is already gone — so there is no inventory
+entry to iterate.
+
+**Reproduction** — run against the built package, worktree backend, no
+`release()` call, standing in for the crash:
+
+```
+snapshot id: 484cddb1f6379bef5c1e6e0cfba5a53786aa0679
+refs after snapshot:
+  refs/adl-snapshots/feat-leak/484cddb1f6379bef5c1e6e0cfba5a53786aa0679
+  refs/heads/adl/feat-leak
+  refs/heads/master
+
+after destroy() — worktree and adl/* branch are gone:
+worktrees: [ 'worktree …/main' ]
+refs:
+  refs/adl-snapshots/feat-leak/484cddb1f6379bef5c1e6e0cfba5a53786aa0679
+  refs/heads/master
+
+sweepOrphans removed: []
+refs after sweep:
+  refs/adl-snapshots/feat-leak/484cddb1f6379bef5c1e6e0cfba5a53786aa0679
+
+the captured commit is still an object: commit
+unreachable objects git gc would collect: (none — the ref keeps it reachable)
+```
+
+[VERIFIED: reproduced locally during plan `02-08`, git 2.49.0.windows.1]
+
+**Why it matters more than "a stray ref":** the last two lines are the point.
+The ref keeps the stash commit **reachable**, so `git gc` will never collect the
+objects behind it either. The leak is not a few bytes of ref file — it is a
+whole tree pinned in the object store, permanently, once per crashed snapshot.
+`destroy()` is idempotent and the branch teardown is correct; this is the one
+resource the two-step teardown does not name.
+
+**Why `02-08` did not close it:** the fix is small but it is not this plan's.
+`02-08` owns the configuration-neutralisation boundary; its file list, its
+acceptance criteria, and its threat register say nothing about snapshot refs.
+Closing it means either changing `sweepOrphans`'s return contract — an exported
+signature that `02-04` and `02-06` own, whose policy/mechanism split is D-20 —
+or adding a second exported sweep with its own tests to the last plan of the
+phase. Both are design decisions about the GC's shape, taken in a plan whose
+reviewers were asked to check something else.
+
+**What picking it up requires**, in the shape that looks right from here: an
+additive `sweepSnapshotRefs(deps: GcDeps)` beside `sweepOrphans`, leaving that
+function untouched. It enumerates
+`git for-each-ref --format=%(refname) refs/adl-snapshots`, takes the feature id
+from the segment after the prefix, applies the *same* D-16 policy (terminal or
+unknown → collect; live → leave alone, because a live feature may be holding
+that handle), and deletes with `git update-ref -d`. The manager calls both from
+one schedule. That belongs with **Phase 3**, which is where the sweep gains its
+trigger and its state binding — the same place D-15 and D-20 already put the
+rest of the GC's ownership.
+
+**Status:** open. Not blocking — it costs disk on a daemon that has crashed
+mid-snapshot, and nothing depends on the namespace being empty.

@@ -23,6 +23,40 @@ import {
   type WorkerIdentity,
 } from './privilege.js';
 
+/**
+ * Whose child this is — an agent's, or ADL's own (D-12, D-17).
+ *
+ * Only two things depend on it, and both are about the privilege drop:
+ *
+ * - **`'agent'`** — a child of a feature workspace, running code an agent
+ *   chose. It is dropped to the worker user where the platform allows, and a
+ *   run that could not be dropped emits WORK-05's banner.
+ * - **`'adl'`** — a child ADL launches for itself: the manager-owned git client
+ *   and nothing else today. It is deliberately **not** dropped, and it does not
+ *   emit the banner.
+ *
+ * The second half of that is not a cosmetic detail, which is why this parameter
+ * exists rather than the host backend simply passing an empty identity:
+ *
+ * 1. Dropping ADL's own git would be *wrong*, not merely unnecessary. The file
+ *    the manager must be able to write — `<mainRepo>/.git/config` — is exactly
+ *    the one `applyWorkerAccess` takes group and world write off of, precisely
+ *    so the worker user cannot reach it (02-RESEARCH.md § Pitfall 5, layer 2).
+ *    A dropped manager would be locked out of its own repository.
+ * 2. {@link warnPrivilegeModeOnce} fires **once per process**. An ADL-owned
+ *    child on a correctly configured Linux deployment resolves to
+ *    `worker-user-unset` — it carries no worker identity, because it wants
+ *    none — so without this distinction a manager-side `git status` running
+ *    first would print "ADL_WORKER_USER is not set" at an operator who set it,
+ *    *and* consume the one banner that the next agent exec genuinely needed.
+ *    Losing the real warning to a false one is T-2-32 arriving through the
+ *    front door.
+ *
+ * It defaults to `'agent'` so that the containment-relevant behaviour is what a
+ * caller gets by forgetting, rather than what a caller gets by remembering.
+ */
+export type ExecOwner = 'agent' | 'adl';
+
 export async function run(
   spec: ExecSpec,
   scratchHome: string,
@@ -37,6 +71,8 @@ export async function run(
    * warns rather than throwing.
    */
   worker: WorkerIdentity = {},
+  /** See {@link ExecOwner}. Defaults to the containment-relevant value. */
+  owner: ExecOwner = 'agent',
 ): Promise<ExecResult> {
   if (spec.argv.length === 0) {
     throw new WorkspaceError(
@@ -48,13 +84,21 @@ export async function run(
   // resolvable from the CHILD's PATH and `ExecSpec.path` is per exec
   // (02-RESEARCH.md § Pitfall 7). The warning is once per process, so a
   // workspace running fifty commands undropped says so once.
-  const privilege = await privilegeLauncher({ worker, path: spec.path });
-  warnPrivilegeModeOnce(privilege.mode);
+  //
+  // An ADL-owned child skips the decision entirely rather than making it and
+  // discarding the answer: there is no identity to drop to, no prefix to build,
+  // and — the load-bearing part — no banner to spend. See {@link ExecOwner}.
+  let prefix: readonly string[] = [];
+  if (owner === 'agent') {
+    const privilege = await privilegeLauncher({ worker, path: spec.path });
+    warnPrivilegeModeOnce(privilege.mode);
+    prefix = privilege.prefix;
+  }
 
   // The prefix WRAPS the argv; it does not replace the command. `prefix` is
   // empty for every non-dropped mode, so there is no branch here and the
   // dropped and undropped paths cannot drift apart.
-  const [file, ...args] = [...privilege.prefix, ...spec.argv];
+  const [file, ...args] = [...prefix, ...spec.argv];
   if (file === undefined) {
     // Unreachable — the emptiness check above already ran against spec.argv.
     // Present because `noUncheckedIndexedAccess` is on and a non-null assertion
