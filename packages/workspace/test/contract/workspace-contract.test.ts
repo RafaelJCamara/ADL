@@ -215,7 +215,9 @@ const SIMPLE_GIT_MENTION = /simple-git|simpleGit/;
 
 /** Everything outside a comment. The prose about this rule must not trip it. */
 function withoutComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
 }
 
 /** The one module allowed to build a git argv for ADL's own account. */
@@ -230,7 +232,9 @@ describe('no module under src/ reaches git through simple-git', () => {
 
     for (const file of files) {
       const name = relative(SRC_ROOT, file).replaceAll('\\', '/');
-      if (SIMPLE_GIT_MENTION.test(withoutComments(await readFile(file, 'utf8')))) {
+      if (
+        SIMPLE_GIT_MENTION.test(withoutComments(await readFile(file, 'utf8')))
+      ) {
         offenders.push(
           `${name} — simple-git spawns git with no configuration neutralisation (02-RESEARCH.md § Pitfall 5) and, because it passes \`env: undefined\` to spawn unless .env() was called, with the daemon's ENTIRE environment including the forge token (02-REVIEW.md CR-01, CR-02). Route it through adlGit() in src/${SOLE_GIT_CHOKEPOINT}, which carries NEUTRALISE_ARGS, the zero-inherit child environment, a forced C locale, and an exit code.`,
         );

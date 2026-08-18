@@ -198,7 +198,7 @@ const WORKSPACE_EXEMPTION = ['packages/workspace/**/*.ts'];
 const WORKSPACE_SRC = ['packages/workspace/src/**/*.ts'];
 
 const SIMPLE_GIT_IN_SRC_MESSAGE =
-  'simple-git is banned inside packages/workspace/src (02-REVIEW.md CR-01, CR-02). It spawns git with no configuration neutralisation and — because it passes `env: undefined` to spawn unless `.env()` was called — with the daemon\'s ENTIRE environment, forge token and model key included. Every git command ADL runs reads <mainRepo>/.git/config, which is the file an agent inside a linked worktree can write, and git config names programs git executes. Use `adlGit()` from src/git/adl-git.ts: it carries NEUTRALISE_ARGS, the zero-inherit child environment, a forced C locale, and an exit code.';
+  "simple-git is banned inside packages/workspace/src (02-REVIEW.md CR-01, CR-02). It spawns git with no configuration neutralisation and — because it passes `env: undefined` to spawn unless `.env()` was called — with the daemon's ENTIRE environment, forge token and model key included. Every git command ADL runs reads <mainRepo>/.git/config, which is the file an agent inside a linked worktree can write, and git config names programs git executes. Use `adlGit()` from src/git/adl-git.ts: it carries NEUTRALISE_ARGS, the zero-inherit child environment, a forced C locale, and an exit code.";
 
 const WORKSPACE_SRC_RULES = {
   'no-restricted-imports': [

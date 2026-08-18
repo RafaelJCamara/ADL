@@ -37,14 +37,12 @@ afterAll(async () => {
 
 /** A live worktree workspace, resolved the way the manager resolves one. */
 async function freshWorkspace(featureId: string): Promise<Workspace> {
-  return workspaceRegistry()
-    .resolve('worktree')
-    .create({
-      featureId,
-      mainRepo: repo.mainRepo,
-      scratchRoot: repo.scratchRoot,
-      baseRef: 'HEAD',
-    });
+  return workspaceRegistry().resolve('worktree').create({
+    featureId,
+    mainRepo: repo.mainRepo,
+    scratchRoot: repo.scratchRoot,
+    baseRef: 'HEAD',
+  });
 }
 
 /** Every snapshot ref the repository currently holds. */

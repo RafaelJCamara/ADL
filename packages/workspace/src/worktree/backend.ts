@@ -278,7 +278,12 @@ export async function worktreeWorkspace(
       const sha =
         created === ''
           ? (
-              await git.rawOk(['rev-parse', '--verify', '--end-of-options', 'HEAD'])
+              await git.rawOk([
+                'rev-parse',
+                '--verify',
+                '--end-of-options',
+                'HEAD',
+              ])
             ).trim()
           : created;
 

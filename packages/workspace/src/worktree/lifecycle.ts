@@ -112,9 +112,7 @@ export interface CreatedWorktree {
  *   ITSELF, so a teardown would have removed every feature's directory.
  * - whitespace — legal in a directory name, never in a refname.
  */
-const REFNAME_UNSAFE =
-  // eslint-disable-next-line no-control-regex -- the control range is exactly what git rejects
-  /[*?[\]~^:\\\x00-\x1f\x7f\s]|^[.-]|\.\.|\.lock$|\.$|@\{/;
+const REFNAME_UNSAFE = /[*?[\]~^:\\\x00-\x1f\x7f\s]|^[.-]|\.\.|\.lock$|\.$|@\{/;
 
 /**
  * Reject a feature id that must never reach the filesystem or a branch name.

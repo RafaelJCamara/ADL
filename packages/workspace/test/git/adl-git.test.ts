@@ -39,7 +39,15 @@
  * file by the shortest honest route. `simple-git` would refuse it anyway — its
  * `block-unsafe-operations` plugin rejects a `core.hooksPath` write by name.
  */
-import { appendFile, chmod, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -244,14 +252,12 @@ describe('CR-01: every ADL-side git invocation carries the neutralisation', () =
     // controls: `status`, `stash create`, `rev-parse`, `update-ref`. A linked
     // worktree shares the main repository's configuration, so the poison
     // applies here too.
-    const workspace = await workspaceRegistry()
-      .resolve('worktree')
-      .create({
-        featureId: 'cr01-snapshot',
-        mainRepo: repo.mainRepo,
-        scratchRoot: repo.scratchRoot,
-        baseRef: 'HEAD',
-      });
+    const workspace = await workspaceRegistry().resolve('worktree').create({
+      featureId: 'cr01-snapshot',
+      mainRepo: repo.mainRepo,
+      scratchRoot: repo.scratchRoot,
+      baseRef: 'HEAD',
+    });
 
     try {
       await rm(sentinel, { force: true });
