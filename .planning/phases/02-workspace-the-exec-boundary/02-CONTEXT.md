@@ -71,6 +71,8 @@ These four resolve the open questions raised by `02-RESEARCH.md`. The user selec
 
 - **D-20:** GC **splits mechanism from policy**. `packages/workspace` exposes `listManagedWorktrees()` and `destroy()` and takes no `@adl/db` dependency; the manager owns the sweep that joins that inventory against `featuresRepository` to apply D-16's terminal-state policy. Keeps the swappable backend database-free (D-04) and puts the DB dependency where EXEC-01 already puts it. — **Reversibility:** reversible.
 
+  > **Planning deviation from D-20's literal split (recorded 2026-08-18, plan `02-04`).** The *substance* of D-20 holds unchanged: `packages/workspace` still takes no `@adl/db` dependency, and plan `02-04` Task 3 asserts that mechanically against the manifest. What moved is where the join *function* lives. `02-04` puts `sweepOrphans` inside `packages/workspace`, expressed over an injected `FeatureStateLookup` rather than over `featuresRepository` directly; the manager owns the *binding* of that lookup, the periodic schedule, and the CLI trigger. The reason is that success criterion 1 ("many features created, then a GC pass leaves no worktree and no `adl/*` branch") is not testable in Phase 2 at all if the pass itself only exists in a manager process that does not yet exist. Read D-20 as satisfied by the dependency direction, not by the file location. **A later verifier must not flag the manager as missing sweep work it never had** — Phase 3 owns the binding, the schedule, and the CLI verb, and nothing else.
+
 - **D-21:** A **Linux CI job is Wave 0 scaffolding for this phase**, not a follow-up. Two acceptance criteria (WORK-05 privilege drop, and the OS-user half of success criterion 4) cannot execute on the Windows development machine. Linux-only tests must **skip with a visible reason** on other platforms rather than passing vacuously, and the phase cannot be called done until they have run green on Linux. — **Reversibility:** reversible.
 
 ### Claude's Discretion
@@ -141,6 +143,8 @@ The other recurring theme: **reuse Phase 1's mechanisms instead of inventing par
 ## Deferred Ideas
 
 No scope creep occurred — discussion stayed inside the phase boundary throughout.
+
+- **D-15's periodic backstop sweep and the `adl gc` CLI verb — deferred to Phase 3** *(recorded 2026-08-18 during planning; dependency constraint, not scope reduction)*. D-15 calls for both a periodic schedule and an explicit manual CLI trigger for the GC pass. Neither can land in Phase 2: there is no manager process to hold a schedule and no CLI package to hold a verb — both arrive in Phase 3. What Phase 2 does deliver is the pass itself, as `sweepOrphans` in `packages/workspace` (plan `02-04` Task 3), exported and deterministically invokable as a function. Success criterion 1 therefore stays verifiable at the end of this phase: `02-04` Task 3's final case creates many features, runs the pass directly, and asserts both `git worktree list` and `git branch --list 'adl/*'` are empty. **A Phase 3 planner reads this bullet as: wire `sweepOrphans` to a schedule and to a CLI verb; do not re-derive the pass.**
 
 - **Container/sandbox workspace backend** — explicitly v2 (SCALE-02, REQUIREMENTS.md). Phase 2 only guarantees the swap is possible via the registry (D-04) and the `networkPolicy`/`resources` placeholder fields carried in from the roadmap notes.
 - **Windows/macOS OS-user isolation** — D-05 defers real privilege-drop support on non-Linux dev environments; only a warning banner ships in v1.

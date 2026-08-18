@@ -97,7 +97,7 @@ Plans:
 **Wave 1**
 
 - [ ] 02-01-PLAN.md — Package legitimacy gate for execa and simple-git (blocking human checkpoint)
-- [ ] 02-02-PLAN.md — The spawn boundary: one rule object per glob, three import forms, and a regression guard
+- [ ] 02-02-PLAN.md — The spawn boundary: one rule object per glob, every import form and every specifier, and the regression guards
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -115,6 +115,9 @@ Plans:
 **Wave 5** *(blocked on Wave 4 completion)*
 
 - [ ] 02-07-PLAN.md — Privilege drop to a dedicated OS user, visible skips, and Linux CI provisioning
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 02-08-PLAN.md — Manager-owned git client and the shared-config neutralisation
 
 **Notes**: `networkPolicy` and `resources` present in the workspace spec from day one with `'full'` as the v1 value, so the future container backend is a drop-in rather than a call-site sweep. This is the one mistake that is expensive to retrofit. Two further controls were added during planning on research evidence: per-invocation git-config neutralisation (D-19), because linked worktrees share the main repo's local config and neither `HOME` nor `GIT_CONFIG_GLOBAL` reaches local scope; and a Linux CI job running the privilege-drop assertions (D-21), because two acceptance criteria cannot execute on the Windows development machine.

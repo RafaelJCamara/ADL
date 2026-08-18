@@ -753,7 +753,12 @@ Note the deliberate exclusion recorded in that file's comment (lines 88-92): *"`
 // Source: execa 10.0.1 API verified against the installed package + docs/api.md.
 import { execa } from 'execa';
 
-export async function run(spec: ExecSpec, log: (c: LogChunk) => void): Promise<ExecResult> {
+// SIGNATURE NOTE (planning, 2026-08-18): the planned signature takes the scratch
+// HOME as a second positional parameter — run(spec, scratchHome, log) — because
+// the scratch HOME belongs to the Workspace instance, not to one exec call, so
+// no caller may opt a child out of it or redirect it (D-07). `run` is the only
+// caller of buildChildEnv, and it always passes both arguments.
+export async function run(spec: ExecSpec, scratchHome: string, log: (c: LogChunk) => void): Promise<ExecResult> {
   const subprocess = execa(spec.argv[0], spec.argv.slice(1), {
     cwd: spec.cwd,
 
@@ -762,12 +767,13 @@ export async function run(spec: ExecSpec, log: (c: LogChunk) => void): Promise<E
     // resolution: on POSIX, execa resolves the executable from `env.PATH`, not
     // the parent's (execa#366). ExecSpec therefore REQUIRES `path`.
     extendEnv: false,
-    env: buildChildEnv(spec),
+    env: buildChildEnv(spec, scratchHome),
 
-    // D-05, Linux only. Present here for completeness; the real privilege drop
-    // is the launcher wrapping argv (see privilege.ts) — uid/gid alone does not
-    // drop supplementary groups.
-    ...(spec.uid !== undefined ? { uid: spec.uid, gid: spec.gid } : {}),
+    // D-05, Linux only. Sketched here for completeness, but NOT PLANNED — the
+    // real privilege drop is the launcher wrapping argv (see privilege.ts), and
+    // plan 02-07 carries a prohibition against using uid/gid as the boundary at
+    // all: they require a root caller (contradicting D-06) and do not drop
+    // supplementary groups. ExecSpec carries no uid/gid field.
 
     timeout: spec.timeoutMs ?? 0,
     cancelSignal: spec.signal,       // StageContext.signal plugs straight in
@@ -809,21 +815,23 @@ export interface LogChunk {
 // back. Nothing is inherited. Do NOT add a "pass through the GIT_* prefix"
 // convenience: GIT_CONFIG_COUNT/KEY_n/VALUE_n is arbitrary git config, i.e.
 // arbitrary code execution (verified: KEY_0=user.name VALUE_0=injected works).
-export function buildChildEnv(spec: ExecSpec): Record<string, string> {
+// `scratchHome` is a SECOND PARAMETER, not a field on ExecSpec: it lives on the
+// Workspace instance so no caller can opt a child out of it (02-03 Task 1).
+export function buildChildEnv(spec: ExecSpec, scratchHome: string): Record<string, string> {
   const env: Record<string, string> = {
     PATH: spec.path,                       // required by the type — see execa#366
-    HOME: spec.scratchHome,                // D-07, fresh mkdtemp per run
+    HOME: scratchHome,                     // D-07, fresh mkdtemp per run
 
     // WORK-07: agent-written config must not survive or reach ADL.
     // These point INTO the scratch dir, so they die with it.
-    GIT_CONFIG_GLOBAL: join(spec.scratchHome, '.gitconfig'),
+    GIT_CONFIG_GLOBAL: join(scratchHome, '.gitconfig'),
     GIT_CONFIG_NOSYSTEM: '1',
-    npm_config_userconfig: join(spec.scratchHome, '.npmrc'),
-    npm_config_cache: join(spec.scratchHome, '.npm'),
-    XDG_CONFIG_HOME: join(spec.scratchHome, '.config'),
-    XDG_CACHE_HOME: join(spec.scratchHome, '.cache'),
+    npm_config_userconfig: join(scratchHome, '.npmrc'),
+    npm_config_cache: join(scratchHome, '.npm'),
+    XDG_CONFIG_HOME: join(scratchHome, '.config'),
+    XDG_CACHE_HOME: join(scratchHome, '.cache'),
     ...(process.platform === 'win32'
-      ? { USERPROFILE: spec.scratchHome }  // git-for-Windows HOME fallback chain
+      ? { USERPROFILE: scratchHome }       // git-for-Windows HOME fallback chain
       : {}),
   };
 
@@ -942,28 +950,38 @@ const CORE_PURITY_RULES = {
 | A7 | The `execa` `[SUS]` verdict is a recency false positive requiring no human checkpoint | § Package Legitimacy Audit | Very low — 135M weekly downloads, canonical repo, explicitly named in CLAUDE.md's stack. |
 | A8 | Setting `HOME` alone is sufficient for git's config lookup on Linux (the deployment target) | Pattern 6 | Low — POSIX git reads `$HOME/.gitconfig`. The Windows fallback chain is dev-only under D-05. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does ADL's manager-owned git client (D-12) count as "a code path that launches a process" for success criterion 2?**
+> **All five are closed.** Resolved 2026-08-18 during planning; the user selected the researcher's recommendation in every case where one was offered. Each question carries its resolution inline below. Nothing in this section is still open, and no plan is waiting on an answer here.
+>
+> | # | Question | Resolved by |
+> |---|----------|-------------|
+> | 1 | Manager git client vs success criterion 2 | **D-17** — routed through its own host-rooted `Workspace`; built in plan `02-08` |
+> | 2 | Privilege-drop launcher, and whether the manager runs as root | **D-18** — `sudo -u` default, `setpriv` documented alternative, Linux-gated; built in plan `02-07` |
+> | 3 | Does GC live in `packages/workspace` or in the manager | **D-20**, plus the recorded deviation in `02-CONTEXT.md` § D-20 — mechanism/policy split kept, `sweepOrphans` sited in `packages/workspace` over an injected lookup; built in plan `02-04` |
+> | 4 | Concrete shape of the `snapshot()` restore handle | plan `02-06` Task 2 — `RestoreHandle` as `{ id, restore(), release() }`, real on both backends, refusing rather than silently capturing a partial state |
+> | 5 | How the stub proves "zero call-site edits" | plan `02-06` Task 3 — `describeWorkspaceContract(name, factory)` run over both ids, plus the sole-construction-site assertion |
+
+1. **Does ADL's manager-owned git client (D-12) count as "a code path that launches a process" for success criterion 2?** — **RESOLVED: D-17**, the recommendation below was accepted. Built in plan `02-08` Task 1 as `hostGitWorkspace`, a third registry entry rather than a second lint exemption.
    - What we know: D-12 locks that ADL's credentialed git operations run through a separate manager-owned client, *"outside `Workspace.exec()` entirely."* Success criterion 2 says *"No code path anywhere launches a process except through the workspace exec path."* `simple-git` spawns `git` internally.
    - What's unclear: whether the lint rule gets a second exemption (`simple-git` allowed in the manager git module), or whether the manager git client should itself route through a *second* `Workspace` instance — a host-rooted backend with the manager's own env and forge credentials — which would keep criterion 2 literally true with one exemption and still honour D-12's separation of the *worker's* Workspace from forge credentials.
    - Recommendation: **route the manager git client through a distinct `Workspace` instance.** It preserves both the letter of criterion 2 and the substance of D-12 (the worker's workspace still never carries a forge token), it means Pattern 7's config neutralisation is applied by construction, and it costs one extra registry entry. Flag this to the user before planning, since it touches a `costly`-reversibility decision.
 
-2. **Which privilege-drop launcher, and does the manager run as root?**
+2. **Which privilege-drop launcher, and does the manager run as root?** — **RESOLVED: D-18**, the recommendation below was accepted, including the NOPASSWD sudoers entry as a documented (never silent) install requirement. Built in plan `02-07` Tasks 1 and 3. Assumption A1 is thereby confirmed.
    - What we know: `spawn({uid,gid})` requires root and does not drop supplementary groups (Pitfall 8). D-06 wants the manager to never need root-capable permissions. These two facts together mean the launcher must be an external setuid helper (`sudo`) rather than a Node capability.
    - What's unclear: whether the maintainer accepts a NOPASSWD sudoers entry as part of installation. That is a real adoption-friction question for an OSS tool installed into someone else's infrastructure, and it is exactly the kind of thing DIST-01 ("reach a first PR without reading past the top of the README") is sensitive to.
    - Recommendation: `sudo -u` as the default with `setpriv` as a documented alternative; both behind `os.platform() === 'linux'`; absence of the launcher degrades to D-05's warning banner rather than a hard failure. Confirm with the user (A1).
 
-3. **Does GC live in `packages/workspace` or in the manager?**
+3. **Does GC live in `packages/workspace` or in the manager?** — **RESOLVED: D-20**, the mechanism/policy split below was accepted. One documented deviation from D-20's literal wording, recorded in `02-CONTEXT.md` § D-20 and in `02-04-PLAN.md` § Boundary note: the join function `sweepOrphans` is sited in `packages/workspace` over an injected `FeatureStateLookup` (the package still takes no runtime `@adl/db` dependency, asserted against the manifest), because success criterion 1 is untestable in Phase 2 if the pass exists only inside a manager that does not yet exist. Assumption A4 is therefore *partly* wrong in location and right in dependency direction — which is the property that mattered.
    - What we know: D-16 makes the DB the source of truth, which means GC needs `@adl/db`. D-04 makes the workspace backend swappable, which argues for keeping it free of database coupling.
    - What's unclear: whether the orphan *policy* (which features are collectable) and the orphan *mechanism* (list worktrees, remove them) should be one module.
    - Recommendation: split them. `packages/workspace` exposes `listManagedWorktrees()` and `destroy()`; the manager owns the sweep that joins that inventory against `featuresRepository`. That keeps the backend swappable and puts the DB dependency where EXEC-01 already puts it ("Manager process owns detection, queue, state, config, credentials, and accounting").
 
-4. **What is the `snapshot()` restore handle, concretely?**
+4. **What is the `snapshot()` restore handle, concretely?** — **RESOLVED in plan `02-06` Task 2.** The recommended `{ id, restore(), release() }` shape was taken, declared in `packages/core/src/stage/workspace.ts` by plan `02-03` Task 1. One place the plan is *stricter* than the recommendation below: the worktree backend does not return a handle whose `restore()` throws. It captures with `git stash create` and **throws at `snapshot()` time**, naming the untracked paths, rather than handing back a handle that would silently capture a partial state — a restore that quietly loses files is worse than a refusal.
    - What we know: D-03 requires a real signature now, and CONTEXT.md leaves the exact shape to discretion. Its consumer is v2's `group:` parallel stages plus the `mutates` flag already on `Stage` (`packages/core/src/stage/stage.ts` line 134: `readonly mutates: boolean;`).
    - Recommendation: `snapshot(): Promise<RestoreHandle>` where `RestoreHandle` is `{ readonly id: string; restore(): Promise<void>; release(): Promise<void> }`. For the worktree backend, `id` can be a stash ref or a temporary commit sha; for the stub backend, an in-memory copy. `release()` matters — a snapshot that can only be restored, never discarded, leaks refs. Keep the implementation minimal (a v1 worktree backend may legitimately return a handle whose `restore()` throws `not supported`, provided the *type* is honest about it — prefer a documented `UnsupportedOperation` StageError-shaped failure over a silent no-op).
 
-5. **How does the stub backend prove "zero call-site edits" (criterion 3)?**
+5. **How does the stub backend prove "zero call-site edits" (criterion 3)?** — **RESOLVED in plan `02-06` Task 3**, exactly as recommended: `describeWorkspaceContract(name, factory)` invoked once per registered feature backend, plus a structural assertion that `registry.ts` is the only module importing either factory. One implementation detail the plan pins down that the recommendation did not: the stub's root is a **real** temp directory, because the containment guard realpaths the nearest existing ancestor and a synthetic root would make the suite's containment cases pass vacuously on the stub.
    - Recommendation: a parameterised contract test (`describeWorkspaceContract(name, factory)`) run over both `'worktree'` and `'stub'`, plus an assertion that the registry resolution is the only place either backend's constructor is named. This is the same shape BACK-03 will need in Phase 11, so building it here is not speculative.
 
 ## Environment Availability
