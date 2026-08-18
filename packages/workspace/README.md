@@ -62,6 +62,43 @@ on two more platforms would be worse than a documented absence.
 
 ---
 
+## What ADL's own git overrides
+
+The OS-level control above is one of two layers, and it is the one that only
+exists on Linux. The other applies **everywhere**, including on your laptop.
+
+A linked worktree does not have a local git configuration of its own — it shares
+the main repository's. So `git config core.hooksPath …` run by an agent from
+inside its worktree writes **your repository's** `.git/config`, and ADL reads
+that file on every git command it runs. Reproduced against git 2.49; git has
+stated it has no plans to make these directives safe, so there is no version to
+upgrade to.
+
+ADL therefore passes these overrides on **every** git invocation it makes for
+itself. They are not configurable and cannot be switched off:
+
+| Key                  | Overridden to | What an attacker gets without it                                                               |
+| -------------------- | ------------- | ---------------------------------------------------------------------------------------------- |
+| `core.hooksPath`     | _(empty)_     | A directory of scripts git runs around ordinary operations — verified to fire on `git status`. |
+| `core.fsmonitor`     | `false`       | A command git runs to ask what changed, on status, diff, and every index refresh.              |
+| `core.pager`         | `cat`         | A command git pipes its output through.                                                        |
+| `core.editor`        | `false`       | A command git launches to compose a message.                                                   |
+| `core.sshCommand`    | _(empty)_     | The program git uses to reach a remote — runs on every fetch and push.                         |
+| `credential.helper`  | _(empty)_     | A program git runs to obtain credentials: execution, and a way to be handed your forge token.  |
+| `diff.external`      | _(empty)_     | A program git runs instead of computing a diff itself.                                         |
+| `protocol.ext.allow` | `never`       | `ext::<command>` URLs, which run an arbitrary command as the transport.                        |
+
+**This affects ADL's own git operations only** — not yours, and not the agent's.
+Your own `git` in your own shell is untouched, and none of these keys is one ADL
+itself needs. If you rely on one of them for ADL's operations specifically, that
+is the trade this table exists to make visible rather than mysterious.
+
+The list lives in `src/git/manager-git.ts` as `NEUTRALISED_CONFIG`, and the test
+suite poisons each key one at a time and asserts the override wins — so removing
+an entry to "clean up" removes its own proof.
+
+---
+
 ## The daemon never needs root
 
 ADL's manager runs as its own ordinary unprivileged user. It does not run as
