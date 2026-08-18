@@ -544,3 +544,198 @@ security-relevant design decision that belongs in a plan rather than in a test
 fix. Logged to `deferred-items.md` as `D-2-08-1`. Note that fixing it does not
 weaken layer 2: `applyWorkerAccess` still takes group and world write off
 `<mainRepo>/.git/config`, which is the 255 refusal above.
+
+---
+
+# ADDENDUM — code-review remediation (02-REVIEW.md)
+
+_Added after `02-REVIEW.md`. Fix agent scope: CR-01, CR-02, WR-03, WR-04, WR-08,
+WR-09, WR-12. A second agent handled CR-03, WR-05, WR-06 and WR-10
+concurrently._
+
+## The one sentence that matters
+
+**This plan's central structural claim was false in its own source.**
+`manager-git.ts` said the neutralisation happens "on every invocation, or not at
+all"; `host-backend.ts` said there is "exactly one exec primitive in the
+repository … by construction rather than by every future call site
+remembering". Meanwhile eight production git invocations across
+`worktree/lifecycle.ts`, `worktree/list.ts` and `worktree/backend.ts` went
+through `simpleGit(...).raw([...])` and carried neither the overrides nor a
+controlled environment. The suite this plan shipped could not see it, because
+every assertion it made was about `managerGitClient`.
+
+## CR-01 + CR-02 — the chokepoint
+
+`src/git/adl-git.ts` is new and is the only place `src/` runs `git` for ADL's
+own account. Every invocation from it carries, unconditionally:
+
+- `NEUTRALISE_ARGS` ahead of the subcommand, from the same frozen list
+  `managerGitClient` uses — one list, one proof loop, one README table;
+- the zero-inherit child environment, because it goes through `run()`, the
+  repository's only process launch and the only caller of `buildChildEnv`. This
+  is D-10 applying to ADL's git for the first time;
+- `LC_ALL=C` / `LANG=C` (see WR-03);
+- an exit code, which `simple-git`'s `GitError` never carried.
+
+`defaultHostGitHome` moved here from `git/host-backend.ts`: the worktree modules
+need the same home, and importing it from a *backend* module would have tripped
+the sole-construction-site guard. `adlGit` itself is deliberately **not** on the
+package barrel, for the reason `managerGitClient`'s argv builder is not
+exported.
+
+### What makes a regression detectable
+
+Three independent nets, because the review's complaint was precisely that a
+boundary enforceable only by discipline is not a boundary:
+
+1. **Lint.** `eslint.config.js` gains `adl/no-simple-git-in-workspace-src`,
+   banning the `simple-git` specifier in all three import forms
+   (static, `require()`, dynamic `import()`) inside
+   `packages/workspace/src/**`. The package-wide spawn exemption stays exactly
+   one entry wide — this narrows it back for the one specifier that turned out
+   to be a bypass, and leaves the tests free to hold the control handles.
+   `test/lint/no-restricted-imports.test.ts` asserts the **resolved** options
+   for a real path under the glob, so 02-RESEARCH.md § Pitfall 1 (a later flat
+   entry silently replacing an earlier one) cannot delete it quietly.
+2. **A source-tree guard.** `test/contract/workspace-contract.test.ts` reads
+   every file under `src/` and fails, by filename, if any names `simple-git` or
+   `simpleGit` outside a comment. Deliberately cruder than the registry guard
+   beside it: after `adlGit` exists there is no legitimate reason for the string
+   to appear, and the evasions that matter are the ones an import-statement
+   regex cannot see. It carries a non-vacuity case and a record of which three
+   modules run git, so a fourth is a deliberate line in a diff.
+3. **A behavioural suite.** `test/git/adl-git.test.ts`, below.
+
+### The test that fails without the fix
+
+`test/git/adl-git.test.ts`, in three parts:
+
+- **CONTROL** — a bare `simpleGit(mainRepo).raw(['status','--porcelain'])`
+  against a repository whose `.git/config` carries a poisoned `core.hooksPath`.
+  The planted hook **runs**, and reports back the value of a `GITHUB_TOKEN` set
+  on the parent process. One case, both findings: CR-01 is that the program ran,
+  CR-02 is what it was holding.
+- **SUBJECT** — the same operation through `adlGit`, then the real production
+  entry points: `createWorktree` (fires `post-checkout`), `destroyWorktree`,
+  `snapshot()` inside the agent's own worktree. Nothing runs. **Verified to fail
+  without the fix**: with `NEUTRALISE_ARGS` spliced out, three of these went red
+  and the rest stayed green.
+- **The environment, measured on the child.** `credentials.test.ts` measures
+  children launched through `run()`, which is exactly why it could not observe
+  CR-02 — the `simple-git` children were not launched through `run()`. This part
+  points ADL's git at a stand-in binary that prints its own environment (the
+  device `ManagerGitClientOptions.gitBinary` already exists for; the overrides
+  are still spliced in behind it) and asserts the token is absent, `HOME` is
+  ADL's own git home, `GIT_CONFIG_NOSYSTEM=1`, and `LC_ALL`/`LANG` are `C`.
+
+One case in that file is honestly labelled as **not** discriminating: `git
+worktree list` does not rewrite the index, so neither planted hook fires during
+it even unneutralised. It is a call-path assertion and says so, rather than
+reading like the three cases that can fail.
+
+## WR-03 — locale
+
+`isWorktreeAlreadyGone` matched git's localised stderr against a child that
+inherited the daemon's `LANG`. Now the locale is forced at the chokepoint, so
+the message is git's source string; the exit code is checked as well, which
+`simple-git` never made available. Covered from both ends — the child's own view
+(`LC_ALL=C` even with `LC_ALL=fr_FR.UTF-8` set on the parent) and the behaviour
+that depended on it (teardown stays idempotent with the daemon in a translated
+locale).
+
+## WR-04 — honest teardown reports
+
+`destroyWorktree` returns `'removed' | 'already-absent'` and `destroy()` maps it
+instead of reporting `reclaimed` unconditionally. The return describes the
+*worktree*, not the branch — the half-torn-down shape is a missing worktree with
+a surviving branch, and the caller reports one resource.
+
+The contract case now discriminates per resource. It could not before: its
+`toContain('already-absent')` was satisfied by the scratch-home entry alone
+while the worktree entry beside it said `reclaimed` a second time. The new rule
+is "nothing is reclaimed twice" plus "the second teardown accounts for the same
+resources as the first", rather than "everything is already-absent" — a scratch
+home that lost the Windows handle race legitimately reports `not-reclaimed` then
+and `reclaimed` now, and forbidding that would forbid the truth. Backend-neutral,
+so the contract file's no-branching rule still holds.
+
+## WR-08 — options terminator and refname rules
+
+`--end-of-options` on `worktree add`, `branch --list` and `branch -D`. Verified
+against git 2.49: with the terminator, `--detach` / `--no-checkout` / `--lock`
+in the ref slot fail with `fatal: invalid reference: …` and leave no branch
+behind; without it they are obeyed.
+
+`assertUsableFeatureId` gains git's own refname rules. Fourteen new rejection
+cases, each legal in a *directory* name and illegal or meaningful in a *ref*.
+Two matter beyond tidiness: `*` made `git branch --list 'adl/*'` match every
+existing ADL branch, so a feature called `*` could not be created and the error
+named someone else's branch; and `.` resolved `worktreePath` to the scratch root
+**itself**, so a teardown would have removed every live feature's worktree.
+
+## WR-09 — one ref per capture
+
+The anchoring ref carries a process-local sequence number, so two snapshots at
+the same sha no longer alias. A counter rather than a clock, deliberately: two
+captures inside the same millisecond are exactly the case to distinguish. The
+sha stays the handle `id` for the audit trail.
+
+`test/worktree/snapshot.test.ts` uses the clean-tree route, which is the
+deterministic way to a shared sha (the dirty route depends on how fast the
+machine is — `git stash create` puts a committer timestamp in the object).
+**Verified to fail without the fix**: two live handles resolved to one ref.
+
+## WR-12 — PARTIAL. The substantive half is done; the key list is blocked.
+
+**Done.** The word "every" is gone from `NEUTRALISED_CONFIG`'s docblock, and
+`NEUTRALISATION_RESIDUAL_RISK` is a new export naming what is open. More than
+prose: `test/git/neutralisation-residual-risk.test.ts` **observes** it. A
+committed `.gitattributes` plus a `filter.<driver>.clean` executes a chosen
+program during `snapshot()`, with the full neutralisation in force. Verified
+against git 2.49 — `git status` does not reach it (git answers "modified" from
+cached stat data without reading content), `git stash create` does, and
+`stash create` is what `snapshot()` runs. The case carries a `git check-attr`
+control so a fixture that stopped reaching the mechanism cannot read as "the
+hole is closed", and a docblock saying what to do in each direction if it goes
+red. It also pins that no per-driver override may be added to the list as if it
+had closed the family.
+
+This is the part the review called substantive: the reachable surface is
+repository **content**, not configuration, so `-c filter.x.clean=` closes one
+attacker-chosen name and not the mechanism. `core.attributesFile` only redirects
+the *global* attributes file.
+
+**Blocked — carry-forward.** The fixed-name additions
+(`core.alternateRefsCommand`, `core.askPass`, `gpg.program`, `gpg.ssh.program`,
+`sequence.editor`, `uploadpack.packObjectsHook`) cannot land here.
+`manager-git.test.ts` asserts `NEUTRALISED_CONFIG` and README §"What ADL's own
+git overrides" describe the same key set, and `packages/workspace/README.md` is
+owned by the concurrent fix agent. Adding a key without its README row turns
+that gate red. None of the six is reachable through an operation
+`ManagerGitClient` ships today — ADL neither signs, nor prompts, nor serves an
+upload-pack — so the honest move is to add them in the change that makes them
+live: Phase 5's push and Phase 9's forge operations. They are named in
+`NEUTRALISATION_RESIDUAL_RISK` in the meantime.
+
+## Behaviour change worth knowing about
+
+ADL's worktree git no longer inherits the daemon's `HOME`, so it no longer picks
+up the operator's personal `~/.gitconfig`. `git stash create` writes a commit
+and therefore needs a committer identity, which must now come from ADL's own git
+home (`~/.adl/git-home`) or from the repository's local config. That is D-08
+applied consistently rather than a regression — `managerGitClient` already
+behaved this way — and the failure is loud, carrying git's own message. The home
+is created lazily, `0700`.
+
+## Not touched
+
+WR-01, WR-02, WR-07, WR-11, WR-13, WR-14 and IN-01…IN-05 were outside this
+agent's scope and remain open in `02-REVIEW.md`.
+
+## Gates
+
+`pnpm -r test` (619 passed, 2 skipped), `pnpm vitest run --project root` (33
+passed), `pnpm -r typecheck`, `pnpm lint`, `pnpm format` — all green. No
+assertion was weakened, relaxed, skipped or deleted.
+
