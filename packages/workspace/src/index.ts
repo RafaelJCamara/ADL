@@ -36,6 +36,7 @@ export {
   branchNameFor,
   createWorktree,
   destroyWorktree,
+  featureIdFromBranch,
   type CreatedWorktree,
 } from './worktree/lifecycle.js';
 

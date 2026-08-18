@@ -94,6 +94,25 @@ export async function worktreeWorkspace(
       );
     },
 
+    /**
+     * Reclaim everything this workspace owns: the worktree, its branch, and the
+     * scratch home.
+     *
+     * **This is the primary reclamation path, not a hint (D-14).** The worker
+     * calls `destroy()` the moment it sees the feature reach a terminal state,
+     * so reclamation is true *continuously* rather than only in the moments
+     * after a GC pass. The sweep in `worktree/gc.ts` is the backstop for what a
+     * crash skipped (D-15) — it exists because a worker can die between the
+     * terminal transition and this call, not because teardown is optional here.
+     *
+     * Said explicitly because the simplification is tempting and wrong: dropping
+     * this call "since the sweep would catch it eventually" turns success
+     * criterion 1 from a continuous property into a periodic one, and every
+     * window between sweeps accumulates worktrees and `adl/*` branches.
+     *
+     * The two-step order lives inside {@link destroyWorktree} rather than here,
+     * so no call site — this one included — is in a position to get it wrong.
+     */
     async destroy(): Promise<void> {
       // Worktree first, then the scratch home: the worktree teardown is the step
       // that can fail loudly and is worth surfacing, and leaving a temp
