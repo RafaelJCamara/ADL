@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, chmod, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -21,6 +21,9 @@ import { withTempRepo } from '../helpers/temp-repo.js';
  * Located the same way `packages/db/test/helpers/temp-db.ts` locates its
  * fixtures — resolved from this module's own URL, so it does not depend on the
  * process cwd, which the workspace deliberately changes for the child.
+ *
+ * **This path is the SOURCE of the program, never the path the child is given.**
+ * See {@link stageEnvDumpChild}.
  */
 const ENV_DUMP_CHILD = fileURLToPath(
   new URL('../helpers/env-dump-child.cjs', import.meta.url),
@@ -73,6 +76,51 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
+/**
+ * Copy the env-dump program into the workspace's own scratch `HOME`, and return
+ * the path the child should be launched with.
+ *
+ * **A child of a workspace is not entitled to read ADL's source tree, and under
+ * WORK-05 it genuinely cannot.** With the privilege drop active the child runs
+ * as the dedicated `adl-worker` user, and the only directories that user can
+ * reach are the system ones, its own scratch `HOME`, and the feature worktree —
+ * the three `applyWorkerAccess` widens to the shared group. This repository's
+ * checkout is deliberately not among them. On a GitHub-hosted Linux runner the
+ * checkout lives under `/home/runner`, which is not world-traversable, so
+ * handing the child `<repo>/test/helpers/env-dump-child.cjs` produced a node
+ * process that could not open its own program and exited 1 — the two failures on
+ * CI run `32127511018`, and the only cases in the package that asked a dropped
+ * child to execute a file from the checkout rather than a `node -e` string or a
+ * system binary.
+ *
+ * Staging into the scratch `HOME` fixes that without touching a single
+ * assertion, and it is the more faithful arrangement in its own right: in
+ * production an agent's child only ever executes something inside its worktree,
+ * inside its scratch `HOME`, or on the system. The directory is `0770` and
+ * group-owned by the worker on Linux (`applyWorkerAccess`), it sits under a
+ * world-traversable `/tmp`, and `destroy()` removes it with everything in it —
+ * so nothing here outlives the workspace.
+ *
+ * The program itself is still a real `.cjs` file run by a real child, which is
+ * the whole reason `helpers/env-dump-child.cjs` exists rather than a `node -e`
+ * string: the copy is byte-for-byte, so there remains exactly one copy of the
+ * program and one place its reasoning is written down.
+ *
+ * The mode is set explicitly rather than inherited from the copy or from the
+ * umask: a runner with a restrictive umask would otherwise produce a file the
+ * worker cannot read, reintroducing the same failure with a different cause.
+ * `0644` is safe here because the *directory* is what confines it — `0770`, no
+ * world bit, per T-2-35.
+ */
+async function stageEnvDumpChild(workspace: Workspace): Promise<string> {
+  const staged = join(workspace.scratchHome, 'env-dump-child.cjs');
+  await copyFile(ENV_DUMP_CHILD, staged);
+  // Skipped on Windows, where the POSIX bits mean nothing — the same reasoning
+  // `test/helpers/temp-repo.ts` gives for its own chmod.
+  if (process.platform !== 'win32') await chmod(staged, 0o644);
+  return staged;
+}
+
 /** Run the env-dump child and return everything it printed, both streams. */
 async function dumpChildEnv(
   workspace: Workspace,
@@ -80,7 +128,7 @@ async function dumpChildEnv(
 ): Promise<string> {
   const chunks: LogChunk[] = [];
   const spec: ExecSpec = {
-    argv: [process.execPath, ENV_DUMP_CHILD],
+    argv: [process.execPath, await stageEnvDumpChild(workspace)],
     cwd: workspace.root,
     path: process.env.PATH ?? '',
     networkPolicy: 'full',
@@ -89,9 +137,18 @@ async function dumpChildEnv(
   };
 
   const result = await workspace.exec(spec, (chunk) => chunks.push(chunk));
-  expect(result.exitCode).toBe(0);
 
-  return chunks.map((chunk) => chunk.text).join('\n');
+  const output = chunks.map((chunk) => chunk.text).join('\n');
+  // The child's own output as the failure message, following
+  // `test/exec/privilege.test.ts`. A bare `expected 1 to be +0` from inside a
+  // helper cost this plan a full CI round trip to diagnose; the launcher's or
+  // node's own complaint names the cause on the first read. It is rendered only
+  // when the child exited non-zero — that is, when it never reached its single
+  // write — so a leaked credential is reported by the assertions below rather
+  // than printed here.
+  expect(result.exitCode, output).toBe(0);
+
+  return output;
 }
 
 /** Run a command in the workspace, returning its exit code and its output. */
