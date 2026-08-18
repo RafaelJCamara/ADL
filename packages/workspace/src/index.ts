@@ -51,6 +51,17 @@ export {
   type WorktreeEntry,
 } from './worktree/list.js';
 
+// The GC backstop (D-15, D-16, D-20) — the POLICY half. It reaches feature
+// state through an injected lookup rather than importing @adl/db, so the
+// swappable backend layer carries no database dependency. The manager binds
+// the lookup and owns the trigger; both are Phase 3.
+export {
+  sweepOrphans,
+  type FeatureStateLookup,
+  type GcDeps,
+  type SweepFailure,
+} from './worktree/gc.js';
+
 // Backends — implementations of the Workspace interface @adl/core declares.
 export {
   worktreeWorkspace,
