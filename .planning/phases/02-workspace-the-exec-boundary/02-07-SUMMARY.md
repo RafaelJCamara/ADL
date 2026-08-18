@@ -743,3 +743,25 @@ outside this fix pass's scope and remain open in `02-REVIEW.md`. `WR-13` (the
 workspace package's tests are never typechecked) is worth noting here: the new
 cases in this pass are, like all the others, transpiled without being
 type-checked.
+
+> **Superseded — do not read the paragraph above as the current disposition.**
+>
+> This was the only record those findings had: a prose list with no
+> reproduction, no owning phase, and no acceptance decision, which is a lower
+> standard than the entries in `deferred-items.md` beside it.
+> `02-VERIFICATION.md` flagged that as an audit-trail gap and routed it to a
+> human. It has since been closed:
+>
+> - **`WR-11` — FIXED.** The `adl/*` architecture globs and the contract suite's
+>   source walker now reach `.mts`/`.cts`/`.tsx`, with a fixture per extension.
+>   This was `02-VERIFICATION.md`'s one gap (success criterion 2's enforcement
+>   half); see that file's § Gaps for how it was closed and demonstrated.
+> - **`WR-01` — FIXED.** `Workspace.exec()` validates `ExecSpec.cwd` against the
+>   workspace root through the same containment guard `read`/`write` use.
+> - **`WR-02` — FIXED.** `buildChildEnv` refuses the `GIT_CONFIG_*` family and
+>   the variables naming programs git executes, matched by prefix rather than by
+>   name because `KEY_n`/`VALUE_n` are indexed.
+> - **`WR-07`, `WR-12`'s residual, `WR-13`, `WR-14`, and `IN-01`..`IN-05` —
+>   recorded properly**, one entry each, in `deferred-items.md` as `D-2-R-3`
+>   through `D-2-R-11`. Each carries a reproduction or an explicit note that it
+>   is unreproduced and why, a proposed shape, and an owning phase.

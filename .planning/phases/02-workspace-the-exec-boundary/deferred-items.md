@@ -399,3 +399,350 @@ D-2-07-2.
 **Status:** open. Not blocking — the mismatch requires a `PATH` that differs
 between the daemon and the child in whether it contains `sudo`, which no current
 call site produces. Belongs with whichever plan next touches `run()`'s signature.
+
+<!-- ─────────────────────────────────────────────────────────────────────────
+     The entries below were recorded by the 02 verification-gap fix pass.
+
+     They existed only as a prose "Not touched" sentence at the end of
+     `02-07-SUMMARY.md` — no reproduction, no owning phase, no acceptance
+     decision — which is a different standard from the seven entries above and
+     is why `02-VERIFICATION.md` routed them to a human. Recording them here
+     does not decide them; it makes them decidable.
+
+     Of that list, WR-01, WR-02 and WR-11 were FIXED rather than deferred (see
+     `02-VERIFICATION.md` § Gaps and the three `fix(02):` commits). What
+     follows is the genuine residue.
+     ───────────────────────────────────────────────────────────────────────── -->
+
+## D-2-R-3: `assertWithinRoot` is check-then-use against a concurrently running agent (WR-07)
+
+**Found by:** `02-REVIEW.md` § WR-07 (warning). Left untouched by the review-fix
+pass and absent from this file until now.
+
+**What goes wrong:** `assertWithinRoot` realpaths, returns an absolute path, and
+the caller then opens it — `readFile` in `read()`, `mkdir` + `writeFile` in
+`write()`. Those are two syscalls with a gap between them. An agent running
+inside its own worktree, which is the normal state of affairs while a stage
+writes an artifact, can replace a path component with a symlink in that gap, and
+the subsequent `open()` follows it.
+
+`paths.ts`'s docblock presents the realpath walk as *the* answer to T-2-24 ("a
+symlink planted inside the root defeats every check here"), and it is — for a
+symlink planted **before** the check. It cannot be for one planted after, and
+nothing in the module says so, which is the part that misleads: a reader
+budgeting trust from that paragraph over-trusts it.
+
+The same gap now exists on the `cwd` path added for WR-01
+(`assertCwdWithinRoot`), for the identical reason and with the identical shape:
+the guard resolves, `run()` then hands the path to execa.
+
+**Reproduction:** [NOT REPRODUCED — this is a race, and a reproduction is a
+harness rather than a transcript.] The shape it would take: `read()` a path
+whose parent directory is replaced with a symlink to `/etc` by a concurrent
+process in a tight loop, and observe a read outside the root succeeding at some
+iteration. Worth building as part of the fix rather than before it — an
+unreproduced race is a real finding, but a *flaky* reproduction is not evidence
+either way, and the phase's recurring defect is controls believed for the wrong
+reason.
+
+**What picking it up requires**, in the shape that looks right from here:
+
+- The cheap, portable half first: `open()` the file, then `fstat` the handle and
+  compare `dev`/`ino` against a `stat` of the path the guard blessed, failing
+  closed on mismatch. No new syscalls beyond one `fstat`, and it converts the
+  race from "the attacker wins silently" to "the attacker is detected".
+- `O_NOFOLLOW` on the leaf where the platform supports it (Linux, macOS), which
+  closes the leaf case outright. Windows has no equivalent, so this cannot be
+  the only measure — the platform-split shape § Pitfall 7 warns about.
+- Whichever is chosen, `paths.ts`'s docblock must state what the guard does and
+  does not cover. If the residual race is ACCEPTED instead of closed, that
+  sentence is the entire deliverable and is worth more than a partial fix.
+
+**Owning phase: Phase 3.** It owns the manager/worker seam and concurrency
+limits, so it is the first phase in which "an agent is running while ADL touches
+the same tree" is a scheduled event rather than a possibility. D-2-R-1 (one
+worker identity per deployment) is filed there for the same reason and makes the
+same window wider; the two want to be reasoned about together.
+
+**Status:** open. Not blocking — it requires an agent actively racing ADL's own
+`read`/`write` on the same path, and in v1 nothing schedules those concurrently.
+
+## D-2-R-4: an attacker-named `filter.<driver>.clean` still executes during ADL's own `snapshot()` (WR-12 residual)
+
+**Found by:** `02-REVIEW.md` § WR-12. The fixed-name half was closed; the
+**wildcard** half is open, and this entry is that half.
+
+`02-VERIFICATION.md` routed this to a human decision because Phase 15's success
+criteria are about write auditing, secret scanning, egress and a published threat
+model, and none of them names git-config neutralisation — too tangential to
+auto-defer. It is filed here so it has an owner proposed rather than none.
+
+**What is open:** `NEUTRALISED_CONFIG` neutralises eight keys by name.
+`filter.<driver>.clean` / `.smudge` and `diff.<driver>.textconv` / `.command`
+cannot be neutralised that way, because `<driver>` is chosen by whoever writes
+the `.gitattributes` — `-c filter.x.clean=` closes one name, not the mechanism.
+A `.gitattributes` committed into the repository selects the driver, and git
+invokes it on checkout, status and diff. `core.attributesFile` points the GLOBAL
+attributes file somewhere inert and has no effect on a committed one.
+
+**Reproduction: it already exists, it is committed, and it passes.**
+`packages/workspace/test/git/neutralisation-residual-risk.test.ts` §
+`executes a committed .gitattributes filter during snapshot(), overrides and all`
+plants a `.gitattributes` naming an attacker-chosen driver and observes the
+program run during ADL's own `snapshot()` **with the full `NEUTRALISE_ARGS` set
+in force**. It carries a `git check-attr` control so it cannot pass vacuously,
+and the file's docblock says what to do if it ever goes green: the hole closed,
+and the risk record should be updated rather than the test deleted. That is the
+opposite of a control passing for the wrong reason, and it is why this entry
+needs no new evidence.
+
+**What picking it up requires:** a decision, then a mechanism.
+
+- The decision: is "agent-written configuration cannot affect ADL's own git
+  operations" (WORK-07) satisfied by eight fixed keys plus a Linux-only OS layer,
+  with the wildcard driver family open on every other platform? Phase 2 shipped
+  saying yes, honestly and in writing (`NEUTRALISATION_RESIDUAL_RISK`, the README
+  table, and the passing test above). A later phase may reasonably say no.
+- The mechanism, if the answer is no: the candidates are running ADL's own git
+  with the driver families disabled at a level `.gitattributes` cannot reach, or
+  taking snapshots through a path that does not apply attributes at all
+  (`git stash create` does), or refusing to operate on a tree whose
+  `.gitattributes` names a driver ADL has not seen. Each is a real design with
+  real cost; none is a flag.
+
+**Owning phase: Phase 15**, which is where the threat model is published — the
+document in which an accepted residual either appears with its reasoning or
+silently stops being accepted. Proposed rather than assigned: it needs the
+success criteria to gain a line about configuration neutralisation, because
+today they do not have one.
+
+**Status:** open, and DEMONSTRATED rather than suspected. Not blocking — it
+requires a `.gitattributes` committed into the repository ADL is running against,
+which is the same trust boundary D-22 already puts the feature spec on.
+
+## D-2-R-5: the workspace package's tests are never typechecked (WR-13)
+
+**Found by:** `02-REVIEW.md` § WR-13.
+
+**Reproduction** — run in `packages/workspace`, at the commit that fixed WR-01:
+
+```
+$ npx tsc --noEmit --listFiles | grep -c "packages/workspace/test/"
+0
+```
+
+[VERIFIED locally during the 02 verification-gap fix pass.] `tsconfig.json`'s
+`include` is `["src/**/*.ts"]` and `typecheck` is a bare `tsc --noEmit`, so none
+of the ~2,900 lines under `test/` is ever compiled. Vitest transpiles them
+without checking.
+
+**Why it matters:** `packages/core` solved exactly this with a
+`tsconfig.test.json`, on the stated grounds that "an assertion that is never
+compiled asserts nothing". This package has far more test code than core and
+several constructs that only a compiler would catch drifting — non-null
+assertions in `privilege.test.ts`, `as unknown as` casts in `env.test.ts`, and
+now the `as ExecSpec` shapes this pass added. A test that stops compiling after a
+renamed export does not fail CI's typecheck step; it fails at runtime with a
+message about the wrong thing, or quietly stops asserting.
+
+**What picking it up requires:** copy `packages/core/tsconfig.test.json` into the
+package and make `typecheck` run both programs
+(`tsc --noEmit && tsc --noEmit -p tsconfig.test.json`). Small, but not free: the
+first run will surface real errors in ~2,900 lines that have never been
+compiled, and fixing those is the actual work. Doing it inside a fix pass whose
+reviewers were asked to look at containment would bury them.
+
+**Owning phase: Phase 3**, as a chore at the start rather than a plan of its own
+— it should land before Phase 3 writes more workspace tests, because every test
+added first is more to fix later.
+
+**Status:** open. Not blocking — nothing is known to be broken; the point is that
+nothing would say so.
+
+## D-2-R-6: CI runs Linux only, so every Windows branch in this phase is unverified (WR-14)
+
+**Found by:** `02-REVIEW.md` § WR-14.
+
+**Reproduction:** `.github/workflows/ci.yml:15` is `runs-on: ubuntu-latest`, and
+the matrix at line 22 varies the Node version only. [VERIFIED by reading the
+workflow at this commit.]
+
+**Why it matters:** this phase's source is platform-conditional on nearly every
+security path — `env.ts`'s `USERPROFILE` branch, `paths.ts`'s case-folded
+comparison, `scratch-home.ts`'s `EBUSY`/`EPERM` retry, `privilege.ts`'s OS gate,
+and the `chmod` skips in two test helpers. The maintainer's machine is the only
+place the Windows branches ever run, and it is not a gate. The phase's own
+history is *about* a control that passed for the wrong reason on one platform
+(D-21, `platform.ts`).
+
+It also bit this fix pass directly. The WR-01 change had to alter a code path
+(`poisoned-config.test.ts`'s `inWorktreeAsOwner`) that is only REACHED under the
+Linux privilege drop; the mitigation was to create the workspace unconditionally
+and add a control that runs everywhere, but "unverified until CI" is a sentence
+this repository should not have to keep writing.
+
+**What picking it up requires:** add `windows-latest` — and ideally
+`macos-latest` — to the matrix, with the worker-provisioning step guarded by
+`if: runner.os == 'Linux'`. `linuxOnly()` already behaves correctly on a
+non-Linux runner: it prints its `[ADL][SKIPPED]` line and continues, so the extra
+legs are cheap and immediately meaningful. Expect the first Windows run to be
+red; that is the finding, not a reason to defer again.
+
+**Owning phase: Phase 3.** It is the next phase to add cross-platform surface
+(the manager/worker `fork()` seam), and adding legs after that surface exists
+means debugging two things at once.
+
+**Status:** open. Not blocking any code property — it is a gap in *evidence*,
+which is precisely the class of gap this phase keeps finding.
+
+## D-2-R-7: the aborted-signal contract case cannot tell "killed" from "never started" (IN-01)
+
+**Found by:** `02-REVIEW.md` § IN-01 (info).
+
+**What goes wrong:** the case asserts `exitCode !== 0`, `durationMs < 30_000` and
+`chunks == []`. A child that was never spawned satisfies all three — `run()` maps
+execa's `undefined` exit code to `null`, which is `!== 0`. Its comment says "the
+assertion that this call returns at all is the assertion that it was killed",
+which holds only if something proves the process existed.
+
+**Why it matters more than an info finding usually would:** D-2-07-1 defers the
+question of whether cancellation reaches a **dropped** child and says "measure
+first". This case looks, at a glance, like that measurement. It is not, and a
+reader who takes it for one will close D-2-07-1 without evidence.
+
+**Reproduction:** [NOT REPRODUCED — it is an argument about what the assertions
+admit, not a failure.] It is checkable by inspection: `run.ts`'s
+`exitCode: result.exitCode ?? null` and the three assertions are all that is
+involved.
+
+**What picking it up requires:** have the child write a marker into the workspace
+root before sleeping, abort after observing the marker, and assert both that the
+first marker exists (it ran) and that a second marker written after the sleep
+does not (it was killed). That turns the case into the measurement D-2-07-1 asks
+for on the undropped path, which is most of the way to closing it.
+
+**Owning phase: Phase 4**, with D-2-07-1 — the plan that owns cancellation
+semantics end to end, since budget interrupt is what first cancels an exec.
+
+**Status:** open. Not blocking — cancellation demonstrably works on the undropped
+path; what is missing is a case that could tell if it stopped.
+
+## D-2-R-8: `tracer.test.ts` asserts scratch-home removal unconditionally (IN-02)
+
+**Found by:** `02-REVIEW.md` § IN-02 (info).
+
+**What goes wrong:** `expect(await exists(scratchHome)).toBe(false)` runs
+immediately after a real child exited in that workspace — the exact scenario
+`credentials.test.ts` and `scratch-home.test.ts` both refuse to assert
+unconditionally, because a just-exited child can still hold a Windows handle.
+`destroyScratchHome`'s retry loop makes it usually pass.
+
+**Reproduction:** [NOT REPRODUCED — it has not been observed failing. "Usually
+passes" is the claim, and a flake that has not flaked yet is exactly the thing
+that is hard to evidence.] It is asymmetric with two sibling suites that were
+written the careful way, and that asymmetry is the finding.
+
+**What picking it up requires:** gate it the way `credentials.test.ts` does —
+assert the reported `ScratchHomeTeardown` outcome, and assert absence only when
+the outcome is `removed` / `already-absent`. Five lines, and it removes a source
+of red runs that would be blamed on whatever change happened to be in flight.
+
+**Owning phase: Phase 3**, together with D-2-R-6 — a Windows CI leg is what would
+turn this from "usually" into "sometimes red on somebody else's PR", so the two
+should land in the same direction.
+
+**Status:** open. Not blocking.
+
+## D-2-R-9: the stub snapshot id is not unique (IN-03)
+
+**Found by:** `02-REVIEW.md` § IN-03 (info).
+
+**What goes wrong:** `stub-${featureId}-${captured.size}-${Date.now()}` is
+documented as "stable and unique per capture", and two snapshots of the same file
+count within one millisecond collide. The contract case only asserts `id !== ''`,
+so the documented claim is untested.
+
+**Reproduction:** [NOT REPRODUCED as a failing test — no current caller takes two
+stub snapshots in a millisecond.] It is the same defect as WR-09, which WAS
+reproduced and fixed in the worktree backend by replacing the clock with a
+process-local counter (`nextSnapshotSeq`), and the reasoning transfers verbatim:
+"two captures within the same millisecond are exactly the case that has to be
+distinguished, so a clock is the one source that cannot be used."
+
+**What picking it up requires:** the same counter the worktree backend already
+uses, and a contract case asserting two consecutive snapshots have different
+ids — which would run against both backends and is the assertion whose absence
+let this survive.
+
+**Owning phase: Phase 4**, the first phase to take snapshots in a round loop and
+therefore the first that could collide. Small enough to do sooner if anything
+else touches the stub backend.
+
+**Status:** open. Not blocking — the stub backend serves no production
+deployment.
+
+## D-2-R-10: `isWithinRoot` rejects everything for a filesystem-root `root` (IN-04)
+
+**Found by:** `02-REVIEW.md` § IN-04 (info).
+
+**What goes wrong:** the comparison is
+`target === root || target.startsWith(root + sep)`. For `root = '/'` (or `C:\`),
+`root + sep` is `'//'`, so every candidate is reported outside — containment
+silently rejects everything rather than failing loudly.
+
+**Reproduction:** [VERIFIABLE IN ONE LINE, not yet committed as a case:
+`isWithinRoot('/', '/etc')` returns `false`.] Unreachable through the current
+backends — every root is a `mkdtemp` directory, a worktree path, or a repository
+— but `isWithinRoot` is **exported**, and its docblock offers it to out-of-tree
+code as the way to ask this question.
+
+**Why the direction matters:** it fails CLOSED, which is the safe direction and
+is why this is info rather than a warning. The cost is a container backend rooted
+at `/` inside its own namespace — a plausible v2 shape — whose every path is
+refused for a reason no message explains.
+
+**What picking it up requires:** normalise before the prefix test
+(`root.endsWith(sep) ? root : root + sep`), plus a case per platform separator.
+Ideally also a decision on whether a filesystem-root workspace should be refused
+outright at construction, which may be the more honest answer.
+
+**Owning phase: the phase that adds the container backend** (post-v1, per D-03).
+It is the first caller for which the case is reachable, and fixing it earlier
+without that caller means guessing at what the right behaviour is.
+
+**Status:** open. Not blocking — fails closed, and unreachable in v1.
+
+## D-2-R-11: `WorktreeWorkspaceOptions.worker` is unreachable through the registry (IN-05)
+
+**Found by:** `02-REVIEW.md` § IN-05 (info).
+
+**What goes wrong:** `worktreeBackend.create` calls `worktreeWorkspace(spec)`
+with no options, and `WorkspaceRegistryConfig` has a `hostGit` field but no
+`worktree` one — so the worker identity can only ever come from
+`workerIdentityFromEnv()`. `privilege.ts` promises otherwise, in as many words:
+"A caller that passes an identity explicitly — the manager, once Phase 3 owns
+configuration — overrides this entirely."
+
+**Reproduction:** [NOT REPRODUCED — it is a reachability fact, checkable by
+reading `registry.ts`'s two `create` implementations side by side. The `hostGit`
+field is threaded; there is no `worktree` field to thread.]
+
+**Why it matters, and why it is worse than an unused option:** `registry.ts` is
+by rule the ONLY place a backend factory may be named — enforced by
+`workspace-contract.test.ts`. So Phase 3 cannot deliver the promised override
+without editing this file, and the promise sits at the definition where a Phase 3
+author will read it and believe the wiring exists. It is also the mechanism
+D-2-R-1's per-feature worker pool needs: a leased identity has to reach the
+backend somehow, and this is the field it would reach it through.
+
+**What picking it up requires:** add `readonly worktree?: WorktreeWorkspaceOptions`
+to `WorkspaceRegistryConfig` and thread it, mirroring `hostGit` exactly — or
+delete the option and the promise. Threading it is the better half of that
+choice given D-2-R-1, but it should be done by the plan that has a caller for it,
+not speculatively.
+
+**Owning phase: Phase 3**, which is where D-2-R-1 says the lease state lives and
+where `privilege.ts`'s own docblock already says the override arrives.
+
+**Status:** open. Not blocking — `workerIdentityFromEnv()` is the correct source
+for a single-identity deployment, which is every v1 deployment.
