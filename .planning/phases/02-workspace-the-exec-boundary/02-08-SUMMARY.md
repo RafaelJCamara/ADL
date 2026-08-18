@@ -402,3 +402,145 @@ Against `<success_criteria>`:
 
 _Phase: 02-workspace-the-exec-boundary_
 _Completed: 2026-08-18_
+
+---
+
+# ADDENDUM — Linux CI run `32149311523`, diagnosis and fix
+
+**Added after the CI run that followed `02-07`'s `f7dd0c4` fix. Both matrix legs
+(node 22 and node 24) were RED with 11 failures, all of them in
+`test/git/poisoned-config.test.ts`; everything else on the job was green. This
+addendum records what caused them and what changed. It is NOT evidence that the
+phase gate is satisfied — only a human reading a green Linux run may say that.**
+
+## What the red run produced, and what it was worth
+
+The rest of the job is the evidence the phase was after, and it held:
+
+| Observation                                                             | Reading                                                                                              |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `test/exec/privilege.test.ts` — 8/8 on both legs, zero `[ADL][SKIPPED]` | WORK-05's Linux-only assertions executed against a real `adl-worker` child. Unchanged by this fix.     |
+| `test/exec/credentials.test.ts` — 3/3 on both legs                       | `02-07`'s `f7dd0c4` staging fix held.                                                                  |
+| `does not execute the planted hook during a manager-side operation` — passing | The security property itself — layer 1, the per-invocation `-c` neutralisation — was never in doubt. |
+
+The 11 failures split into two symptom groups that turned out to have **one**
+cause.
+
+## Root cause: git refuses the repository before it refuses the write
+
+Eight cases in the per-key loop plus the `leaks a hooks path …` case failed on
+the same statement — `expect(await asAgent(['git','config',key,poison])).toBe(0)`
+— with `expected 128 to be +0`. The suite discarded the child's stderr, so
+git's own explanation never reached the log.
+
+Reproduced on Linux (WSL Ubuntu, git 2.43) rather than inferred from the number:
+
+| Scenario                                                       | Exit    | git says                                                          |
+| -------------------------------------------------------------- | ------- | ------------------------------------------------------------------ |
+| `git config <key> <value>` in a worktree, repo owned by another user | **128** | `fatal: not in a git directory`                                    |
+| `git status` in the main repo, same conditions                 | **128** | `fatal: detected dubious ownership in repository at '…'`           |
+| `git config --get <key>`, same conditions                      | **1**   | *(nothing)* — indistinguishable from "that key is unset"           |
+| `git config <key> <value>` with `.git` and `.git/config` unwritable | **255** | `error: could not lock config file …: Permission denied`           |
+| `post-index-change` hook at `0755`, `core.hooksPath` poisoned   | 0       | hook **fires** during `git status`                                 |
+| same hook at `0644`                                            | 0       | hook **ignored** (`advice.ignoredHook` hint on stderr)             |
+
+So the 128 in CI is git's **ownership** refusal, not a permission one. Under
+WORK-05's drop the agent runs as `adl-worker` while the fixture repository is
+owned by the CI runner, and git's `safe.directory` check declines before it
+consults a single permission bit. The 255 row is `applyWorkerAccess`'s
+`protect` on `<mainRepo>/.git/config` — layer 2 of the § Pitfall 5 defence,
+standing behind the ownership refusal and never reached.
+
+**Both symptom groups follow from that one fact.** `core.hooksPath` was never
+poisoned, so:
+
+- the CONTROL found no hook directory to consult and saw nothing fire —
+  `expected false to be true`;
+- `still sees the poisoned value in the file` read back `''`, because
+  `git config --get` on an unset key exits 1 with no output and `simple-git`
+  resolves rather than rejects on an exit-1-with-empty-stderr.
+
+The CONTROL failure was **not** the executable bit. `02-08`'s original reasoning
+— probe the platform, do not add a skip predicate that can never return `skip` —
+was correct, and the `chmod(hook, 0o755)` it already carried is what makes the
+hook fire on Linux. That was verified in both directions above.
+
+## What changed (commit `28c1fc3`)
+
+`packages/workspace/test/git/poisoned-config.test.ts` only. No source file, no
+security assertion removed, relaxed, or skipped.
+
+1. **The poisoning step branches on the real privilege mode, and the branch is
+   an assertion.** `privilegeLauncher({ worker: workerIdentityFromEnv(), … })` —
+   the same decision the worktree backend made — rather than
+   `process.platform === 'linux'`, which would get an unprovisioned Linux host
+   wrong in the direction that hides a failure.
+   - Drop **not** in force (Windows, macOS, unprovisioned Linux): the agent
+     poisons and the write must succeed. Exactly as `02-08` wrote it.
+   - Drop **in force**: the agent's write must **fail** — layer 2 asserted
+     rather than assumed, which is an assertion the suite did not previously
+     have — and the same write is then performed *from the same linked
+     worktree* by the identity that owns the repository, so layer 1 is still
+     proven. The claim in `leaks a hooks path …` is about git's worktree
+     layout, not about which uid ran the command, and it is proven identically
+     in both branches.
+   - The refusal is asserted as `not.toBe(0)`, deliberately not `128`. When a
+     later phase teaches git to trust a daemon-owned repository the refusal
+     becomes the 255 permission one; pinning either number would turn that fix
+     into a spurious failure here.
+2. **Both streams are kept from every workspace exec, and git's stderr is
+   attached to every assertion message** (`diagnose()`, which also prints
+   whether the drop was in force). This is the deliverable that made this round
+   diagnosable at all in `02-07`, applied here: a future red run reports git's
+   `fatal:` line instead of a bare `expected 128 to be +0`.
+3. **The drop is proven able to run `git` at all before any refusal is read as
+   evidence.** `not.toBe(0)` is satisfied by a launcher that failed to start or
+   a binary the worker cannot execute; a one-time `git --version` probe in
+   `beforeAll` throws with a named reason instead.
+4. The module docblock records the whole finding, including the exit-code table,
+   so the next reader meets it before the code.
+
+## Local gates after the fix (Windows, all exit 0)
+
+| Check                                                | Result                           |
+| ----------------------------------------------------- | ---------------------------------- |
+| `pnpm vitest run test/git/poisoned-config.test.ts`   | 12 passed                        |
+| `pnpm -r test`                                        | core 404, plugin-sdk 10, db 43, workspace 129 passed / 2 skipped |
+| `pnpm vitest run --project root`                      | 30 passed                        |
+| `pnpm -r typecheck`                                   | 0                                |
+| `pnpm lint`                                           | 0                                |
+| `pnpm format`                                         | 0                                |
+
+The two skips are the pre-existing Linux-only privilege cases from `02-07`,
+untouched.
+
+**The drop-in-force branch was also exercised locally**, by temporarily forcing
+`poisonFromWorktree` down the owner path and re-running: 12 passed. That
+validates every line CI will execute under the drop *except* the `not.toBe(0)`
+refusal assertion itself, which cannot be produced on Windows.
+
+## Still UNVERIFIED until the next Linux run
+
+| Claim                                                                                       | Why it cannot be checked here                                                                                                  |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| The dropped agent's `git config` write is refused (`not.toBe(0)`)                            | Requires a second OS user. Grounded in the CI-observed 128 and the WSL reproduction, but not executed on the real matrix.       |
+| `inWorktreeAsOwner` writes the main repo's config when the cwd is a worktree owned by that user | Verified on Windows and reproduced as a raw `git` sequence on Linux; not yet executed as ADL code on Linux.                     |
+| The planted hook fires on the CI runner's git (2.51.x, not 2.43)                              | Hook-ignoring behaviour is long-stable, but the version differs from the one reproduced against.                                |
+| `git --version` probe passes as the dropped worker                                            | Implied by `credentials.test.ts:293` on the red run, not asserted there.                                                       |
+
+## Carry-forward — a real gap this uncovered
+
+**On a Linux deployment with the privilege drop active, the agent cannot run
+`git` inside its own worktree at all.** Every command exits 128 with git's
+dubious-ownership refusal, because the repository is owned by the daemon user
+and the child runs as `adl-worker`. That is not a test-fixture artifact — it is
+how a real installation is laid out, and an agent that cannot `git status`,
+`git add`, or `git commit` cannot do the job ADL exists to give it.
+
+It is deliberately NOT fixed here: the remedy is to teach git to trust the
+daemon-owned repository (a `safe.directory` entry in the worker's scratch
+`GIT_CONFIG_GLOBAL`, which the child environment already owns), and that is a
+security-relevant design decision that belongs in a plan rather than in a test
+fix. Logged to `deferred-items.md` as `D-2-08-1`. Note that fixing it does not
+weaken layer 2: `applyWorkerAccess` still takes group and world write off
+`<mainRepo>/.git/config`, which is the 255 refusal above.

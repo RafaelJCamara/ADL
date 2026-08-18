@@ -197,3 +197,51 @@ with zero `[ADL][SKIPPED]` lines.
 
 **Status:** open. Not blocking — it is a log-clarity and evidence-attribution
 problem, not a containment one. No production deployment runs the stub backend.
+
+## D-2-08-1: under the privilege drop, the agent cannot run `git` in its own worktree
+
+**Found during:** the diagnosis of the Linux CI run `32149311523`, while
+accounting for eleven `expected 128 to be +0` failures in
+`test/git/poisoned-config.test.ts`.
+
+**What happens:** with WORK-05's drop in force the child runs as `adl-worker`
+while the repository and its worktree are owned by the daemon user. Git's
+`safe.directory` check refuses on that mismatch before it consults a single
+permission bit, so **every** git command an agent runs inside its workspace
+dies. Reproduced on Linux (git 2.43): `git config <key> <value>` in a worktree
+exits **128** with `fatal: not in a git directory`, and `git status` exits 128
+with `fatal: detected dubious ownership in repository at '…'`.
+
+**Why it matters:** this is not a fixture artifact. A real installation is laid
+out exactly this way — that is the whole point of D-06's pre-provisioned worker
+— and an agent that cannot `git status`, `git add`, or `git commit` cannot do
+the job ADL exists to give it. It has been invisible so far only because
+`poisoned-config.test.ts` is the sole place a *repository* git command runs
+through a dropped exec; `credentials.test.ts` runs `git --version`, which needs
+no repository and therefore passes.
+
+**The shape of the fix:** the worker's `GIT_CONFIG_GLOBAL` already points inside
+the scratch home that `buildChildEnv` owns, so a `safe.directory` entry naming
+the worktree and the main repository can be written there by the worktree
+backend at creation time — per-run, disposable with the directory, and reaching
+no configuration the operator owns. Note it must name specific paths: a blanket
+`safe.directory=*` in a file an agent can rewrite is not a fix.
+
+**Why it was not fixed now:** it is a security-relevant design decision — which
+paths are declared trusted, written by whom, and whether the agent's ability to
+rewrite its own `GIT_CONFIG_GLOBAL` undermines it — and it belongs in a plan
+rather than in a test fix whose reviewers were asked to look at something else.
+It is also not needed to make the suite green: `poisoned-config.test.ts` now
+asserts the refusal rather than depending on the write succeeding.
+
+**What it does NOT weaken:** layer 2 is unaffected. `applyWorkerAccess` still
+takes group and world write off `<mainRepo>/.git/config` and still never grants
+the worker write on `.git`, so with ownership resolved the agent's config write
+becomes the **255** `could not lock config file … Permission denied` refusal
+instead of the 128 one. Both are refusals, and `poisoned-config.test.ts`
+deliberately asserts `not.toBe(0)` rather than a specific code so that this fix
+does not turn into a spurious failure there.
+
+**Status:** open, and the most consequential item on this list — it blocks the
+developer stage having a usable worktree on any correctly-provisioned Linux
+deployment. Belongs to the phase that first has an agent write code.
