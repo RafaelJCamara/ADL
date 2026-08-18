@@ -56,6 +56,18 @@ export {
   DEVELOPER_OUTCOME_ROUND_COST,
 } from './developer-outcome.js';
 
+// The workspace a stage runs inside — exec, read, write, snapshot — plus the
+// shape of one process run. Declared in `./workspace.ts` and re-exported through
+// `./stage.ts`, so `@adl/core/stage` stays the single import path (D-01).
+export {
+  NETWORK_POLICIES,
+  type NetworkPolicy,
+  type ResourceLimits,
+  type ExecSpec,
+  type ExecResult,
+  type RestoreHandle,
+} from './workspace.js';
+
 export type {
   StageKind,
   CostClass,
