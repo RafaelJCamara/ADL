@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ARCHITECTURE_RULE_IDS,
+  FORBIDDEN_SPAWN_SPECIFIERS,
   architectureConfigs,
   baseConfigs,
 } from '../../eslint.config.js';
@@ -119,6 +120,82 @@ function absolute(fixture: string): string {
   return path.join(REPO_ROOT, fixture);
 }
 
+/**
+ * ── Reading the RESOLVED options, not the config source ───────────────────
+ *
+ * Everything below reads what ESLint actually decided to apply to a path.
+ * 02-RESEARCH.md § Pitfall 1's failure mode is a later flat-config entry
+ * REPLACING an earlier one's options for the same rule id — reproduced against
+ * this repository's own eslint, with every pre-existing lint test still green,
+ * because those tests only ever asserted that a rule was *registered at error*.
+ * A source-level assertion cannot see that, so these helpers deliberately do
+ * not look at `architectureConfigs`.
+ */
+
+interface RestrictedPath {
+  readonly name: string;
+}
+
+interface RestrictedPattern {
+  readonly group?: readonly string[];
+}
+
+interface RestrictedImportsOptions {
+  readonly paths?: readonly RestrictedPath[];
+  readonly patterns?: readonly RestrictedPattern[];
+}
+
+interface SyntaxSelector {
+  readonly selector: string;
+}
+
+type ResolvedRules = Readonly<Record<string, unknown>>;
+
+/** The options an already-resolved rule carries, with the severity dropped. */
+function ruleOptions(rules: ResolvedRules, ruleId: string): readonly unknown[] {
+  const entry = rules[ruleId];
+  return Array.isArray(entry) ? entry.slice(1) : [];
+}
+
+function restrictedPathNames(rules: ResolvedRules): readonly string[] {
+  return (
+    ruleOptions(rules, 'no-restricted-imports') as RestrictedImportsOptions[]
+  ).flatMap((options) => (options.paths ?? []).map((entry) => entry.name));
+}
+
+function restrictedPatternGroups(rules: ResolvedRules): readonly string[] {
+  return (
+    ruleOptions(rules, 'no-restricted-imports') as RestrictedImportsOptions[]
+  ).flatMap((options) =>
+    (options.patterns ?? []).flatMap((pattern) => pattern.group ?? []),
+  );
+}
+
+function syntaxSelectors(rules: ResolvedRules): readonly string[] {
+  return (ruleOptions(rules, 'no-restricted-syntax') as SyntaxSelector[]).map(
+    (entry) => entry.selector,
+  );
+}
+
+/**
+ * The anchored pattern the config derives for one specifier.
+ *
+ * Duplicating the anchoring — rather than importing a helper — is deliberate:
+ * the assertions must be able to disagree with the config. None of the current
+ * specifiers contain a regex metacharacter, so this stays exact; one that did
+ * would turn this test red, which is the safe direction for a guard.
+ */
+function anchoredPattern(specifier: string): string {
+  return `/^${specifier}$/`;
+}
+
+/** A real, non-exempt source path — the baseline the ban must apply to. */
+const NON_EXEMPT_SOURCE = 'packages/db/src/index.ts';
+/** Inside the one exemption. Need not exist: resolution is by path. */
+const EXEMPT_SOURCE = 'packages/workspace/src/exec/run.ts';
+/** Matched by BOTH the core entry and the verdict entry — the merge target. */
+const DOUBLY_MATCHED_SOURCE = 'packages/core/src/verdict/verdict.ts';
+
 describe('architecture rules fail on deliberate violations', () => {
   for (const fixture of FIXTURES) {
     it(`${fixture.file} is reported by ${fixture.ruleId}`, async () => {
@@ -225,4 +302,151 @@ describe('architecture rule severity', () => {
     expect([...registered].sort()).toEqual([...exercised].sort());
     expect([...registered].sort()).toEqual([...ARCHITECTURE_RULE_IDS].sort());
   });
+});
+
+describe('the spawn boundary (WORK-02)', () => {
+  it('did not delete the bans Phase 1 registered', async () => {
+    // 02-RESEARCH.md § Pitfall 1's "verification step for the plan", verbatim.
+    // The verdict sources are the file set every architecture rule applies to
+    // at once, so they are where an overlapping entry does the most damage —
+    // and the damage is SILENT, which is why each expectation below carries its
+    // own message. A bare `toContain` failure would say "expected array to
+    // contain X" without saying that the @adl/core purity ban had vanished.
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute(DOUBLY_MATCHED_SOURCE),
+    );
+    const rules = resolved.rules ?? {};
+
+    const paths = restrictedPathNames(rules);
+    expect(
+      paths,
+      `the @adl/core purity ban on node:fs no longer resolves for ${DOUBLY_MATCHED_SOURCE} — an overlapping no-restricted-imports entry has replaced CORE_PURITY_RULES (Pitfall 1)`,
+    ).toContain('node:fs');
+    expect(
+      paths,
+      `the spawn ban on execa no longer resolves for ${DOUBLY_MATCHED_SOURCE} — the spawn entries were not merged into CORE_PURITY_RULES`,
+    ).toContain('execa');
+
+    expect(
+      restrictedPatternGroups(rules),
+      `D-27's @adl/* sibling ban no longer resolves for ${DOUBLY_MATCHED_SOURCE} — the patterns list was dropped when paths were merged`,
+    ).toContain('@adl/*');
+
+    const selectors = syntaxSelectors(rules);
+    expect(
+      // Lowercased because the pair is `refine` and `superRefine`; both must
+      // survive, so the expected count is 2 rather than "at least one".
+      selectors.filter((selector) => selector.toLowerCase().includes('refine')),
+      `the verdict refine()/superRefine() ban no longer resolves for ${DOUBLY_MATCHED_SOURCE} — the spawn selectors replaced VERDICT_SCHEMA_RULES instead of being spread into it`,
+    ).toHaveLength(2);
+    expect(
+      selectors.filter((selector) => selector.includes('require')),
+      `the spawn require() selectors no longer resolve for ${DOUBLY_MATCHED_SOURCE} — VERDICT_SCHEMA_RULES replaced them instead of spreading them in`,
+    ).not.toHaveLength(0);
+  });
+
+  it.each([NON_EXEMPT_SOURCE, DOUBLY_MATCHED_SOURCE])(
+    'covers every banned specifier in all three import forms for %s',
+    async (source) => {
+      // Driven off the exported tuple rather than four hand-written cases: a
+      // specifier added to the ban gains its assertions automatically, and a
+      // specifier whose selectors are lost goes red without anyone having to
+      // remember to add a case. That is the defect this guard exists for — the
+      // first draft's hand-written selectors named child_process only, leaving
+      // execa and simple-git reachable by `await import()` with lint green.
+      const resolved = await realConfigLinter().calculateConfigForFile(
+        absolute(source),
+      );
+      const rules = resolved.rules ?? {};
+
+      const paths = restrictedPathNames(rules);
+      const selectors = syntaxSelectors(rules);
+
+      const uncovered: string[] = [];
+      for (const specifier of FORBIDDEN_SPAWN_SPECIFIERS) {
+        const pattern = anchoredPattern(specifier);
+        if (!paths.includes(specifier)) {
+          uncovered.push(`${specifier}: no restricted import path`);
+        }
+        if (
+          !selectors.some(
+            (selector) =>
+              selector.includes(pattern) &&
+              selector.startsWith('CallExpression'),
+          )
+        ) {
+          uncovered.push(`${specifier}: no require() selector`);
+        }
+        if (
+          !selectors.some(
+            (selector) =>
+              selector.includes(pattern) &&
+              selector.startsWith('ImportExpression'),
+          )
+        ) {
+          uncovered.push(`${specifier}: no dynamic import() selector`);
+        }
+      }
+
+      expect(
+        uncovered,
+        `every banned specifier must be covered in all three import forms for ${source}`,
+      ).toEqual([]);
+    },
+  );
+
+  it('exempts packages/workspace, and nothing else', async () => {
+    // Two assertions on the same rule from two paths is what makes "exactly one
+    // exemption" checkable rather than merely asserted. The exempt path need
+    // not exist — calculateConfigForFile resolves by path — so this stays valid
+    // in Wave 1 and stays valid once plan 02-03 creates the file.
+    const exempt = await realConfigLinter().calculateConfigForFile(
+      absolute(EXEMPT_SOURCE),
+    );
+    expect(
+      restrictedPathNames(exempt.rules ?? {}),
+      `${EXEMPT_SOURCE} is inside the one exemption and must be free to launch processes`,
+    ).not.toContain('execa');
+
+    const governed = await realConfigLinter().calculateConfigForFile(
+      absolute(NON_EXEMPT_SOURCE),
+    );
+    expect(
+      restrictedPathNames(governed.rules ?? {}),
+      `${NON_EXEMPT_SOURCE} is outside the exemption, so the identical import must be banned — otherwise the exemption has quietly widened`,
+    ).toContain('execa');
+  });
+
+  it.each([
+    DOUBLY_MATCHED_SOURCE,
+    'packages/core/src/stage/stage.ts',
+    NON_EXEMPT_SOURCE,
+    'packages/plugin-sdk/src/index.ts',
+  ])(
+    'resolves exactly one architecture configuration for %s',
+    async (source) => {
+      // Encodes the flat-config replacement semantics the whole composition is
+      // built around, so a future entry that overlaps a glob fails HERE rather
+      // than in production by silently deleting a ban.
+      const resolved = await realConfigLinter().calculateConfigForFile(
+        absolute(source),
+      );
+      const rules = resolved.rules ?? {};
+
+      expect(
+        ruleOptions(rules, 'no-restricted-imports'),
+        `${source} must resolve exactly one no-restricted-imports options object — more than one is impossible, none means the ban does not apply`,
+      ).toHaveLength(1);
+
+      const selectors = syntaxSelectors(rules);
+      expect(
+        selectors.length,
+        `${source} must resolve a no-restricted-syntax configuration`,
+      ).toBeGreaterThan(0);
+      expect(
+        [...new Set(selectors)],
+        `${source} resolved duplicate no-restricted-syntax selectors — a rule set was spread into itself`,
+      ).toHaveLength(selectors.length);
+    },
+  );
 });

@@ -321,10 +321,16 @@ export const baseConfigs = [
 export const architectureConfigs = [
   {
     // Registered FIRST, and its `ignores` carve out every glob that a later
-    // entry configures the same two rules for. Both halves matter: the order
-    // keeps the reading order of this array honest, and the carve-outs are what
-    // stop this broad entry from being the "later entry" that replaces core's
-    // purity ban (02-RESEARCH.md § Pitfall 1).
+    // entry configures the same two rules for.
+    //
+    // Of those two, the CARVE-OUTS are what actually protect Phase 1's bans —
+    // confirmed during execution by moving this entry to the end of the array
+    // with the ignores intact, which changed nothing, and then dropping the
+    // `packages/core/src/**` carve-out, which deleted the `node:fs` purity ban
+    // from the verdict sources while `pnpm lint` stayed green (02-RESEARCH.md
+    // § Pitfall 1). The regression guard in the lint suite is the only thing
+    // that caught it. Keeping the entry first is therefore about reading order,
+    // not enforcement: do not treat the position as the safety mechanism.
     name: 'adl/no-direct-spawn',
     files: ['**/*.ts'],
     ignores: [
