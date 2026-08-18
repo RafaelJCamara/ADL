@@ -159,6 +159,16 @@ export interface PrivilegeDecision {
    * the call site rather than something guarded by an `if`.
    */
   readonly prefix: readonly string[];
+  /**
+   * The PATH this decision was made against — `PrivilegeConfig.path`, echoed.
+   *
+   * Carried so that two decisions can be compared without a caller having to
+   * remember which PATH produced which. The mode alone is not enough to explain
+   * a disagreement, and "the PATH the daemon has and the PATH this child gets
+   * differ in whether they contain sudo" is the entire content of the WR-10
+   * banner. See {@link privilegeModeMismatch}.
+   */
+  readonly path: string;
 }
 
 const NO_PREFIX: readonly string[] = Object.freeze([]);
@@ -227,26 +237,82 @@ function launcherPrefix(launcher: string, user: string): readonly string[] {
 export async function privilegeLauncher(
   config: PrivilegeConfig,
 ): Promise<PrivilegeDecision> {
+  const path = config.path;
+
   const platform = config.platform ?? process.platform;
   if (platform !== 'linux') {
-    return { mode: 'unsupported-platform', prefix: NO_PREFIX };
+    return { mode: 'unsupported-platform', prefix: NO_PREFIX, path };
   }
 
   const user = config.worker.user?.trim() ?? '';
   if (user === '') {
-    return { mode: 'worker-user-unset', prefix: NO_PREFIX };
+    return { mode: 'worker-user-unset', prefix: NO_PREFIX, path };
   }
 
   const resolve = config.resolveLauncher ?? resolveOnPath;
-  const launcher = await resolve(PRIVILEGE_LAUNCHER, config.path);
+  const launcher = await resolve(PRIVILEGE_LAUNCHER, path);
   if (launcher === undefined) {
-    return { mode: 'launcher-missing', prefix: NO_PREFIX };
+    return { mode: 'launcher-missing', prefix: NO_PREFIX, path };
   }
 
   // The RESOLVED absolute path, not the bare name. `sudo` is setuid root; being
   // explicit about which one is being invoked costs nothing and removes a
   // second, later PATH lookup nobody would think to audit.
-  return { mode: 'dropped', prefix: launcherPrefix(launcher, user) };
+  return { mode: 'dropped', prefix: launcherPrefix(launcher, user), path };
+}
+
+/**
+ * The banner for a creation-time / run-time privilege disagreement, or
+ * `undefined` when the two agree (WR-10).
+ *
+ * The mode is decided twice, deliberately, against two different PATHs:
+ * `worktree/backend.ts` resolves it against the DAEMON's PATH to answer "will a
+ * drop happen, and therefore does the worker need access to these
+ * directories?", and `exec/run.ts` resolves it against `ExecSpec.path` to answer
+ * "can execa resolve the launcher from the environment THIS child gets?"
+ * (02-RESEARCH.md § Pitfall 7). Both questions are real. What was missing is any
+ * handling of the two answers differing, and each direction has a consequence:
+ *
+ * - **creation dropped, run-time not** — `applyWorkerAccess` widened the
+ *   worktree, the administrative directory and the scratch `HOME` to the shared
+ *   group, and then the child ran as the daemon anyway. That is exposure with no
+ *   beneficiary: exactly the state `applyWorkerAccess`'s `mode !== 'dropped'`
+ *   early return exists to avoid, arrived at from the other side.
+ * - **creation not dropped, run-time dropped** — the child is handed a `sudo`
+ *   prefix with no access grant behind it, so every command fails to write its
+ *   own worktree with a permission error that reads like an agent bug.
+ *
+ * A separate banner from {@link privilegeWarning} rather than a fourth
+ * {@link PrivilegeMode}, because this is not a statement about one decision: it
+ * is a statement about two of them being inconsistent, and it names both PATHs
+ * because "a silent half-configured drop" (T-2-32's shape) is only actionable if
+ * the operator can see which PATH is missing the launcher.
+ *
+ * **Not wired to a call site yet.** Both call sites are outside this module, and
+ * the wiring is recorded in
+ * `.planning/phases/02-workspace-the-exec-boundary/deferred-items.md` § D-2-R-2
+ * together with why a module-level ledger inside this file was rejected instead.
+ */
+export function privilegeModeMismatch(
+  creation: PrivilegeDecision,
+  runtime: PrivilegeDecision,
+): string | undefined {
+  if (creation.mode === runtime.mode) return undefined;
+
+  const consequence =
+    creation.mode === 'dropped'
+      ? 'the workspace directories were widened to the shared worker group at creation and this child then ran as the DAEMON — group access with no beneficiary'
+      : runtime.mode === 'dropped'
+        ? 'this child was handed a launcher prefix with no access grant behind it — it will fail to write its own worktree, with an error that looks like the agent misbehaving'
+        : 'the two non-dropped modes disagree about WHY the drop did not happen, so the banner above may name the wrong cause';
+
+  return [
+    `${ADL_WARNING_PREFIX} Privilege mode MISMATCH: the workspace resolved ${creation.mode} at creation and ${runtime.mode} for this exec.`,
+    `${ADL_WARNING_PREFIX} Consequence: ${consequence}.`,
+    `${ADL_WARNING_PREFIX} Creation-time PATH (the daemon's): ${creation.path}`,
+    `${ADL_WARNING_PREFIX} Run-time PATH (ExecSpec.path): ${runtime.path}`,
+    `${ADL_WARNING_PREFIX} These two PATHs must agree about whether ${PRIVILEGE_LAUNCHER} is resolvable. See packages/workspace/README.md.`,
+  ].join('\n');
 }
 
 /** Prefix on every line this module writes. Greppable in a CI log on purpose. */
@@ -323,7 +389,13 @@ export function createPrivilegeWarner(
 
 const processWarner = createPrivilegeWarner();
 
-/** The process-wide warner `run()` uses. See {@link createPrivilegeWarner}. */
+/**
+ * The process-wide warner `run()` uses. See {@link createPrivilegeWarner}.
+ *
+ * It says what THIS decision was, and cannot say whether it agrees with the one
+ * the workspace was created under — that is {@link privilegeModeMismatch}, which
+ * needs both decisions and therefore a caller that kept the first one.
+ */
 export function warnPrivilegeModeOnce(mode: PrivilegeMode): void {
   processWarner(mode);
 }
@@ -723,5 +795,22 @@ export function reportWorkerAccess(
   sink: PrivilegeWarningSink = stderrSink,
 ): void {
   const text = workerAccessWarning(report);
+  if (text !== undefined) sink(text);
+}
+
+/**
+ * Write a {@link privilegeModeMismatch} banner to standard error, if there is
+ * one.
+ *
+ * Deliberately NOT once-per-process, for {@link workerAccessWarning}'s reason:
+ * a mismatch is a fact about one workspace's exec, so suppressing repeats would
+ * hide the second broken feature behind the first.
+ */
+export function reportPrivilegeModeMismatch(
+  creation: PrivilegeDecision,
+  runtime: PrivilegeDecision,
+  sink: PrivilegeWarningSink = stderrSink,
+): void {
+  const text = privilegeModeMismatch(creation, runtime);
   if (text !== undefined) sink(text);
 }

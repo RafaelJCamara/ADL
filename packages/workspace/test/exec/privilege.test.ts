@@ -8,7 +8,9 @@ import {
   createPrivilegeWarner,
   parseGroupEntries,
   privilegeLauncher,
+  privilegeModeMismatch,
   privilegeWarning,
+  reportPrivilegeModeMismatch,
   readGroupEntries,
   resolveGroupId,
   resolveUserIds,
@@ -314,6 +316,122 @@ describe('privilege: the identity database, parsed strictly', () => {
     const after = await stat(target);
     expect(after.gid).toBe(before.gid);
     expect(after.mode).toBe(before.mode);
+  });
+});
+
+/**
+ * WR-10: the two privilege decisions, compared.
+ *
+ * The mode is resolved twice against two different PATHs — at workspace creation
+ * against the daemon's, and per exec against `ExecSpec.path` — and nothing
+ * reconciled the two. These cases cover the detector; the wiring at the two call
+ * sites is carried forward in deferred-items D-2-R-2, and this suite is what
+ * will hold it honest when it lands.
+ */
+describe('privilege: a creation/run-time mode disagreement', () => {
+  /** A decision, without going through the resolver. */
+  const decision = (mode: PrivilegeMode, path: string) =>
+    ({ mode, prefix: [], path }) as const;
+
+  it('says nothing when the two decisions agree', () => {
+    for (const mode of [...NON_DROPPED_MODES, 'dropped'] as const) {
+      // Same mode, DIFFERENT paths: a differing PATH is not itself a problem,
+      // and a detector that fired on it would cry wolf on every deployment
+      // whose daemon and children have different environments — which is all
+      // of them, by construction (D-10).
+      expect(
+        privilegeModeMismatch(
+          decision(mode, '/daemon/bin'),
+          decision(mode, '/child/bin'),
+        ),
+      ).toBeUndefined();
+    }
+  });
+
+  it('names both PATHs and the consequence when the drop was granted but not applied', () => {
+    const text = privilegeModeMismatch(
+      decision('dropped', '/usr/bin:/daemon/bin'),
+      decision('launcher-missing', '/child/only'),
+    );
+
+    expect(text).toBeDefined();
+    // The direction matters: this one left the worktree, the admin directory
+    // and the scratch HOME group-writable for a child that then ran as the
+    // daemon — access with no beneficiary.
+    expect(text).toMatch(/no beneficiary/);
+    expect(text).toContain('/usr/bin:/daemon/bin');
+    expect(text).toContain('/child/only');
+    expect(text).toContain('[ADL][WORK-05]');
+  });
+
+  it('names the opposite direction differently', () => {
+    const text = privilegeModeMismatch(
+      decision('launcher-missing', '/daemon/only'),
+      decision('dropped', '/usr/bin'),
+    );
+
+    // A prefix with no grant behind it fails every write to the agent's own
+    // worktree, and reads like an agent bug — the opposite failure, and a
+    // banner that described it as "exposure" would send the operator the wrong
+    // way entirely.
+    expect(text).toMatch(/no access grant behind it/);
+    expect(text).not.toMatch(/no beneficiary/);
+  });
+
+  it('reports through an injected sink, and every time rather than once', () => {
+    const messages: string[] = [];
+    const sink = (message: string): void => void messages.push(message);
+
+    reportPrivilegeModeMismatch(
+      decision('dropped', '/a'),
+      decision('worker-user-unset', '/b'),
+      sink,
+    );
+    reportPrivilegeModeMismatch(
+      decision('dropped', '/a'),
+      decision('worker-user-unset', '/b'),
+      sink,
+    );
+    // Unlike WORK-05's banner: a mismatch is a fact about ONE workspace's exec,
+    // so suppressing repeats would hide the second broken feature behind the
+    // first.
+    expect(messages).toHaveLength(2);
+
+    reportPrivilegeModeMismatch(
+      decision('dropped', '/a'),
+      decision('dropped', '/b'),
+      sink,
+    );
+    expect(messages).toHaveLength(2);
+  });
+
+  it('carries the PATH it was decided against out of privilegeLauncher', async () => {
+    // The detector is useless if the caller has to remember which PATH produced
+    // which decision, so the decision carries it.
+    const dropped = await privilegeLauncher({
+      platform: 'linux',
+      worker: { user: 'adl-worker', group: 'adl-worker' },
+      path: '/usr/bin',
+      resolveLauncher: () => Promise.resolve('/usr/bin/sudo'),
+    });
+    expect(dropped.path).toBe('/usr/bin');
+
+    const missing = await privilegeLauncher({
+      platform: 'linux',
+      worker: { user: 'adl-worker', group: 'adl-worker' },
+      path: '/nowhere',
+      resolveLauncher: () => Promise.resolve(undefined),
+    });
+    expect(missing.path).toBe('/nowhere');
+
+    // Including the early return that never consults anything else.
+    const offPlatform = await privilegeLauncher({
+      platform: 'win32',
+      worker: { user: 'adl-worker', group: 'adl-worker' },
+      path: 'C:\\Windows',
+      resolveLauncher: () => Promise.resolve('/usr/bin/sudo'),
+    });
+    expect(offPlatform.path).toBe('C:\\Windows');
   });
 });
 
