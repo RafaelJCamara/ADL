@@ -14,3 +14,33 @@
 
 // Errors — the workspace layer's own failure type.
 export { WorkspaceError } from './errors.js';
+
+// The exec boundary — the only process launch in the repository, and the per-run
+// scratch HOME it points every child's `HOME` at (D-07, D-10).
+//
+// The child-environment builder in `exec/env.ts` is deliberately NOT
+// re-exported. It is an implementation detail of `run`, which is its only
+// caller; publishing it would invite a second one, and a second place where a
+// child environment is assembled is a second door into the boundary this
+// package exists to be.
+export { run } from './exec/run.js';
+export {
+  createScratchHome,
+  destroyScratchHome,
+  type ScratchHome,
+} from './exec/scratch-home.js';
+
+// The git worktree lifecycle — one worktree and one adl/<featureId> branch per
+// feature, torn down in the order git requires (WORK-01, D-13).
+export {
+  branchNameFor,
+  createWorktree,
+  destroyWorktree,
+  type CreatedWorktree,
+} from './worktree/lifecycle.js';
+
+// Backends — implementations of the Workspace interface @adl/core declares.
+export {
+  worktreeWorkspace,
+  type WorktreeWorkspaceDeps,
+} from './worktree/backend.js';

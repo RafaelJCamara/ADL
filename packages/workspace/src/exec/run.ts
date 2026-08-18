@@ -1,0 +1,115 @@
+/**
+ * The one process launch in the repository (WORK-02).
+ *
+ * This is the only module that imports `execa`, and `eslint.config.js`'s
+ * `adl/no-direct-spawn` rule is what keeps it that way — its single exemption is
+ * `packages/workspace/**`. A direct spawn anywhere else would bypass the
+ * zero-inherit environment, the scratch `HOME`, the privilege drop, and the
+ * git-config neutralisation simultaneously, and none of those bypasses would be
+ * visible in a diff.
+ *
+ * `scratchHome` is a positional parameter rather than a field on `ExecSpec`
+ * because it belongs to the `Workspace` instance (D-07). This function is the
+ * only caller of `buildChildEnv`, and it always passes both arguments, so there
+ * is exactly one place where a child environment comes into existence.
+ */
+import { execa } from 'execa';
+import type { ExecResult, ExecSpec, LogChunk } from '@adl/core/stage';
+import { WorkspaceError } from '../errors.js';
+import { buildChildEnv } from './env.js';
+
+export async function run(
+  spec: ExecSpec,
+  scratchHome: string,
+  log: (chunk: LogChunk) => void,
+): Promise<ExecResult> {
+  const [file, ...args] = spec.argv;
+  if (file === undefined) {
+    throw new WorkspaceError(
+      'ExecSpec.argv is empty — there is no command to run.',
+    );
+  }
+
+  const startedAt = Date.now();
+
+  const subprocess = execa(file, args, {
+    cwd: spec.cwd,
+
+    // D-10, the whole point of this module. `extendEnv: false` means `env` is
+    // the child's COMPLETE environment — process.env is not merged underneath
+    // it. Note the second-order effect this has on binary resolution: execa
+    // then resolves `file` from `env.PATH` rather than the parent's PATH
+    // (execa#366), which is why `ExecSpec.path` is a required field.
+    extendEnv: false,
+    env: buildChildEnv(spec, scratchHome),
+
+    // 0 is execa's "no timeout". Stated rather than omitted so the absence of a
+    // timeout is a visible choice at the one place timeouts are configured.
+    timeout: spec.timeoutMs ?? 0,
+    // `StageContext.signal` plugs straight in — the same AbortSignal that fires
+    // on budget interrupt, pause, and shutdown.
+    cancelSignal: spec.signal,
+    // execa's own default, written out because it is a containment control
+    // (T-2-07) and a default that is never stated is a default nobody reviews:
+    // a child that ignores SIGTERM gets SIGKILL 5s later rather than never.
+    forceKillAfterDelay: 5_000,
+    // An agent CLI spawns its own children. Killing only the direct child
+    // leaves that subtree running, and a leaked subtree keeps spending budget
+    // after the round it belonged to has ended (T-2-07).
+    killDescendants: true,
+    // We stream; nothing accumulates in memory. Without this, a chatty agent's
+    // output is buffered in full by execa in addition to being streamed
+    // (T-2-09).
+    buffer: false,
+    // A non-zero exit is DATA at this boundary, not an exception: a command
+    // gate whose test suite fails is the single most common thing that happens
+    // here, and `ExecResult.exitCode` — declared `number | null` in @adl/core —
+    // is how the caller learns about it. Without this, that field would be
+    // unreachable for the most common outcome and every failing gate would
+    // arrive as a thrown error instead.
+    //
+    // NOT handled here, deliberately: telling "the binary is missing" apart
+    // from "the command ran and failed". That distinction is D-12's
+    // `binary_missing` StageErrorKind, and it cannot be made from execa's
+    // result — on Windows, cross-spawn routes through cmd.exe, so a missing
+    // binary returns `exitCode: 1` with `code` undefined, which is byte-for-byte
+    // what a command that legitimately exited 1 returns (verified locally,
+    // execa 10.0.1). A guard keyed on `exitCode === undefined` would therefore
+    // work on Linux and silently do nothing on the maintainer's own machine —
+    // the exact platform-split failure Pitfall 7 warns about. It needs a
+    // deliberate cross-platform design in the plan that owns the StageError
+    // mapping; see `.planning/phases/.../deferred-items.md`.
+    reject: false,
+
+    // `spec.networkPolicy` and `spec.resources` are accepted and deliberately
+    // not acted on by this backend. Nothing here can restrict a child that runs
+    // directly on the host; the v2 container backend is what implements them
+    // (ROADMAP.md § Phase 2 Notes). They are load-bearing for that, not dead.
+  });
+
+  // Two concurrent loops rather than `{ from: 'all' }`. `all` interleaves the
+  // streams correctly but discards which one each line came from, and that tag
+  // is half of what `LogChunk` is. Iterating also applies backpressure to the
+  // producer — the loop body runs between reads, pausing the underlying stream —
+  // which is the only backpressure available, because `log` returns void and so
+  // cannot push back on the consumer (02-RESEARCH.md § Pitfall 13).
+  const [, , result] = await Promise.all([
+    (async () => {
+      for await (const text of subprocess.iterable({ from: 'stdout' })) {
+        log({ stream: 'stdout', text });
+      }
+    })(),
+    (async () => {
+      for await (const text of subprocess.iterable({ from: 'stderr' })) {
+        log({ stream: 'stderr', text });
+      }
+    })(),
+    subprocess,
+  ]);
+
+  return {
+    exitCode: result.exitCode ?? null,
+    ...(result.signal === undefined ? {} : { signal: result.signal }),
+    durationMs: Date.now() - startedAt,
+  };
+}
