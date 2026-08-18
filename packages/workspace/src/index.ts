@@ -63,6 +63,8 @@ export {
   type WorkerAccessConfig,
   type WorkerAccessReport,
   type WorkerIdentity,
+  privilegeModeMismatch,
+  reportPrivilegeModeMismatch,
 } from './exec/privilege.js';
 //
 // `ScratchHomeTeardown` joins its producer on the barrel: `destroyScratchHome`
@@ -75,6 +77,10 @@ export {
   destroyScratchHome,
   type ScratchHome,
   type ScratchHomeTeardown,
+  listScratchHomes,
+  scratchHomeRoot,
+  type ScratchHomeEntry,
+  type ScratchHomeOwner,
 } from './exec/scratch-home.js';
 
 // The git worktree lifecycle — one worktree and one adl/<featureId> branch per
@@ -108,6 +114,12 @@ export {
   type FeatureStateLookup,
   type GcDeps,
   type SweepFailure,
+  // Phase 3's manager owns the schedule that must call this beside
+  // `sweepOrphans`; it cannot reach it until it is on the barrel (WR-06).
+  sweepScratchHomes,
+  processIsAlive,
+  type ScratchHomeGcDeps,
+  type ScratchHomeSweepFailure,
 } from './worktree/gc.js';
 
 // The named backend registry (D-04) — how a `Workspace` is obtained.
