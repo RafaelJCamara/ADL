@@ -85,7 +85,44 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-syntax',
     mentions: 'execa',
   },
+  // ── The three rows below watch the GLOB rather than the rule ──────────────
+  //
+  // Every architecture entry used to be registered with `files: ['**/*.ts']`,
+  // which does not match `.mts`, `.cts` or `.tsx`. The four rows above are all
+  // `.ts` and therefore could not see it: 02-VERIFICATION.md demonstrated a
+  // `.mts` outside `packages/workspace` importing `execa` reporting ZERO
+  // architecture errors while the base rules fired on the same file. These are
+  // the regression guard for the widened globs — one per extension, and one per
+  // import form, so a fix that widened the static-import layer and forgot the
+  // syntax layer is still red.
+  {
+    file: 'test/lint/fixtures/spawn-esm-extension.mts',
+    ruleId: 'no-restricted-imports',
+    mentions: 'execa',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-cjs-extension.cts',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'node:child_process',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-jsx-extension.tsx',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'execa',
+  },
 ];
+
+/**
+ * Every extension a TypeScript module here may carry, restated as a literal.
+ *
+ * Deliberately NOT imported from `eslint.config.js`'s `TS_SOURCE_EXTENSIONS`,
+ * for the reason {@link anchoredPattern} already gives below: these assertions
+ * have to be able to DISAGREE with the config. Driving them off the config's own
+ * tuple would mean that deleting `mts` from it deleted the assertion that would
+ * have caught the deletion — which is the exact shape of the defect being fixed,
+ * a guard that is green because it stopped looking.
+ */
+const TYPESCRIPT_EXTENSIONS = ['ts', 'tsx', 'mts', 'cts'] as const;
 
 /**
  * `ignore: false` is what lets these runs see the fixtures at all.
@@ -420,6 +457,63 @@ describe('the spawn boundary (WORK-02)', () => {
       `${NON_EXEMPT_SOURCE} is outside the exemption, so the identical import must be banned — otherwise the exemption has quietly widened`,
     ).toContain('execa');
   });
+
+  it.each(TYPESCRIPT_EXTENSIONS)(
+    'reaches .%s files, so the ban is not scoped to one spelling of TypeScript',
+    async (extension) => {
+      // 02-VERIFICATION.md's one gap, as a resolved-config assertion.
+      //
+      // `files: ['**/*.ts']` matches the extension EXACTLY — `.mts`, `.cts` and
+      // `.tsx` are outside it — so the repository's headline enforcement
+      // mechanism was a build property only for files that happened to be named
+      // `.ts`. The outcome it protects was true anyway, because the repository
+      // contains only `.ts` today. That is what made it worth fixing rather than
+      // noting: the control was green for a reason that does not generalise, and
+      // the first `.mts` anybody adds would have left the boundary silently.
+      //
+      // Asserted from BOTH sides for each extension, because "the ban reaches
+      // .mts" and "the exemption reaches .mts" are independent and a fix that
+      // widened one without the other is a different defect rather than none: a
+      // widened ban over an un-widened exemption would make a `.mts` beside
+      // `src/exec/run.ts` a lint error, and the reverse would reopen CR-01 for
+      // one extension.
+      //
+      // The paths need not exist — `calculateConfigForFile` resolves by path —
+      // which is what lets this cover extensions the repository does not use
+      // yet. That is the whole point: the guard has to exist BEFORE the first
+      // such file does, or it is a review property again.
+      const governed = await realConfigLinter().calculateConfigForFile(
+        absolute(`packages/db/src/index.${extension}`),
+      );
+      expect(
+        restrictedPathNames(governed.rules ?? {}),
+        `packages/db/src/index.${extension} is outside packages/workspace, so the spawn ban must reach it — an architecture glob that names one extension is a boundary a file rename walks through (WR-11)`,
+      ).toContain('execa');
+
+      const selectors = syntaxSelectors(governed.rules ?? {});
+      expect(
+        selectors.filter((selector) =>
+          selector.includes(anchoredPattern('execa')),
+        ),
+        `packages/db/src/index.${extension} resolves no require()/import() selector for execa, so the ban is bypassable on this extension by changing the import form (02-RESEARCH.md § Pitfall 2)`,
+      ).not.toHaveLength(0);
+
+      const exempt = await realConfigLinter().calculateConfigForFile(
+        absolute(`packages/workspace/src/exec/run.${extension}`),
+      );
+      expect(
+        restrictedPathNames(exempt.rules ?? {}),
+        `the one exemption must cover .${extension} too — a ban wider than its exemption makes the one exec primitive unwritable in that spelling`,
+      ).not.toContain('execa');
+
+      // And the carve-out INSIDE the exemption, which is the half a widened
+      // exemption would quietly reopen (CR-01/CR-02).
+      expect(
+        restrictedPathNames(exempt.rules ?? {}),
+        `packages/workspace/src must not be free to import simple-git in a .${extension} file — the exemption exists for execa and the one exec primitive, not for a second git spawner`,
+      ).toContain('simple-git');
+    },
+  );
 
   it('bans simple-git inside packages/workspace/src, in all three import forms', async () => {
     // 02-REVIEW.md CR-01/CR-02. The package-wide exemption is right for `execa`

@@ -9,7 +9,15 @@
  * against the second backend unchanged" a property of the code rather than a
  * sentence in a document — if it were false, half of these would be red.
  */
-import { readdir, readFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WorkspaceTeardownReport } from '@adl/core/stage';
@@ -131,6 +139,25 @@ function importStatements(source: string): readonly string[] {
   ].map((match) => match[0]);
 }
 
+/**
+ * Every extension a TypeScript module under `src/` may carry.
+ *
+ * This walker filtered on `entry.name.endsWith('.ts')` and therefore could not
+ * see a `.mts`, `.cts` or `.tsx` module — the same blind spot 02-VERIFICATION.md
+ * demonstrated in `eslint.config.js`'s `files: ['**\/*.ts']`, arriving in the
+ * belt-and-braces guard that exists BECAUSE the lint rule can be edited. Both
+ * source-tree assertions below run off this function: the registry's
+ * sole-construction-site rule and the `simple-git` scan added for CR-01. A
+ * single `.mts` under `src/` would have been invisible to the lint rule and to
+ * its backstop simultaneously, which is the one combination that leaves no
+ * evidence at all.
+ *
+ * `.d.ts` matches too, via the `ts` alternative. That is correct rather than
+ * incidental: a declaration file naming a backend factory is still a second
+ * construction site as far as an importing module is concerned.
+ */
+const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/;
+
 async function typescriptSources(dir: string): Promise<readonly string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
@@ -139,13 +166,64 @@ async function typescriptSources(dir: string): Promise<readonly string[]> {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       found.push(...(await typescriptSources(full)));
-    } else if (entry.name.endsWith('.ts')) {
+    } else if (TYPESCRIPT_SOURCE.test(entry.name)) {
       found.push(full);
     }
   }
 
   return found;
 }
+
+describe('the source walker sees every spelling of a TypeScript module', () => {
+  it('finds .ts, .tsx, .mts and .cts, and nothing else', async () => {
+    // Exercised against a fixture directory rather than against `src/`, because
+    // `src/` contains only `.ts` today — which is exactly why the blind spot
+    // survived review. A guard over the real tree would be green whether the
+    // walker looked at four extensions or one, and would go on being green
+    // right up until the first `.mts` landed and slipped past both this file's
+    // assertions at once.
+    //
+    // The negative half matters as much as the positive: `notes.md` and
+    // `stale.tsx.bak` must NOT be read, or the `simple-git` scan below would
+    // start reporting on documentation and backup files and a contributor would
+    // learn to ignore it.
+    const dir = await mkdtemp(join(tmpdir(), 'adl-walker-'));
+    try {
+      const planted = [
+        'module.ts',
+        'component.tsx',
+        'esm.mts',
+        'cjs.cts',
+        'types.d.ts',
+        'script.js',
+        'notes.md',
+        'stale.tsx.bak',
+      ];
+      for (const name of planted) {
+        await writeFile(join(dir, name), '', 'utf8');
+      }
+      await mkdir(join(dir, 'nested'));
+      await writeFile(join(dir, 'nested', 'deep.mts'), '', 'utf8');
+
+      const found = (await typescriptSources(dir))
+        .map((file) => relative(dir, file).replaceAll('\\', '/'))
+        .sort();
+
+      expect(found).toEqual(
+        [
+          'cjs.cts',
+          'component.tsx',
+          'esm.mts',
+          'module.ts',
+          'nested/deep.mts',
+          'types.d.ts',
+        ].sort(),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('the registry is the only place a backend is named', () => {
   it('finds no module outside registry.ts importing a backend factory', async () => {
