@@ -14,8 +14,13 @@ import {
   resolveUserIds,
   type PrivilegeMode,
 } from '../../src/exec/privilege.js';
+import {
+  createScratchHome,
+  destroyScratchHome,
+  scratchHomeRoot,
+} from '../../src/exec/scratch-home.js';
 import { worktreeWorkspace } from '../../src/worktree/backend.js';
-import { linuxOnly } from '../helpers/platform.js';
+import { linuxOnly, posixOnly } from '../helpers/platform.js';
 import { withTempRepo } from '../helpers/temp-repo.js';
 
 /**
@@ -309,6 +314,101 @@ describe('privilege: the identity database, parsed strictly', () => {
     const after = await stat(target);
     expect(after.gid).toBe(before.gid);
     expect(after.mode).toBe(before.mode);
+  });
+});
+
+/**
+ * CR-03, the part of it that is closable with mode bits.
+ *
+ * The worker identity is per deployment, so nothing here separates one feature
+ * from another — that gap is stated in `WorkerIdentity`'s docblock, in
+ * README § Permission model, and in deferred-items D-2-R-1. What these cases
+ * cover is the *third* consequence the review names: that every scratch `HOME`
+ * sat directly under a world-readable `/tmp`, so an attacker did not have to
+ * guess a `mkdtemp` name — it could read the listing.
+ */
+describe('privilege: the scratch-home root is traversable, never listable', () => {
+  /**
+   * A group file naming a gid this process can actually chown to.
+   *
+   * Fabricating one would make every case here degrade with `EPERM` on Linux
+   * and pass vacuously — the shape D-21 exists to prevent. The process's own
+   * gid is one it is by definition a member of.
+   */
+  const ownGroupFile = async (dir: string): Promise<string> => {
+    const file = join(dir, 'group');
+    await writeFile(file, `adl-test-own:x:${process.getgid?.() ?? 0}:\n`);
+    return file;
+  };
+
+  it('includes the root in the grant, with traverse and nothing else', async (ctx) => {
+    const fixtures = await mkdtemp(join(tmpdir(), 'adl-grantfixture-'));
+    const groupFile = await ownGroupFile(fixtures);
+    const home = await createScratchHome();
+
+    try {
+      const report = await applyWorkerAccess([home.path], {
+        mode: 'dropped',
+        group: 'adl-test-own',
+        groupFile,
+      });
+
+      expect(
+        report.outcome,
+        report.outcome === 'degraded' ? report.reason : '',
+      ).toBe('applied');
+      if (report.outcome !== 'applied') return;
+
+      // The root is granted even though no caller passed it: without it the
+      // worker cannot reach its own HOME through a 0700 parent.
+      expect(report.paths).toContain(scratchHomeRoot());
+      expect(report.paths).toContain(home.path);
+
+      const gate = posixOnly(
+        'the traverse-vs-list distinction is POSIX mode bits, and fs.Stats.mode on Windows reports the read-only attribute rather than permissions',
+        'CR-03',
+      );
+      if (gate.kind === 'skip') {
+        ctx.skip(gate.reason);
+        return;
+      }
+
+      const mode = (await stat(scratchHomeRoot())).mode & 0o777;
+      // `--x`: pass through to a name you already have.
+      expect(mode & 0o010, 'group traverse on the scratch-home root').toBe(
+        0o010,
+      );
+      // Not `r`: the listing is the whole thing being withheld. With it, one
+      // feature's agent enumerates every other live feature's HOME and
+      // mkdtemp's unpredictability stops being a control.
+      expect(mode & 0o040, 'group READ on the scratch-home root').toBe(0);
+      // Not `w`: the owner markers the GC sweep trusts live in this directory,
+      // and a worker that could rewrite one could ask the sweep to delete a
+      // running feature's HOME.
+      expect(mode & 0o020, 'group WRITE on the scratch-home root').toBe(0);
+      expect(mode & 0o007, 'world bits on the scratch-home root').toBe(0);
+    } finally {
+      await destroyScratchHome(home.path);
+    }
+  });
+
+  it('does not touch the root when the granted path is not a home', async () => {
+    const fixtures = await mkdtemp(join(tmpdir(), 'adl-grantfixture-'));
+    const groupFile = await ownGroupFile(fixtures);
+    // Stands in for a worktree: somewhere else entirely. Widening ITS parent
+    // would mean chmod-ing the operator's scratch root, or `/tmp`, or `/`.
+    const elsewhere = await mkdtemp(join(tmpdir(), 'adl-notahome-'));
+
+    const report = await applyWorkerAccess([elsewhere], {
+      mode: 'dropped',
+      group: 'adl-test-own',
+      groupFile,
+    });
+
+    expect(report.outcome).toBe('applied');
+    if (report.outcome !== 'applied') return;
+    expect(report.paths).toEqual([elsewhere]);
+    expect(report.paths).not.toContain(scratchHomeRoot());
   });
 });
 

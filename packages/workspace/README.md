@@ -22,11 +22,15 @@ Three controls, each independent of the other two:
 
 | Control                              | Mechanism                                                                                     | Applies on     |
 | ------------------------------------ | --------------------------------------------------------------------------------------------- | -------------- |
-| A disposable `HOME` per run          | `mkdtemp`, deleted at teardown                                                                | every platform |
+| A disposable `HOME` per run          | `mkdtemp` under a root the worker cannot list, deleted at teardown and swept if a worker dies | every platform |
 | A zero-inherit child environment     | the child's environment is built from nothing; no credential crosses unless a caller named it | every platform |
 | **A dedicated unprivileged OS user** | an external launcher (`sudo -u`) that performs the full privilege drop                        | **Linux only** |
 
 The third is what this document is about.
+
+All three measure the blast radius **between ADL's agents and your host**. None
+of them measures it between one feature and another — see
+[Permission model § What is not isolated](#what-is-not-isolated-one-worker-identity-for-every-feature).
 
 ---
 
@@ -40,6 +44,11 @@ On **Linux**, with the worker user provisioned:
   [Why a launcher](#why-a-launcher-and-not-a-flag).
 - The child can write its scratch `HOME` and its own worktree.
 - The child **cannot** write your repository's `.git/config`.
+- **The child can also write every _other_ running feature's worktree.** There is
+  one worker identity per deployment, not per feature, so this boundary is
+  between ADL's agents and your host — not between one feature and another. Read
+  [Permission model § What is not isolated](#what-is-not-isolated-one-worker-identity-for-every-feature)
+  before you run more than one feature at a time.
 
 On **Windows and macOS**, and on Linux without the worker user provisioned:
 
@@ -252,17 +261,56 @@ uid — a uid comparison alone passes on the broken implementation.
 
 What the worker user can and cannot write, once the drop is active:
 
-| Path                                         | Worker access                                         | Why                                                                                                                                                                   |
-| -------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The run's scratch `HOME` (`/tmp/adl-home-*`) | read, write, traverse                                 | Its `HOME`. Tool configuration the agent writes lands here and is deleted with the directory.                                                                         |
-| The feature's worktree                       | read, write, traverse                                 | The code the agent is there to change.                                                                                                                                |
-| `<repo>/.git/worktrees/<feature>`            | read, write, traverse                                 | The worktree's own index and `HEAD`. The agent must be able to commit.                                                                                                |
-| **`<repo>/.git/config`**                     | **read only**                                         | Git config names programs git executes. The agent must never be able to add one. Group and world write are actively removed from this file, not merely never granted. |
-| Everything else                              | whatever the OS gives a system account with no groups | Not granted by ADL.                                                                                                                                                   |
+| Path                                                    | Worker access                                         | Why                                                                                                                                                                   |
+| ------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The run's scratch `HOME` (`<tmp>/adl-homes/adl-home-*`) | read, write, traverse                                 | Its `HOME`. Tool configuration the agent writes lands here and is deleted with the directory.                                                                         |
+| `<tmp>/adl-homes` (the root the homes live in)          | **traverse only** (`--x`, no read, no write)          | The worker must be able to reach the one home it was given the name of, and must not be able to list the others. Owned by the daemon, mode `0710`.                    |
+| The feature's worktree                                  | read, write, traverse                                 | The code the agent is there to change.                                                                                                                                |
+| `<repo>/.git/worktrees/<feature>`                       | read, write, traverse                                 | The worktree's own index and `HEAD`. The agent must be able to commit.                                                                                                |
+| **`<repo>/.git/config`**                                | **read only**                                         | Git config names programs git executes. The agent must never be able to add one. Group and world write are actively removed from this file, not merely never granted. |
+| **Every other running feature's worktree and `HOME`**   | **read, write, traverse**                             | **Not isolated — see below.** One worker identity serves every feature, so the grants above are grants to _all_ of ADL's agents, not to one.                          |
+| Everything else                                         | whatever the OS gives a system account with no groups | Not granted by ADL.                                                                                                                                                   |
 
 Access is granted through the shared group with group-only mode bits. **No world
 permission is ever set** — the scratch `HOME` does not become readable by every
 local user in order to be writable by the worker.
+
+### What is not isolated: one worker identity for every feature
+
+`ADL_WORKER_USER` and `ADL_WORKER_GROUP` name **one** user and **one** group for
+the whole deployment. Every feature ADL runs — concurrently or otherwise — drops
+to that same identity, and the grants in the table above are made to that same
+group. So:
+
+- Feature A's agent can read and **rewrite feature B's source**, including after
+  B's reviewer stage has passed and before its pull request opens.
+- It can read and write B's git index and `HEAD` under
+  `<repo>/.git/worktrees/B`.
+- It can enter B's scratch `HOME` — and read whatever B's agent left there: a
+  `.gitconfig` credential helper, an `.npmrc` token, an agent CLI's session file.
+
+Since ADL treats the feature specification as untrusted input written by anyone
+who can push to your repository, this is a path from a hostile spec into a diff a
+human is about to approve. **It is the one thing this package's isolation model
+does not stop.**
+
+Two things narrow it, and neither closes it:
+
+- The scratch homes live inside `<tmp>/adl-homes`, which the worker group may
+  traverse and may **not** list. Reaching another feature's `HOME` therefore
+  means guessing an `mkdtemp` name rather than reading a directory listing. (When
+  the homes sat directly in `/tmp`, `ls /tmp` was enough.)
+- Worktree paths are **not** protected this way. They are predictable by design —
+  `<scratchRoot>/<featureId>` — so nothing stands between one agent and another's
+  code except the shared group itself.
+
+**If your features come from more than one trust domain, run one feature at a
+time** (or one daemon per domain) until this is closed. Closing it needs a _pool_
+of pre-provisioned worker identities — a distinct uid per concurrent slot, since
+group bits cannot separate two processes running as the same uid — plus a sudoers
+entry per pool member. That work, its reproduction, and the shape it should take
+are recorded in
+`.planning/phases/02-workspace-the-exec-boundary/deferred-items.md` § D-2-R-1.
 
 Two prerequisites ADL does not manage for you, because they are properties of
 your machine rather than of a run:

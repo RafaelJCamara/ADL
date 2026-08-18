@@ -53,7 +53,8 @@ import {
   readFile,
   readdir,
 } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
+import { scratchHomeRoot } from './scratch-home.js';
 
 /**
  * What actually happened to the privilege drop.
@@ -74,6 +75,25 @@ export type PrivilegeMode =
  * Two non-secret NAMES. Never a credential, and never anything read out of the
  * child's environment — this is the one place ADL legitimately reads its own
  * process environment, and what it reads is a user name and a group name.
+ *
+ * ── The limit of this identity, stated where it is defined (CR-03) ─────────
+ *
+ * It is per **deployment**, not per feature — one `adl-worker` user and one
+ * `adl-worker` group for every feature the daemon runs, concurrently or
+ * otherwise. So the isolation this module buys is between *ADL's agents* and
+ * *the host*, and there is **no isolation between one feature and another**:
+ * every concurrent feature's child is the same uid in the same group, and
+ * {@link applyWorkerAccess} grants that one group `rwx` on every feature's
+ * worktree. Feature A's agent can therefore read and rewrite feature B's source
+ * — including after B's reviewer stage has passed and before its pull request
+ * opens, which is the gate ADL exists to be.
+ *
+ * That is a real gap, it is not closable with group permissions alone (a second
+ * identity requires a second uid), and it is recorded with a reproduction and a
+ * proposed shape in
+ * `.planning/phases/02-workspace-the-exec-boundary/deferred-items.md` § D-2-R-1.
+ * `packages/workspace/README.md` § Permission model states it to operators. Do
+ * not read the grants below as per-feature; they are not.
  */
 export interface WorkerIdentity {
   /** The dedicated unprivileged OS user children are dropped to. */
@@ -521,6 +541,35 @@ async function grantGroupAccess(path: string, gid: number): Promise<void> {
 }
 
 /**
+ * Give the shared group the ability to PASS THROUGH one directory, and nothing
+ * else.
+ *
+ * `--x` without `r` is the whole point: a process can `cd` into the directory
+ * and open a child whose name it already knows, and cannot list what is in it.
+ * That is what makes `mkdtemp`'s unpredictable name a control again rather than
+ * a decoration — see `exec/scratch-home.ts` § Why the homes live under a
+ * directory of their own, and CR-03.
+ *
+ * Used on {@link scratchHomeRoot} only. It is emphatically NOT a general
+ * "grant the parent too" helper: the parent of a worktree is the operator's
+ * scratch root, and the parent of anything else could be `/tmp` or `/`.
+ */
+async function grantTraverse(path: string, gid: number): Promise<void> {
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) {
+    throw new Error(
+      `${path} is a symbolic link; refusing to chmod through it (the target is outside this module's knowledge).`,
+    );
+  }
+  await chown(path, -1, gid);
+  // `| 0o010` — group execute. Never `0o040` (read: the listing this root
+  // exists to withhold) and never `0o020` (write: the owner markers beside each
+  // home are what the sweep trusts, and a worker that could rewrite one could
+  // ask the sweep to delete a live feature's HOME).
+  await chmod(path, (info.mode & 0o7777) | 0o010);
+}
+
+/**
  * Take group and world write permission off a file, and never add any.
  *
  * The counterpart to {@link grantGroupAccess}, and the structural half of the
@@ -553,6 +602,19 @@ async function protectFromWorker(path: string): Promise<void> {
  * write an index and a `HEAD` in that last one in order to commit. The main
  * repository's `.git/config` is deliberately NOT among them; it is passed as
  * `protect` instead.
+ *
+ * One path is granted that no caller passes: {@link scratchHomeRoot}, and only
+ * `--x`. Without it the worker cannot reach its own `HOME`; with anything more
+ * it could list every other live feature's, which is exactly what moving the
+ * homes out of `/tmp` was for (CR-03). It is granted here rather than by the
+ * backend because this is the module that knows the gid, and it is guarded on a
+ * granted path actually being a child of that root so it can never become a
+ * general "widen the parent too" rule.
+ *
+ * **What this does NOT grant is per-feature separation.** See
+ * {@link WorkerIdentity}: one group for every feature, so these grants make each
+ * feature's worktree reachable by every other concurrently running feature's
+ * agent.
  *
  * A no-op when the mode is not `dropped`. There is no second identity in that
  * case, so widening anything would be pure exposure with no beneficiary.
@@ -590,9 +652,26 @@ export async function applyWorkerAccess(
     };
   }
 
+  // The scratch-home root, and ONLY when a home under it is being granted.
+  // Ordered before the grants so that a run which cannot traverse to its own
+  // HOME degrades before anything has been widened, rather than after.
+  const granted: string[] = [];
+  if (paths.some((path) => dirname(path) === scratchHomeRoot())) {
+    try {
+      await grantTraverse(scratchHomeRoot(), gid);
+      granted.push(scratchHomeRoot());
+    } catch (error) {
+      return {
+        outcome: 'degraded',
+        reason: `could not give group ${group} traverse access to the scratch-home root ${scratchHomeRoot()}: ${codeOf(error)}`,
+      };
+    }
+  }
+
   for (const path of paths) {
     try {
       await grantGroupAccess(path, gid);
+      granted.push(path);
     } catch (error) {
       // Setting a group requires the calling process to be a member of it,
       // which the install documentation establishes. EPERM here almost always
@@ -615,7 +694,10 @@ export async function applyWorkerAccess(
     }
   }
 
-  return { outcome: 'applied', group, gid, paths };
+  // `granted`, not `paths`: the caller asked about three trees and the helper
+  // also touched the scratch-home root, so reporting the argument back would
+  // understate what this function changed on disk.
+  return { outcome: 'applied', group, gid, paths: granted };
 }
 
 /**
