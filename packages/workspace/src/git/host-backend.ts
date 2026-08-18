@@ -58,7 +58,11 @@ import type {
 } from '@adl/core/stage';
 import { WorkspaceError } from '../errors.js';
 import { run } from '../exec/run.js';
-import { assertWithinRoot, isWithinRoot } from '../paths.js';
+import {
+  assertCwdWithinRoot,
+  assertWithinRoot,
+  isWithinRoot,
+} from '../paths.js';
 import { report } from '../teardown.js';
 import { defaultHostGitHome } from './adl-git.js';
 
@@ -168,10 +172,23 @@ export async function hostGitWorkspace(
     root,
     scratchHome: home,
 
-    exec(
+    async exec(
       execSpec: ExecSpec,
       log: (chunk: LogChunk) => void,
     ): Promise<ExecResult> {
+      // The cwd guard applies here too, and this is the backend where saying so
+      // matters most (WR-01): its children are UNDROPPED — they run as the
+      // daemon user, which is the identity that owns the repository and
+      // `<mainRepo>/.git/config`. An unconstrained `cwd` on this workspace is a
+      // caller choosing where a privileged child starts.
+      //
+      // Its root is ADL's own repository rather than a disposable worktree, so
+      // a caller wanting to run inside a FEATURE's worktree resolves a workspace
+      // rooted there instead of pointing this one at it. That is one registry
+      // call, and it is what keeps "which root is this child confined to?"
+      // answerable from the instance rather than from the argument.
+      await assertCwdWithinRoot(root, execSpec.cwd);
+
       // The same runner and the same environment builder as the worktree
       // backend — this line is the whole of D-17. `'adl'` marks the child as
       // ADL's own, which suppresses the privilege drop and, more importantly,

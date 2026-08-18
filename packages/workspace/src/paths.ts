@@ -9,6 +9,11 @@
  * backend calls the same one — a per-backend variant would have to be argued to
  * be equivalent instead of observed to be.
  *
+ * `Workspace.exec` calls {@link assertCwdWithinRoot} for the same reason, and
+ * did not until WR-01: `read` and `write` were guarded while `exec` — the more
+ * powerful of the three — passed `ExecSpec.cwd` to execa verbatim, against a
+ * docblock in `@adl/core` that said the backend resolved it inside the root.
+ *
  * **Scope is the worktree root and nothing else.** The scratch `HOME` is
  * reached by children through their environment at exec time (D-07) and is not
  * addressable here; widening this to "anything under the scratch root" is the
@@ -35,7 +40,7 @@
  *    {@link assertWithinRoot} for why the walk is written the way it is.
  */
 import { realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isRepoRelativePath } from '@adl/core/config';
 import { ContainmentError, WorkspaceError } from './errors.js';
 
@@ -201,6 +206,112 @@ export async function assertWithinRoot(
   if (!isWithinRoot(realRoot, realTarget)) {
     throw new ContainmentError(
       candidate,
+      'it escapes the workspace root through a symbolic link',
+    );
+  }
+
+  return resolved;
+}
+
+/**
+ * The same containment rule, for the working directory of a child process
+ * (WR-01).
+ *
+ * ── Why this is a separate function and not `assertWithinRoot` ─────────────
+ *
+ * `ExecSpec.cwd` has always DECLARED this contract — `@adl/core`'s docblock
+ * reads "the backend resolves it inside the workspace root" — and no backend
+ * did. `cwd` went to execa verbatim while `read` and `write` went through the
+ * guard above, so the most powerful of the three interface methods was the one
+ * with nothing in front of it: a third-party harness holding a `Workspace` from
+ * `@adl/plugin-sdk` could run any binary with `cwd: '/'`. A doc comment
+ * describing a guard that does not exist is worse than no comment, because
+ * reviewers stop looking. This function is the guard; the docblock now describes
+ * it.
+ *
+ * Three differences from {@link assertWithinRoot}, each forced by what a cwd is
+ * rather than chosen for convenience:
+ *
+ * 1. **The root itself is allowed.** It is the normal case — every current
+ *    caller passes `workspace.root` — and "you addressed a directory" is not an
+ *    error when a directory is precisely what is wanted. Rejecting it would make
+ *    the guard unusable and somebody would delete it.
+ * 2. **An absolute path is allowed**, because that is what every caller has:
+ *    `cwd: workspace.root`. {@link resolveWithinRoot} refuses absolutes outright
+ *    — correctly, for a repo-relative *file* path — so reusing it here would
+ *    reject every real call. A relative `cwd` is accepted too and resolves
+ *    against the root, which is the reading `ExecSpec.cwd`'s wording invites; a
+ *    `..` in it resolves out of the root and is then refused by the containment
+ *    test like anything else.
+ * 3. **The lexical containment test comes AFTER resolution rather than from the
+ *    repo-relative schema**, so the separator guard and the realpath walk are
+ *    doing all the work. `<root>-evil` is refused because
+ *    {@link isWithinRoot} compares with a separator and not with `startsWith`
+ *    (T-2-25), and a symlinked cwd pointing outside is refused because the walk
+ *    resolves it (T-2-24).
+ *
+ * **Scope, stated so it is not mistaken for more than it is.** This guards the
+ * `cwd` a CALLER supplies through the port. `src/git/adl-git.ts` calls `run()`
+ * directly with a cwd taken from ADL's own state — the main repository or a
+ * worktree path the backend created — and is deliberately not routed through a
+ * `Workspace`, because it is the single ADL-side git chokepoint (D-17). Nothing
+ * a caller controls reaches that parameter.
+ *
+ * It also does not confine the child once it is running: a process free to
+ * `chdir` is free to leave, and only the container backend can change that.
+ * What it removes is the ability to *start* somewhere the workspace does not
+ * own — which is the difference between a stage that has to work at it and a
+ * stage that types one field.
+ *
+ * Returns the resolved absolute cwd, for the same reason
+ * {@link assertWithinRoot} returns its path: resolving twice is two chances to
+ * disagree, and the one the guard blessed would not necessarily be the one that
+ * gets used.
+ */
+export async function assertCwdWithinRoot(
+  root: string,
+  cwd: string,
+): Promise<string> {
+  if (cwd === '') {
+    throw new ContainmentError(
+      cwd,
+      'a child’s working directory cannot be the empty string — name the workspace root explicitly',
+    );
+  }
+
+  if (cwd.includes('\0')) {
+    // Same reasoning as `isRepoRelativePath`'s: a NUL truncates the path at the
+    // OS boundary, so what the guard checks and what the kernel opens differ.
+    throw new ContainmentError(
+      cwd,
+      'it contains a NUL byte, which truncates the path at the system-call boundary so the checked path and the opened path differ',
+    );
+  }
+
+  const base = resolve(root);
+  const resolved = isAbsolute(cwd) ? resolve(cwd) : resolve(base, cwd);
+
+  if (!isWithinRoot(base, resolved)) {
+    throw new ContainmentError(
+      cwd,
+      'it resolves outside the workspace root, and a child may only be started inside the workspace it belongs to (WORK-02, D-02)',
+    );
+  }
+
+  let realRoot: string;
+  try {
+    realRoot = await realpath(base);
+  } catch {
+    throw new WorkspaceError(
+      'The workspace root does not exist on disk, so containment cannot be verified. A backend must own a real directory as its root — see `assertWithinRoot`.',
+    );
+  }
+
+  const realTarget = await realpathDeepestExisting(resolved);
+
+  if (!isWithinRoot(realRoot, realTarget)) {
+    throw new ContainmentError(
+      cwd,
       'it escapes the workspace root through a symbolic link',
     );
   }

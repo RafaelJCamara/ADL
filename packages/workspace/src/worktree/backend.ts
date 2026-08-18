@@ -32,7 +32,7 @@ import {
 } from '../exec/privilege.js';
 import { run } from '../exec/run.js';
 import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
-import { assertWithinRoot } from '../paths.js';
+import { assertCwdWithinRoot, assertWithinRoot } from '../paths.js';
 import { report, reportScratchHomeTeardown } from '../teardown.js';
 import { createWorktree, destroyWorktree } from './lifecycle.js';
 
@@ -168,10 +168,17 @@ export async function worktreeWorkspace(
     root: worktreePath,
     scratchHome: scratchHome.path,
 
-    exec(
+    async exec(
       execSpec: ExecSpec,
       log: (chunk: LogChunk) => void,
     ): Promise<ExecResult> {
+      // The same D-02 rule `read` and `write` are held to, applied to the one
+      // interface method that did not have it (WR-01). It runs FIRST and
+      // unconditionally: a refused cwd must not reach the process table, and a
+      // guard that ran after the spawn would be describing a child that already
+      // exists.
+      await assertCwdWithinRoot(worktreePath, execSpec.cwd);
+
       // The instance's scratch home, always, as the second argument. The backend
       // never assembles an environment itself — the runner owns that, and is the
       // only caller of the builder, so the boundary has exactly one door.

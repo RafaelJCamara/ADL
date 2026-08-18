@@ -335,6 +335,78 @@ describe('no module under src/ reaches git through simple-git', () => {
     expect(withoutComments(chokepoint)).toContain('NEUTRALISE_ARGS');
   });
 
+  /* ──────────────────────────────────────────────────────────────────────────
+   * And the third boundary: every child starts inside a root somebody owns
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * The one module that reaches `run()` without a cwd containment guard.
+   *
+   * `adlGit` is not a `Workspace` and takes no caller-supplied cwd: it is handed
+   * the main repository or a worktree path the backend itself created, and it is
+   * deliberately the single ADL-side git chokepoint rather than a fourth backend
+   * (D-17). WR-01 is about `ExecSpec.cwd` — a value that arrives through the port
+   * from a stage, or from a third-party harness holding a `Workspace` via
+   * `@adl/plugin-sdk`. Nothing a caller controls reaches this one's parameter.
+   */
+  const SOLE_UNGUARDED_RUNNER = 'git/adl-git.ts';
+
+  it('names every module that reaches run(), and requires a cwd guard in each', async () => {
+    // The contract suite proves the guard for the two backends it runs; this
+    // proves that no THIRD module quietly reaches the exec primitive without
+    // one. It is the same shape as the `adlGit` call-site pin above and exists
+    // for the same reason: the three unguarded `simpleGit` handles CR-01 removed
+    // came to exist unnoticed, one call site at a time.
+    const files = await typescriptSources(SRC_ROOT);
+    const callers: string[] = [];
+
+    for (const file of files) {
+      const name = relative(SRC_ROOT, file).replaceAll('\\', '/');
+      if (name === 'exec/run.ts') continue;
+
+      const source = await readFile(file, 'utf8');
+      if (
+        importStatements(source).some((statement) =>
+          statement.includes('exec/run.js'),
+        )
+      ) {
+        callers.push(name);
+      }
+    }
+
+    // A record of which modules DO, not a ceiling on which may. A new entry is a
+    // deliberate line in a diff, and its author is then told by the loop below
+    // that it needs a guard or an argument for why it does not.
+    expect(callers.sort()).toEqual([
+      'git/adl-git.ts',
+      'git/host-backend.ts',
+      'stub/backend.ts',
+      'worktree/backend.ts',
+    ]);
+
+    // Without this the exception list could grow to cover everything and the
+    // loop below would iterate nothing while still passing.
+    expect(
+      callers,
+      'the documented exception must still be a real module, or the rule below is vacuous',
+    ).toContain(SOLE_UNGUARDED_RUNNER);
+
+    const unguarded: string[] = [];
+    for (const name of callers) {
+      if (name === SOLE_UNGUARDED_RUNNER) continue;
+      const source = withoutComments(
+        await readFile(join(SRC_ROOT, name), 'utf8'),
+      );
+      if (!/\bassertCwdWithinRoot\s*\(/.test(source)) {
+        unguarded.push(
+          `${name} — it reaches run() but never calls assertCwdWithinRoot, so a caller supplying ExecSpec.cwd can start a child outside the root the workspace is confined to (WR-01). @adl/core's ExecSpec.cwd docblock states the guard as a promise; this is what keeps the promise true.`,
+        );
+      }
+    }
+
+    expect(unguarded).toEqual([]);
+  });
+
   it('names every module that runs git for ADL, so a new one is a visible diff', async () => {
     const files = await typescriptSources(SRC_ROOT);
     const reaching: string[] = [];
