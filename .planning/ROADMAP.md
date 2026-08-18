@@ -91,9 +91,33 @@ Plans:
   4. The worker runs as a dedicated unprivileged OS user with a per-run scratch `HOME`; agent-written `.npmrc`, `.gitconfig`, or hooks-path configuration does not survive the run and never affects ADL's own git operations.
   5. Forge tokens and model API keys are absent from the worker's ambient environment — asserted by dumping a child process's environment in a test.
 
-**Plans**: TBD
+**Plans**: 8 plans
 
-**Notes**: `networkPolicy` and `resources` present in the workspace spec from day one with `'full'` as the v1 value, so the future container backend is a drop-in rather than a call-site sweep. This is the one mistake that is expensive to retrofit.
+Plans:
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Package legitimacy gate for execa and simple-git (blocking human checkpoint)
+- [ ] 02-02-PLAN.md — The spawn boundary: one rule object per glob, three import forms, and a regression guard
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-03-PLAN.md — Tracer: a feature worktree runs a real process and leaves nothing behind
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-04-PLAN.md — Worktree lifecycle, ordered teardown, and the database-free GC pass
+- [ ] 02-05-PLAN.md — Zero-inherit env, disposable scratch HOME, and the credential boundary
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 02-06-PLAN.md — Containment guard, named registry, stub backend, and one contract suite
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 02-07-PLAN.md — Privilege drop to a dedicated OS user, visible skips, and Linux CI provisioning
+- [ ] 02-08-PLAN.md — Manager-owned git client and the shared-config neutralisation
+
+**Notes**: `networkPolicy` and `resources` present in the workspace spec from day one with `'full'` as the v1 value, so the future container backend is a drop-in rather than a call-site sweep. This is the one mistake that is expensive to retrofit. Two further controls were added during planning on research evidence: per-invocation git-config neutralisation (D-19), because linked worktrees share the main repo's local config and neither `HOME` nor `GIT_CONFIG_GLOBAL` reaches local scope; and a Linux CI job running the privilege-drop assertions (D-21), because two acceptance criteria cannot execute on the Windows development machine.
 
 ### Phase 3: Manager Skeleton — State, Leases, API, CLI
 
@@ -387,7 +411,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
-| 2. Workspace & the Exec Boundary | 0/TBD | Not started | - |
+| 2. Workspace & the Exec Boundary | 0/8 | Planned | - |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
