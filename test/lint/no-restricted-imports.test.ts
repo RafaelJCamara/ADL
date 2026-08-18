@@ -61,6 +61,29 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-imports',
     mentions: '@adl/db',
   },
+  {
+    file: 'test/lint/fixtures/spawn-direct-import.ts',
+    ruleId: 'no-restricted-imports',
+    mentions: 'node:child_process',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-require.ts',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'child_process',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-dynamic-import.ts',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'node:child_process',
+  },
+  {
+    // The `mentions` here is the whole point of this row: a single catch-all
+    // selector would report SOMETHING on this file, but only the per-specifier
+    // derivation can name `execa` in the message.
+    file: 'test/lint/fixtures/spawn-dynamic-execa.ts',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'execa',
+  },
 ];
 
 /**

@@ -295,6 +295,23 @@ export const baseConfigs = [
       ],
     },
   },
+  {
+    // `@typescript-eslint/no-require-imports` (from the recommended set) reports
+    // `test/lint/fixtures/spawn-require.ts`, whose entire reason for existing is
+    // to carry the `require()` call that `no-restricted-syntax` is supposed to
+    // ban. Left on, it breaks the negative control — the assertion that each
+    // fixture is clean APART FROM the architecture rules — and the control is
+    // the only thing proving the positive assertions measure the rules under
+    // test rather than an incidental style violation.
+    //
+    // Turned off for the spawn fixtures ONLY, and for this one rule only. Not
+    // globally (real source should keep the rule), and not via an inline
+    // disable comment (which could also silence the architecture rule this
+    // fixture exists to trip, making the fixture pass while proving nothing).
+    name: 'adl/spawn-fixture-require-form',
+    files: ['test/lint/fixtures/spawn-*.ts'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
 ];
 
 /**
