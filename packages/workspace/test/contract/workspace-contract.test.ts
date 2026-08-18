@@ -87,11 +87,29 @@ const SRC_ROOT = fileURLToPath(new URL('../../src', import.meta.url));
 /** The one module allowed to reach a backend. Repository-relative for messages. */
 const SOLE_CONSTRUCTION_SITE = 'registry.ts';
 
-/** Modules that define a backend factory; importing one is the violation. */
-const BACKEND_MODULES = ['worktree/backend.js', 'stub/backend.js'];
+/**
+ * Modules that define a backend factory; importing one is the violation.
+ *
+ * `git/host-backend.js` is on this list even though the host-rooted backend is
+ * deliberately outside the contract suite below. The two properties are
+ * independent: the suite is about *behavioural* interchangeability, which this
+ * backend does not claim, while the guard is about the *registry* being the only
+ * place a factory is named — which it claims exactly as much as its two peers
+ * do. Leaving it off would mean plan `02-08` added a backend nobody could import
+ * by rule and everybody could import in fact.
+ */
+const BACKEND_MODULES = [
+  'worktree/backend.js',
+  'stub/backend.js',
+  'git/host-backend.js',
+];
 
 /** The factory names themselves, for a namespace or aliased import. */
-const BACKEND_FACTORIES = ['worktreeWorkspace', 'stubWorkspace'];
+const BACKEND_FACTORIES = [
+  'worktreeWorkspace',
+  'stubWorkspace',
+  'hostGitWorkspace',
+];
 
 /**
  * Every `import ... from '...'` statement in `source`.

@@ -30,7 +30,7 @@ export { assertWithinRoot, isWithinRoot, resolveWithinRoot } from './paths.js';
 // caller; publishing it would invite a second one, and a second place where a
 // child environment is assembled is a second door into the boundary this
 // package exists to be.
-export { run } from './exec/run.js';
+export { run, type ExecOwner } from './exec/run.js';
 //
 // The privilege drop (WORK-05, D-05, D-18). Exported because the absence of the
 // drop is an operator-facing fact, not an internal detail: a manager building a
@@ -135,6 +135,17 @@ export {
   type WorktreeWorkspaceOptions,
 } from './worktree/backend.js';
 export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
+//
+// ADL's own workspace (D-17). Registered as `'host-git'`, and the reason it is a
+// backend rather than a second `adl/no-direct-spawn` exemption is written out at
+// the top of `git/host-backend.ts`. `defaultHostGitHome` is exported because an
+// operator-facing status view has to be able to say where ADL's git home is
+// without constructing a workspace to ask.
+export {
+  defaultHostGitHome,
+  hostGitWorkspace,
+  type HostGitWorkspaceOptions,
+} from './git/host-backend.js';
 
 // The teardown-report sink's mapping helpers. `WorkspaceSpec.onTeardown` is
 // declared in `@adl/core/stage`; these turn this package's own teardown results

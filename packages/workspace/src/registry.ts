@@ -32,6 +32,10 @@ import type {
   WorkspaceSpec,
 } from '@adl/core/stage';
 import { WorkspaceError } from './errors.js';
+import {
+  hostGitWorkspace,
+  type HostGitWorkspaceOptions,
+} from './git/host-backend.js';
 import { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
 import { featureIdFromBranch } from './worktree/lifecycle.js';
 import { listManagedWorktrees } from './worktree/list.js';
@@ -45,10 +49,21 @@ import { worktreeWorkspace } from './worktree/backend.js';
  * transcribed second copy in a type, and adding an id extends both at once.
  * v2's `'container'` joins this tuple and gains an entry below — nothing else
  * in the repository changes, which is the whole claim.
+ *
+ * **Two of these three are feature backends; `'host-git'` is not.** `'worktree'`
+ * and `'stub'` are peers that a feature runs inside, and the parameterised
+ * contract suite runs over exactly those two. `'host-git'` is ADL's own
+ * workspace — its root is the repository rather than a worktree, its `destroy()`
+ * deletes nothing, and its `snapshot()` refuses — so it is deliberately outside
+ * that suite. Forcing it through would mean either weakening the suite for the
+ * two backends it exists to hold to a standard, or asserting things about this
+ * one that are not true. `test/git/manager-git.test.ts` asserts the divergence
+ * explicitly, so it is a stated boundary rather than an omission.
  */
 export const WORKSPACE_BACKEND_IDS = Object.freeze([
   'worktree',
   'stub',
+  'host-git',
 ] as const);
 
 export type WorkspaceBackendId = (typeof WORKSPACE_BACKEND_IDS)[number];
@@ -65,6 +80,18 @@ export interface WorkspaceRegistryConfig {
    * it, so an operator can substitute a backend without a fork.
    */
   readonly backends?: readonly WorkspaceBackend[];
+  /**
+   * Options for the built-in `'host-git'` backend — in practice, where ADL's
+   * own git home lives (D-08).
+   *
+   * Note what is **not** here and will not be added: a forge token. Credentials
+   * reach a git subprocess through `ExecSpec.env`, on the one `exec()` that
+   * needs them and nowhere else (D-09, WORK-06), so there is no configuration
+   * field anywhere on this type — or on the worktree backend's — through which
+   * one could be supplied. That absence is what makes D-12's claim true rather
+   * than asserted, and `test/git/manager-git.test.ts` asserts it structurally.
+   */
+  readonly hostGit?: HostGitWorkspaceOptions;
 }
 
 export interface WorkspaceRegistry {
@@ -106,6 +133,36 @@ const stubBackend: WorkspaceBackend = {
 };
 
 /**
+ * ADL's own workspace (D-17) — a third entry rather than a second lint
+ * exemption.
+ *
+ * The manager-owned git client of D-12 needs to start a `git` process. The
+ * cheap way is a module that shells out on its own; because
+ * `adl/no-direct-spawn` exempts `packages/workspace/**`, that module would pass
+ * every lint check in the repository while making success criterion 2 — "no code
+ * path anywhere starts a process outside `Workspace.exec()`" — false, with the
+ * bypass sitting inside the one directory the rule cannot see into (T-2-40).
+ *
+ * So the client is handed a `Workspace` like everything else, and this entry is
+ * what it resolves. It costs one line in the id tuple and one factory below;
+ * what it buys is that `exec/run.ts` remains the only process launch and
+ * `exec/env.ts` the only child environment, for ADL's git as much as for an
+ * agent's.
+ *
+ * `list` returns nothing, and that is a decision rather than a gap. The
+ * inventory exists so the GC sweep can find workspaces to reclaim (D-20), and
+ * the one resource this backend addresses is the repository ADL was installed
+ * into. An entry here would invite a sweep to act on it.
+ */
+function hostGitBackend(options: HostGitWorkspaceOptions): WorkspaceBackend {
+  return {
+    id: 'host-git',
+    create: (spec: WorkspaceSpec) => hostGitWorkspace(spec, options),
+    list: () => Promise.resolve([]),
+  };
+}
+
+/**
  * Build a registry over the built-in backends plus whatever the daemon
  * configured.
  *
@@ -119,9 +176,12 @@ const stubBackend: WorkspaceBackend = {
 export function workspaceRegistry(
   config: WorkspaceRegistryConfig = {},
 ): WorkspaceRegistry {
+  const hostBackend = hostGitBackend(config.hostGit ?? {});
+
   const backends = new Map<string, WorkspaceBackend>([
     [worktreeBackend.id, worktreeBackend],
     [stubBackend.id, stubBackend],
+    [hostBackend.id, hostBackend],
   ]);
 
   for (const backend of config.backends ?? []) {
