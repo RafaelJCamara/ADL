@@ -9,7 +9,15 @@
  * against the second backend unchanged" a property of the code rather than a
  * sentence in a document — if it were false, half of these would be red.
  */
-import { readdir, readFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WorkspaceTeardownReport } from '@adl/core/stage';
@@ -131,6 +139,25 @@ function importStatements(source: string): readonly string[] {
   ].map((match) => match[0]);
 }
 
+/**
+ * Every extension a TypeScript module under `src/` may carry.
+ *
+ * This walker filtered on `entry.name.endsWith('.ts')` and therefore could not
+ * see a `.mts`, `.cts` or `.tsx` module — the same blind spot 02-VERIFICATION.md
+ * demonstrated in `eslint.config.js`'s `files: ['**\/*.ts']`, arriving in the
+ * belt-and-braces guard that exists BECAUSE the lint rule can be edited. Both
+ * source-tree assertions below run off this function: the registry's
+ * sole-construction-site rule and the `simple-git` scan added for CR-01. A
+ * single `.mts` under `src/` would have been invisible to the lint rule and to
+ * its backstop simultaneously, which is the one combination that leaves no
+ * evidence at all.
+ *
+ * `.d.ts` matches too, via the `ts` alternative. That is correct rather than
+ * incidental: a declaration file naming a backend factory is still a second
+ * construction site as far as an importing module is concerned.
+ */
+const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/;
+
 async function typescriptSources(dir: string): Promise<readonly string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
@@ -139,13 +166,64 @@ async function typescriptSources(dir: string): Promise<readonly string[]> {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       found.push(...(await typescriptSources(full)));
-    } else if (entry.name.endsWith('.ts')) {
+    } else if (TYPESCRIPT_SOURCE.test(entry.name)) {
       found.push(full);
     }
   }
 
   return found;
 }
+
+describe('the source walker sees every spelling of a TypeScript module', () => {
+  it('finds .ts, .tsx, .mts and .cts, and nothing else', async () => {
+    // Exercised against a fixture directory rather than against `src/`, because
+    // `src/` contains only `.ts` today — which is exactly why the blind spot
+    // survived review. A guard over the real tree would be green whether the
+    // walker looked at four extensions or one, and would go on being green
+    // right up until the first `.mts` landed and slipped past both this file's
+    // assertions at once.
+    //
+    // The negative half matters as much as the positive: `notes.md` and
+    // `stale.tsx.bak` must NOT be read, or the `simple-git` scan below would
+    // start reporting on documentation and backup files and a contributor would
+    // learn to ignore it.
+    const dir = await mkdtemp(join(tmpdir(), 'adl-walker-'));
+    try {
+      const planted = [
+        'module.ts',
+        'component.tsx',
+        'esm.mts',
+        'cjs.cts',
+        'types.d.ts',
+        'script.js',
+        'notes.md',
+        'stale.tsx.bak',
+      ];
+      for (const name of planted) {
+        await writeFile(join(dir, name), '', 'utf8');
+      }
+      await mkdir(join(dir, 'nested'));
+      await writeFile(join(dir, 'nested', 'deep.mts'), '', 'utf8');
+
+      const found = (await typescriptSources(dir))
+        .map((file) => relative(dir, file).replaceAll('\\', '/'))
+        .sort();
+
+      expect(found).toEqual(
+        [
+          'cjs.cts',
+          'component.tsx',
+          'esm.mts',
+          'module.ts',
+          'nested/deep.mts',
+          'types.d.ts',
+        ].sort(),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('the registry is the only place a backend is named', () => {
   it('finds no module outside registry.ts importing a backend factory', async () => {
@@ -255,6 +333,78 @@ describe('no module under src/ reaches git through simple-git', () => {
 
     expect(chokepoint).toContain('export function adlGit(');
     expect(withoutComments(chokepoint)).toContain('NEUTRALISE_ARGS');
+  });
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * And the third boundary: every child starts inside a root somebody owns
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * The one module that reaches `run()` without a cwd containment guard.
+   *
+   * `adlGit` is not a `Workspace` and takes no caller-supplied cwd: it is handed
+   * the main repository or a worktree path the backend itself created, and it is
+   * deliberately the single ADL-side git chokepoint rather than a fourth backend
+   * (D-17). WR-01 is about `ExecSpec.cwd` — a value that arrives through the port
+   * from a stage, or from a third-party harness holding a `Workspace` via
+   * `@adl/plugin-sdk`. Nothing a caller controls reaches this one's parameter.
+   */
+  const SOLE_UNGUARDED_RUNNER = 'git/adl-git.ts';
+
+  it('names every module that reaches run(), and requires a cwd guard in each', async () => {
+    // The contract suite proves the guard for the two backends it runs; this
+    // proves that no THIRD module quietly reaches the exec primitive without
+    // one. It is the same shape as the `adlGit` call-site pin above and exists
+    // for the same reason: the three unguarded `simpleGit` handles CR-01 removed
+    // came to exist unnoticed, one call site at a time.
+    const files = await typescriptSources(SRC_ROOT);
+    const callers: string[] = [];
+
+    for (const file of files) {
+      const name = relative(SRC_ROOT, file).replaceAll('\\', '/');
+      if (name === 'exec/run.ts') continue;
+
+      const source = await readFile(file, 'utf8');
+      if (
+        importStatements(source).some((statement) =>
+          statement.includes('exec/run.js'),
+        )
+      ) {
+        callers.push(name);
+      }
+    }
+
+    // A record of which modules DO, not a ceiling on which may. A new entry is a
+    // deliberate line in a diff, and its author is then told by the loop below
+    // that it needs a guard or an argument for why it does not.
+    expect(callers.sort()).toEqual([
+      'git/adl-git.ts',
+      'git/host-backend.ts',
+      'stub/backend.ts',
+      'worktree/backend.ts',
+    ]);
+
+    // Without this the exception list could grow to cover everything and the
+    // loop below would iterate nothing while still passing.
+    expect(
+      callers,
+      'the documented exception must still be a real module, or the rule below is vacuous',
+    ).toContain(SOLE_UNGUARDED_RUNNER);
+
+    const unguarded: string[] = [];
+    for (const name of callers) {
+      if (name === SOLE_UNGUARDED_RUNNER) continue;
+      const source = withoutComments(
+        await readFile(join(SRC_ROOT, name), 'utf8'),
+      );
+      if (!/\bassertCwdWithinRoot\s*\(/.test(source)) {
+        unguarded.push(
+          `${name} — it reaches run() but never calls assertCwdWithinRoot, so a caller supplying ExecSpec.cwd can start a child outside the root the workspace is confined to (WR-01). @adl/core's ExecSpec.cwd docblock states the guard as a promise; this is what keeps the promise true.`,
+        );
+      }
+    }
+
+    expect(unguarded).toEqual([]);
   });
 
   it('names every module that runs git for ADL, so a new one is a visible diff', async () => {

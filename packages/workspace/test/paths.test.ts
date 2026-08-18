@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ContainmentError, WorkspaceError } from '../src/errors.js';
 import {
+  assertCwdWithinRoot,
   assertWithinRoot,
   isWithinRoot,
   resolveWithinRoot,
@@ -173,6 +174,120 @@ describe('containment: the filesystem half', () => {
   it('accepts a file that already exists', async () => {
     const absolute = await assertWithinRoot(root, 'nested/dir/file.txt');
     expect(absolute).toBe(join(root, 'nested', 'dir', 'file.txt'));
+  });
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * The same rule, for a child's working directory (WR-01)
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  it('accepts the workspace root itself as a cwd', async () => {
+    // The common case and the one `assertWithinRoot` deliberately REFUSES for a
+    // file path, because "you addressed a directory" is a caller bug there and
+    // the whole point here. Asserted first, because a guard that rejected this
+    // would be unusable and somebody would delete it rather than fix it — which
+    // is how a control becomes decorative.
+    await expect(assertCwdWithinRoot(root, root)).resolves.toBe(root);
+  });
+
+  it('accepts a subdirectory, including one that is only named relatively', async () => {
+    // An agent running `npm test` inside a package directory is the ordinary
+    // shape of this. A guard that allowed ONLY the root would satisfy the
+    // rejection cases below and break every real caller, so the positive half
+    // has to be here rather than implied.
+    await mkdir(join(root, 'pkg', 'inner'), { recursive: true });
+
+    await expect(assertCwdWithinRoot(root, join(root, 'pkg'))).resolves.toBe(
+      join(root, 'pkg'),
+    );
+    await expect(assertCwdWithinRoot(root, 'pkg/inner')).resolves.toBe(
+      join(root, 'pkg', 'inner'),
+    );
+  });
+
+  it('rejects the sibling whose name extends the root’s', async () => {
+    // T-2-25 again, reached through the cwd door this time. A bare `startsWith`
+    // accepts `<scratch>/feat-1-evil` for a root of `<scratch>/feat-1`, and this
+    // sibling is a real directory containing a real file, so the acceptance
+    // would be a real escape rather than a theoretical one.
+    await expect(assertCwdWithinRoot(root, sibling)).rejects.toThrow(
+      ContainmentError,
+    );
+  });
+
+  it('rejects a cwd outside the root, and a relative one that climbs out', async () => {
+    for (const candidate of [scratch, join(scratch, 'elsewhere'), '..']) {
+      await expect(assertCwdWithinRoot(root, candidate)).rejects.toThrow(
+        ContainmentError,
+      );
+    }
+  });
+
+  it('rejects a cwd that escapes through a symbolic link', async (ctx) => {
+    if (linkFailure !== undefined) ctx.skip(linkFailure);
+
+    // `<root>/escape` -> `<scratch>/feat-1-evil`. Lexically it is inside the
+    // root and nothing resolves upward, so only the realpath step catches it
+    // (T-2-24). Given as an absolute path AND as a relative one, because the two
+    // take different branches through the resolver and only one of them would
+    // fail if the realpath step were dropped from just one path.
+    await expect(
+      assertCwdWithinRoot(root, join(root, 'escape')),
+    ).rejects.toThrow(ContainmentError);
+    await expect(assertCwdWithinRoot(root, 'escape')).rejects.toThrow(
+      ContainmentError,
+    );
+  });
+
+  it('rejects the empty string and a NUL byte as a cwd', async () => {
+    // The empty string would resolve to the process's own cwd — the DAEMON's,
+    // which is neither the workspace nor anything the caller named. A NUL
+    // truncates at the system-call boundary, so the checked path and the opened
+    // path differ.
+    await expect(assertCwdWithinRoot(root, '')).rejects.toThrow(
+      ContainmentError,
+    );
+    await expect(assertCwdWithinRoot(root, `${root}\0/etc`)).rejects.toThrow(
+      ContainmentError,
+    );
+  });
+
+  it('names the cwd and never the resolved root', async () => {
+    // T-2-28, same as the file-path form: a third-party harness that provoked
+    // the rejection has no business learning where ADL keeps its worktrees.
+    let thrown: ContainmentError | undefined;
+    try {
+      await assertCwdWithinRoot(root, sibling);
+    } catch (error) {
+      thrown = error as ContainmentError;
+    }
+
+    expect(thrown).toBeInstanceOf(ContainmentError);
+    expect(thrown!.candidate).toBe(sibling);
+    // The sibling's path CONTAINS the root's as a prefix — that is what makes it
+    // the trap — so the assertion is about the message not disclosing anything
+    // the caller did not already supply, which here is exactly its own argument.
+    expect(thrown!.message).toBe(
+      `Path ${JSON.stringify(sibling)} was rejected: it resolves outside the workspace root, and a child may only be started inside the workspace it belongs to (WORK-02, D-02).`,
+    );
+  });
+
+  it('refuses to verify containment against a root that does not exist (cwd form)', async () => {
+    // Same reasoning as the file-path form below, and it matters more here: an
+    // imaginary root would let the realpath climb reach the OS temp directory,
+    // at which point EVERY cwd under it would be "contained" and the guard would
+    // be returning cleanly while checking nothing.
+    //
+    // The candidate is INSIDE the imaginary root on purpose. The lexical test
+    // runs first — as it does in `assertWithinRoot` — so a candidate outside
+    // would be refused as a containment failure and this case would pass without
+    // ever reaching the root check it exists for.
+    const absent = join(scratch, 'no-such-root');
+    await expect(assertCwdWithinRoot(absent, absent)).rejects.toThrow(
+      WorkspaceError,
+    );
+    await expect(
+      assertCwdWithinRoot(absent, join(absent, 'inner')),
+    ).rejects.toThrow(WorkspaceError);
   });
 
   it('refuses to verify containment against a root that does not exist', async () => {

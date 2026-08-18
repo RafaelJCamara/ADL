@@ -77,7 +77,24 @@ export interface ExecSpec {
    * deliberately no field anywhere on this type that accepts a command string.
    */
   readonly argv: readonly string[];
-  /** Working directory for the child. The backend resolves it inside the workspace root. */
+  /**
+   * Working directory for the child, inside {@link Workspace.root}.
+   *
+   * **Enforced, not assumed.** Every backend refuses a `cwd` that resolves
+   * outside its root — before the child is spawned, through the same containment
+   * guard `read` and `write` use, with the same separator and symlink handling
+   * (D-02, WR-01). An absolute path is the normal form; a relative one resolves
+   * against the root. The root itself is the common and legitimate value.
+   *
+   * This sentence used to read "the backend resolves it inside the workspace
+   * root" while no backend did anything of the kind, so `cwd` reached execa
+   * verbatim and a harness holding a `Workspace` could start a process anywhere
+   * on the host. It is written out at length now because a docblock describing a
+   * guard that does not exist is worse than no docblock: reviewers stop looking.
+   *
+   * What it does NOT claim: a running child is free to `chdir` out. Confining it
+   * after start is the container backend's job, not this field's.
+   */
   readonly cwd: string;
   /**
    * The child's `PATH`. Required — see note 2 in the module docblock.

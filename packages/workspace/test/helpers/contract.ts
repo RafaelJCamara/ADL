@@ -20,6 +20,7 @@
  * in Phase 11. Building it here is a rehearsal, not speculation.
  */
 import { stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type {
   LogChunk,
   ManagedWorkspace,
@@ -207,6 +208,52 @@ export function describeWorkspaceContract(
       );
 
       expect(result.exitCode).toBe(3);
+    });
+
+    it.each([
+      ['the workspace root’s own parent', (root: string) => dirname(root)],
+      [
+        'a sibling whose name extends the root’s',
+        (root: string) => `${root}-evil`,
+      ],
+      ['a relative path that climbs out', () => '..'],
+    ])('refuses an exec whose cwd is %s', async (_label, outside) => {
+      // WR-01. `ExecSpec.cwd` DECLARED this contract in @adl/core — "the backend
+      // resolves it inside the workspace root" — and no backend enforced it: the
+      // value went to execa verbatim, so `exec`, the most powerful of the three
+      // interface methods, was the one with no guard while `read` and `write`
+      // had one. A harness holding a `Workspace` through @adl/plugin-sdk could
+      // start any binary anywhere on the host.
+      //
+      // Here rather than in a backend's own file precisely because it must hold
+      // for EVERY backend — including the container backend that does not exist
+      // yet, which will inherit this case the day it registers an id.
+      //
+      // `ContainmentError` specifically, not merely "an error": the same
+      // discrimination the write/read cases above rely on. A child that failed
+      // to spawn with ENOENT would satisfy a looser assertion and prove nothing
+      // about the guard.
+      //
+      // The sibling case is the one a bare `startsWith` accepts (T-2-25), and it
+      // is checked through the port rather than only against the predicate
+      // because the point is that the BACKEND reaches the separator-aware guard,
+      // not that the guard exists somewhere.
+      await expect(
+        workspace.exec(
+          {
+            argv: twoStreamChild(0),
+            cwd: outside(workspace.root),
+            path: process.env.PATH ?? '',
+            networkPolicy: 'full',
+            resources: {},
+          },
+          () => {},
+        ),
+      ).rejects.toThrow(ContainmentError);
+
+      // The positive half is the three exec cases above, every one of which
+      // passes `cwd: workspace.root`: a guard that refused everything would turn
+      // them red rather than leaving this case looking satisfied.
     });
 
     it('terminates a child whose signal was already aborted', async () => {

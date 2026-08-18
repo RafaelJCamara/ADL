@@ -40,7 +40,7 @@ import type {
 import { WorkspaceError } from '../errors.js';
 import { run } from '../exec/run.js';
 import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
-import { assertWithinRoot } from '../paths.js';
+import { assertCwdWithinRoot, assertWithinRoot } from '../paths.js';
 import { report, reportScratchHomeTeardown } from '../teardown.js';
 
 /** One live stub workspace, as the inventory sees it. */
@@ -126,10 +126,18 @@ export async function stubWorkspace(spec: WorkspaceSpec): Promise<Workspace> {
     root,
     scratchHome: scratchHome.path,
 
-    exec(
+    async exec(
       execSpec: ExecSpec,
       log: (chunk: LogChunk) => void,
     ): Promise<ExecResult> {
+      // The same cwd guard as the worktree backend, against this backend's own
+      // real `mkdtemp` root (WR-01) — and the same shared function rather than a
+      // variant of its own, for the reason stated at the top of this file about
+      // `assertWithinRoot`: two guards would have to be argued to behave
+      // identically, one guard is observed to, by the contract case running
+      // twice.
+      await assertCwdWithinRoot(root, execSpec.cwd);
+
       // The same runner, the same environment builder, the same scratch home.
       // This line is the reason the contract suite's exec cases mean something.
       return run(execSpec, scratchHome.path, log);

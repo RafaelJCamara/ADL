@@ -42,6 +42,62 @@ export const ARCHITECTURE_RULE_IDS = Object.freeze([
   'no-restricted-syntax',
 ]);
 
+/**
+ * Every extension a TypeScript module in this repository may carry.
+ *
+ * ── Why this exists, and why it is one constant rather than four literals ──
+ *
+ * Every entry below used to be registered with `files: ['**\/*.ts']`. That glob
+ * does NOT match `.mts`, `.cts` or `.tsx` — minimatch's `*.ts` is an exact
+ * suffix, not a prefix of the extension — so a module outside
+ * `packages/workspace` could `import { execa } from 'execa'` from a `.mts` file
+ * and `pnpm lint` stayed green. 02-VERIFICATION.md demonstrated it rather than
+ * inferring it: a probe at `packages/db/src/probe.mts` reported ZERO
+ * architecture errors while `@typescript-eslint/no-unused-vars` fired on the
+ * same file, proving ESLint had processed it and the rule had simply never
+ * matched. Reproduced again at the start of this fix, byte for byte.
+ *
+ * The runtime property was true anyway, because the repository happens to
+ * contain only `.ts`. That is precisely what made it dangerous: success
+ * criterion 2's rule is described three paragraphs up as "a BUILD property, not
+ * a review property", and a build property that holds because of a file-naming
+ * coincidence is a review property wearing the rule's clothes. The FIRST `.mts`
+ * anybody adds — and `execa@10` being ESM-only makes that likelier here than in
+ * most repositories — silently leaves the boundary.
+ *
+ * So the extension set is named ONCE and every `files`/`ignores` glob in this
+ * file is derived from it. A fifth extension is one edit, and it cannot reach
+ * the ban without also reaching the exemption and the carve-outs — which is the
+ * failure this constant is really guarding against, because a widened ban with
+ * an un-widened exemption would make `packages/workspace/src/exec/run.ts`'s
+ * sibling `.mts` a lint error rather than a hole, and a widened exemption with
+ * an un-widened carve-out would reopen CR-01 for one extension.
+ *
+ * Exported so the lint suite can name the same set independently.
+ * `test/lint/no-restricted-imports.test.ts` deliberately restates the four
+ * extensions as a literal instead of importing this, for the reason that file's
+ * `anchoredPattern` already gives: the assertions have to be able to DISAGREE
+ * with the config. Driving them off this tuple would mean deleting an extension
+ * here also deleted its own proof.
+ */
+export const TS_SOURCE_EXTENSIONS = Object.freeze(['ts', 'tsx', 'mts', 'cts']);
+
+/** The brace expansion the globs below are built from — `{ts,tsx,mts,cts}`. */
+const TS = `{${TS_SOURCE_EXTENSIONS.join(',')}}`;
+
+/**
+ * Attach the extension set to a glob stem.
+ *
+ * `ts('packages/core/src/[star][star]/[star]')` yields
+ * `packages/core/src/[star][star]/[star].{ts,tsx,mts,cts}`, and
+ * `ts('test/lint/fixtures/spawn-[star]')` yields
+ * `test/lint/fixtures/spawn-[star].{ts,tsx,mts,cts}` — so directory globs and
+ * filename-prefix globs are built the same way and cannot drift apart.
+ */
+function ts(stem) {
+  return `${stem}.${TS}`;
+}
+
 const PURITY_MESSAGE =
   'is not available inside @adl/core. Core is pure and I/O-free — the caller owns the filesystem and the process table (01-RESEARCH.md § Architectural Responsibility Map). Take the file CONTENTS as a string instead.';
 
@@ -160,8 +216,12 @@ const SPAWN_SYNTAX = FORBIDDEN_SPAWN_SPECIFIERS.flatMap((specifier) => {
  * A SECOND entry here makes success criterion 2 false while the rule still
  * looks like it is enforcing something, which is strictly worse than having no
  * rule at all: the build stays green and the boundary is gone.
+ *
+ * The extension set is {@link TS_SOURCE_EXTENSIONS} for the reason recorded
+ * there: an exemption narrower than the ban would make a `.mts` inside this
+ * package a lint error, and one wider would be a second exemption in disguise.
  */
-const WORKSPACE_EXEMPTION = ['packages/workspace/**/*.ts'];
+const WORKSPACE_EXEMPTION = [ts('packages/workspace/**/*')];
 
 /**
  * The exemption's one carve-out: `simple-git` is banned again inside the
@@ -195,7 +255,7 @@ const WORKSPACE_EXEMPTION = ['packages/workspace/**/*.ts'];
  * reading the source tree, so the boundary survives an edit to this file — the
  * same belt-and-braces the registry's sole-construction-site rule already has.
  */
-const WORKSPACE_SRC = ['packages/workspace/src/**/*.ts'];
+const WORKSPACE_SRC = [ts('packages/workspace/src/**/*')];
 
 const SIMPLE_GIT_IN_SRC_MESSAGE =
   "simple-git is banned inside packages/workspace/src (02-REVIEW.md CR-01, CR-02). It spawns git with no configuration neutralisation and — because it passes `env: undefined` to spawn unless `.env()` was called — with the daemon's ENTIRE environment, forge token and model key included. Every git command ADL runs reads <mainRepo>/.git/config, which is the file an agent inside a linked worktree can write, and git config names programs git executes. Use `adlGit()` from src/git/adl-git.ts: it carries NEUTRALISE_ARGS, the zero-inherit child environment, a forced C locale, and an exit code.";
@@ -364,7 +424,7 @@ export const baseConfigs = [
     // disable comment (which could also silence the architecture rule this
     // fixture exists to trip, making the fixture pass while proving nothing).
     name: 'adl/spawn-fixture-require-form',
-    files: ['test/lint/fixtures/spawn-*.ts'],
+    files: [ts('test/lint/fixtures/spawn-*')],
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
 ];
@@ -387,12 +447,12 @@ export const architectureConfigs = [
     // that caught it. Keeping the entry first is therefore about reading order,
     // not enforcement: do not treat the position as the safety mechanism.
     name: 'adl/no-direct-spawn',
-    files: ['**/*.ts'],
+    files: [ts('**/*')],
     ignores: [
       ...WORKSPACE_EXEMPTION,
-      'packages/core/src/**/*.ts',
-      'test/lint/fixtures/core-*.ts',
-      'test/lint/fixtures/verdict-*.ts',
+      ts('packages/core/src/**/*'),
+      ts('test/lint/fixtures/core-*'),
+      ts('test/lint/fixtures/verdict-*'),
     ],
     rules: SPAWN_BAN_RULES,
   },
@@ -410,27 +470,27 @@ export const architectureConfigs = [
   },
   {
     name: 'adl/core-purity',
-    files: ['packages/core/src/**/*.ts'],
+    files: [ts('packages/core/src/**/*')],
     rules: CORE_PURITY_RULES,
   },
   {
     name: 'adl/core-purity-fixtures',
-    files: ['test/lint/fixtures/core-*.ts'],
+    files: [ts('test/lint/fixtures/core-*')],
     rules: CORE_PURITY_RULES,
   },
   {
     name: 'adl/verdict-schema',
-    files: ['packages/core/src/verdict/**/*.ts'],
+    files: [ts('packages/core/src/verdict/**/*')],
     rules: VERDICT_SCHEMA_RULES,
   },
   {
     name: 'adl/verdict-schema-fixtures',
-    files: ['test/lint/fixtures/verdict-*.ts'],
+    files: [ts('test/lint/fixtures/verdict-*')],
     rules: VERDICT_SCHEMA_RULES,
   },
   {
     name: 'adl/no-direct-spawn-fixtures',
-    files: ['test/lint/fixtures/spawn-*.ts'],
+    files: [ts('test/lint/fixtures/spawn-*')],
     rules: SPAWN_BAN_RULES,
   },
 ];

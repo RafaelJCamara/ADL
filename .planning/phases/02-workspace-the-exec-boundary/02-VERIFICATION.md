@@ -35,6 +35,16 @@ gaps:
       - "Extend `typescriptSources()` in the contract suite to the same extension set."
       - "Add a `.mts` deliberate-violation fixture beside the four existing `test/lint/fixtures/spawn-*.ts` fixtures, so the extension coverage has its own regression guard."
       - "If the gap is instead accepted (repo is `.ts`-only by policy), record it in `deferred-items.md` with the reproduction above and an owning phase, rather than leaving it only in a SUMMARY's 'Not touched' list."
+    resolution:
+      status: closed
+      closed_by: "fix(02): make the spawn ban and the source guards reach .mts/.cts/.tsx"
+      note: >-
+        Fixed, not accepted. Every item under `missing` above is done except the
+        last, which was the alternative. See § Gap resolution at the end of this
+        report for what was changed, and for how each new guard was demonstrated
+        failing when the property is broken. The overall `status` field of this
+        report is deliberately NOT flipped here — re-verification is the
+        verifier's call, not the fixer's.
 deferred:
   - truth: "An agent can run git inside its own worktree on a provisioned Linux deployment"
     addressed_in: "Phase 4"
@@ -263,5 +273,97 @@ The remaining items are honest, well-documented residuals, and the quality of th
 
 ---
 
+## Gap resolution
+
+> Added by the follow-up fix pass. The report above is left as it was written —
+> including its `status: gaps_found` — because re-verification belongs to the
+> verifier, not to the person closing the gap. This section records what changed
+> and what was done to make sure each new guard is worth having.
+
+**The SC2 enforcement gap is CLOSED.** Fixed rather than accepted, so the last
+item under `missing` (record it in `deferred-items.md` instead) did not apply.
+
+**What changed**
+
+| Item | Change |
+|------|--------|
+| `eslint.config.js` | The extension set is named once as `TS_SOURCE_EXTENSIONS` and every `files`/`ignores` glob in the architecture family is derived from it — `adl/no-direct-spawn`, its three `ignores`, `WORKSPACE_EXEMPTION`, `WORKSPACE_SRC` (the CR-01 carve-out), `adl/core-purity`, `adl/verdict-schema`, and all four fixture entries. Deriving them rather than editing four literals is what stops the ban from reaching an extension the exemption and the carve-out do not. |
+| `packages/workspace/test/contract/workspace-contract.test.ts` | `typescriptSources()` walks `.ts`, `.tsx`, `.mts`, `.cts` instead of `endsWith('.ts')`, which restores both source-tree guards the report named — the registry sole-construction-site rule and the `simple-git` scan added for CR-01. |
+| `test/lint/fixtures/` | Three new deliberate-violation fixtures, one per newly-reached extension and one per import form: `spawn-esm-extension.mts` (static import), `spawn-cjs-extension.cts` (`require()`), `spawn-jsx-extension.tsx` (dynamic `import()`). |
+| `test/lint/no-restricted-imports.test.ts` | A resolved-config case per extension, asserting the ban reaches `packages/db/src/index.<ext>` in every import form AND that the exemption reaches `packages/workspace/src/exec/run.<ext>` while the `simple-git` carve-out still applies there. The four extensions are restated as a literal rather than imported from the config, for the reason that file's `anchoredPattern` already gives: the assertions must be able to disagree with the config. |
+| `packages/workspace/test/contract/…` | A walker case over a fixture directory containing one file per extension plus `script.js`, `notes.md` and `stale.tsx.bak`. Run against `src/` it would be green either way, because `src/` is all `.ts` — which is exactly how the blind spot survived review. |
+
+**The original reproduction, re-run.** Before the change, `packages/db/src/probe.mts`
+containing `import { execa } from 'execa'` reported **one** error —
+`@typescript-eslint/no-unused-vars`, on a deliberately unused local — and **zero**
+architecture errors. After the change the same file reports **two**, the added one
+being `no-restricted-imports` on `execa` at severity 2. Probes for `.cts`
+(`require` form), `.tsx` (static form), `packages/workspace/src/*.mts` (`execa`
+permitted, `simple-git` refused — the CR-01 carve-out reaching the new extension)
+and `packages/workspace/test/*.cts` (clean, inside the exemption and outside the
+carve-out) all behave as the `.ts` equivalents do. Probes deleted afterwards; the
+committed fixtures are the permanent form.
+
+**How each new guard was demonstrated failing** — the report's own standard, since
+the phase's recurring defect is controls that pass for the wrong reason:
+
+| Mutation | Result |
+|----------|--------|
+| `adl/no-direct-spawn` narrowed back to `files: ['**/*.ts']` | 3 failed (the `.tsx`/`.mts`/`.cts` resolved-config cases). The three new fixtures still passed — they are covered by the fixtures entry — which is why both layers are asserted separately. |
+| `adl/no-direct-spawn-fixtures` narrowed back to `.ts` only | 40 passed. The fixtures are also matched by the main entry, so this alone is not observable — recorded rather than hidden. |
+| Both narrowed together | 6 failed: the three fixture rows AND the three resolved-config cases. |
+| Contract walker reverted to `endsWith('.ts')`, with a `packages/workspace/src/leak.mts` naming `simpleGit` planted | The walker case goes red; the `simple-git` scan goes GREEN over a file that names `simpleGit`. That pair is the gap in one run — the scan passing vacuously is what the walker case now prevents. |
+| Same leak file, walker fixed | The `simple-git` scan reports `leak.mts` by name. |
+
+**Also fixed in the same pass**, both recorded nowhere before it and both inside
+this phase's own subject matter — see the frontmatter's fourth `human_verification`
+item, which asked for exactly this disposition:
+
+- **WR-01** — `Workspace.exec()` now validates `ExecSpec.cwd` against the
+  workspace root, through the same containment guard `read`/`write` use.
+  Enforced rather than documented away; `@adl/core`'s `ExecSpec.cwd` docblock now
+  describes the guard that exists. `poisoned-config.test.ts`'s
+  `inWorktreeAsOwner` — the call site 02-REVIEW.md named as relying on the gap —
+  now uses a host-git workspace **rooted at** the worktree, so nothing about the
+  demonstration changes and no assertion was relaxed. Demonstrated failing:
+  removing the guard from all three backends turns 7 cases red across 2 files;
+  removing it from one turns that backend's 3 red plus a new structural guard
+  that names the offending module.
+- **WR-02** — `buildChildEnv` refuses `GIT_CONFIG*`, `GIT_SSH*`, `GIT_ASKPASS`,
+  `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR` and
+  `GIT_PROXY_COMMAND` on `ExecSpec.env`, matched by case-folded prefix because
+  `KEY_n`/`VALUE_n` are indexed and a fixed list is evaded by picking index 17.
+  Reproduced live before the fix: a spec carrying `GIT_CONFIG_COUNT=1` /
+  `GIT_CONFIG_KEY_0=user.name` / `GIT_CONFIG_VALUE_0=injected-by-execspec-env`
+  produced a child in which `git config --get user.name` printed the injected
+  value.
+
+**And the audit-trail item is closed.** `WR-07`, `WR-12`'s residual, `WR-13`,
+`WR-14` and `IN-01`..`IN-05` now have one entry each in `deferred-items.md` as
+`D-2-R-3` .. `D-2-R-11`, each with a reproduction (or an explicit note that it is
+unreproduced, and why), a proposed shape, and an owning phase. The prose "Not
+touched" paragraph in `02-07-SUMMARY.md` is marked superseded and points at them.
+`WR-12`'s residual is the one the frontmatter routed to a human for an owner: it
+is filed with the passing test that already demonstrates the hole is open, and
+Phase 15 is **proposed** rather than assigned, with the note that Phase 15's
+success criteria would need to gain a line about configuration neutralisation
+first.
+
+**Not addressed, deliberately:** the three remaining `human_verification` items —
+D-2-R-1's Linux reproduction, its acceptance decision, and the WR-12 ownership
+call. The first needs a provisioned Linux host; the other two are scope
+judgements, not code facts.
+
+**Gates at the closing commit:** `pnpm -r test` (core 404, plugin-sdk 10, db 43,
+workspace 201 passed / 4 skipped), `pnpm vitest run --project root` (40 passed),
+`pnpm -r typecheck`, `pnpm lint`, `pnpm format` — all green on Windows. The
+Windows/Linux split of WR-14 (`D-2-R-6`) applies as always: `poisoned-config.test.ts`'s
+drop-in-force branch is still only *reached* on a provisioned Linux runner, which
+is why the workspace it now depends on is constructed unconditionally and its
+write is exercised by a control that runs on every platform.
+
+---
+
 _Verified: 2026-08-18T22:15:00Z_
 _Verifier: Claude (gsd-verifier)_
+_Gap resolution appended: 2026-08-18 (fix pass) — overall `status` intentionally unchanged; re-verification pending._

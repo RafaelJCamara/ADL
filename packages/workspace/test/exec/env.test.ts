@@ -1,7 +1,10 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ExecSpec } from '@adl/core/stage';
-import { buildChildEnv } from '../../src/exec/env.js';
+import {
+  buildChildEnv,
+  GIT_EXECUTION_ENV_PREFIXES,
+} from '../../src/exec/env.js';
 import { WorkspaceError } from '../../src/errors.js';
 
 /**
@@ -150,6 +153,90 @@ describe('env builder: buildChildEnv', () => {
     ).toThrow(/Home/);
   });
 
+  it('refuses every git-configuration and git-invoked-program variable (WR-02)', () => {
+    // Driven off the exported prefix list rather than a hand-written copy, so
+    // deleting an entry deletes its own proof instead of leaving an aggregate
+    // assertion that still passes — the same shape `poisoned-config.test.ts`
+    // uses for NEUTRALISED_CONFIG.
+    const refused: string[] = [];
+    for (const prefix of GIT_EXECUTION_ENV_PREFIXES) {
+      // The bare prefix, and the prefix wearing a suffix — because these are
+      // matched as a family and `GIT_SSH` and `GIT_SSH_COMMAND` are both real
+      // variables that both name a program.
+      for (const name of [prefix, `${prefix}_COMMAND`]) {
+        try {
+          buildChildEnv(specWith({ [name]: 'x' }), SCRATCH);
+          refused.push(`${name}: ACCEPTED`);
+        } catch (error) {
+          if (!(error instanceof WorkspaceError)) {
+            refused.push(`${name}: threw ${String(error)}`);
+          }
+        }
+      }
+    }
+    expect(
+      refused,
+      'every entry in GIT_EXECUTION_ENV_PREFIXES must be refused as a family, in both its bare and suffixed spelling',
+    ).toEqual([]);
+  });
+
+  it('refuses the INDEXED git-config pairs at any index, not just index 0', () => {
+    // The reason the check is a prefix match and not a list of names. A fixed
+    // list containing GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0 is not a control:
+    // the caller picks 17. `GIT_CONFIG_COUNT` is what makes git read them, and
+    // it is refused for the same reason.
+    for (const name of [
+      'GIT_CONFIG_COUNT',
+      'GIT_CONFIG_KEY_0',
+      'GIT_CONFIG_VALUE_0',
+      'GIT_CONFIG_KEY_17',
+      'GIT_CONFIG_VALUE_17',
+      // Case-folded: environment keys are case-insensitive on Windows, so a
+      // rule evadable with the shift key is not a rule (Pitfall 11).
+      'git_config_key_0',
+      'Git_Config_Count',
+    ]) {
+      expect(
+        () => buildChildEnv(specWith({ [name]: 'user.name' }), SCRATCH),
+        `${name} must be refused — GIT_CONFIG_COUNT with an indexed key/value pair sets ANY git config, and git config names programs git executes (WR-02)`,
+      ).toThrow(WorkspaceError);
+    }
+  });
+
+  it('POSITIVE CONTROL: still carries git variables that are data, not programs', () => {
+    // Without this, the two cases above would be satisfied by refusing the whole
+    // `GIT_` namespace — which would be over-refusal dressed as security, and
+    // would push a stage that legitimately needs a committer identity into
+    // configuring git some other and worse way. The line is configuration
+    // injection and names of programs, not the prefix `GIT_`.
+    const env = buildChildEnv(
+      specWith({
+        GIT_AUTHOR_NAME: 'ADL',
+        GIT_COMMITTER_EMAIL: 'adl@example.invalid',
+        GIT_TERMINAL_PROMPT: '0',
+      }),
+      SCRATCH,
+    );
+
+    expect(env.GIT_AUTHOR_NAME).toBe('ADL');
+    expect(env.GIT_COMMITTER_EMAIL).toBe('adl@example.invalid');
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0');
+  });
+
+  it('keeps the workspace-owned message for the two the workspace owns', () => {
+    // `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` are in the reserved set AND
+    // in the git-execution family, and the ordering of the two checks decides
+    // which message a caller reads. The workspace-owned one is the more useful:
+    // it says the variable already has a value doing a job. Asserted so the
+    // ordering is a property rather than an accident of line order.
+    expect(() =>
+      buildChildEnv(specWith({ GIT_CONFIG_GLOBAL: '/etc/evil' }), SCRATCH),
+    ).toThrow(/owned by the Workspace instance/);
+    expect(() =>
+      buildChildEnv(specWith({ GIT_CONFIG_NOSYSTEM: '0' }), SCRATCH),
+    ).toThrow(/owned by the Workspace instance/);
+  });
+
   it('never puts a credential value in an error message', () => {
     // T-2-19, checked over every rejection path this module has, so a new one
     // added later has to be added here too.
@@ -157,6 +244,13 @@ describe('env builder: buildChildEnv', () => {
     const cases: ExecSpec[] = [
       specWith({ HOME: value }),
       specWith({ ANTHROPIC_API_KEY: value, anthropic_api_key: value }),
+      // The WR-02 path. Added here because this case's whole contract is that
+      // it covers EVERY rejection this module has — and the git-execution
+      // refusal is the newest one. `GIT_ASKPASS` is the pointed example: the
+      // program it names is handed a credential, so a message that echoed the
+      // value would be leaking exactly where it hurts most.
+      specWith({ GIT_CONFIG_VALUE_0: value }),
+      specWith({ GIT_ASKPASS: value }),
     ];
 
     for (const spec of cases) {

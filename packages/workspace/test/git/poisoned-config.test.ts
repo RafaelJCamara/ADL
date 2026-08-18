@@ -100,6 +100,7 @@ import {
 import { join } from 'node:path';
 import type { Workspace } from '@adl/core/stage';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ContainmentError } from '../../src/errors.js';
 import {
   privilegeLauncher,
   workerIdentityFromEnv,
@@ -117,6 +118,18 @@ let repo: OpenedTempRepo;
 let feature: Workspace;
 /** ADL's own workspace, rooted at the main repository. */
 let host: Workspace;
+/**
+ * A second ADL-owned workspace, rooted at the agent's linked WORKTREE.
+ *
+ * See {@link inWorktreeAsOwner}. It exists because `Workspace.exec` now refuses
+ * an `ExecSpec.cwd` outside the instance's own root (WR-01), and this suite is
+ * the one place that legitimately needs a command run *inside the worktree* by
+ * the identity that owns the repository. The answer to "run somewhere else" is
+ * a workspace rooted somewhere else — one registry call — rather than a hole in
+ * the guard, which is exactly what the guard is for: the root a child is
+ * confined to is a property of the instance, not an argument.
+ */
+let worktreeAsOwner: Workspace;
 let client: ManagerGitClient;
 /** The directory the poisoned `core.hooksPath` points at. */
 let hooksDir: string;
@@ -203,7 +216,7 @@ function asAgent(argv: readonly string[]): Promise<Outcome> {
 
 /**
  * Run a command inside the agent's worktree as the identity that OWNS the
- * repository — ADL's own workspace, pointed at the feature's root.
+ * repository — an ADL-owned workspace whose ROOT is the feature's worktree.
  *
  * The cwd is the linked worktree and only the uid differs from
  * {@link asAgent}, which is what makes this a faithful stand-in for the
@@ -211,9 +224,18 @@ function asAgent(argv: readonly string[]): Promise<Outcome> {
  * demonstrated is that a configuration write performed *inside a linked
  * worktree* lands in the *main* repository, and that is a fact about git's
  * worktree layout rather than about who ran the command.
+ *
+ * It used to be `runIn(host, argv, feature.root)` — the repository-rooted
+ * workspace pointed at a directory outside its own root. That worked only
+ * because `Workspace.exec` did not check `ExecSpec.cwd` against the root, which
+ * is WR-01, and 02-REVIEW.md named this exact call site as the place the suite
+ * relied on the gap. Nothing about the demonstration changes: same identity
+ * (`'adl'`, undropped), same cwd, same `run()`, same neutralisation. What
+ * changes is that the workspace being asked to run there is the workspace that
+ * owns the place.
  */
 function inWorktreeAsOwner(argv: readonly string[]): Promise<Outcome> {
-  return runIn(host, argv, feature.root);
+  return runIn(worktreeAsOwner, argv, worktreeAsOwner.root);
 }
 
 /**
@@ -369,6 +391,19 @@ beforeAll(async () => {
     baseRef: 'HEAD',
   });
 
+  // Created UNCONDITIONALLY, although `inWorktreeAsOwner` is only reached where
+  // the privilege drop is in force (Linux). The maintainer's machine is
+  // Windows, so a lazily-created workspace behind that branch would have its
+  // construction — the `configHome` placement refusals, the realpath of a root
+  // that is a linked worktree — first exercised on CI. Standing it up here means
+  // every platform runs that part, and only the exec is Linux-reached.
+  worktreeAsOwner = await registry.resolve('host-git').create({
+    featureId: 'adl-own-in-worktree',
+    mainRepo: feature.root,
+    scratchRoot: repo.scratchRoot,
+    baseRef: 'HEAD',
+  });
+
   client = managerGitClient(host);
 
   // The same decision the worktree backend made when it created `feature`,
@@ -399,9 +434,72 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Host-git `destroy()` deletes nothing by design, so the order here is only
+  // about releasing instances. The worktree-rooted one goes first for symmetry
+  // with its creation.
+  await worktreeAsOwner.destroy();
   await feature.destroy();
   await host.destroy();
   await repo.cleanup();
+});
+
+describe('the stand-in used when the privilege drop is in force', () => {
+  it('CONTROL: a worktree-rooted ADL workspace can write the MAIN repository’s config from inside the worktree', async () => {
+    // `inWorktreeAsOwner` is only REACHED where the drop is in force, which is
+    // Linux, which is not where this repository is developed. Left to itself,
+    // its whole mechanism would first be exercised on CI — and it is the branch
+    // the eleven poisoning cases fall back to, so a fault in it would arrive as
+    // eleven confusing failures rather than one clear one.
+    //
+    // This case runs it everywhere, and asserts both halves of what the branch
+    // assumes: that the write through this workspace SUCCEEDS, and that it lands
+    // in `<mainRepo>/.git/config` even though the command ran in the linked
+    // worktree. The second half is the same claim about git's layout the
+    // poisoning cases rest on, which is why proving it here does not make them
+    // redundant — it makes their fallback trustworthy.
+    const key = 'adl.wr01-stand-in-probe';
+    const value = 'written-from-the-worktree';
+
+    const write = await inWorktreeAsOwner(['git', 'config', key, value]);
+    expect(
+      write.exitCode,
+      diagnose(
+        `\`git config ${key}\` through the worktree-rooted workspace`,
+        write,
+      ),
+    ).toBe(0);
+
+    try {
+      expect(
+        await readFile(join(repo.mainRepo, '.git', 'config'), 'utf8'),
+      ).toContain(value);
+    } finally {
+      const unset = await inWorktreeAsOwner([
+        'git',
+        'config',
+        '--unset-all',
+        key,
+      ]);
+      expect(
+        unset.exitCode,
+        diagnose(`\`git config --unset-all ${key}\``, unset),
+      ).toBe(0);
+    }
+  });
+
+  it('refuses to run that same command through the repository-rooted workspace', async () => {
+    // The shape `inWorktreeAsOwner` used to have, and the WR-01 defect in one
+    // line: `host` is rooted at the MAIN repository, and pointing it at the
+    // feature's worktree asked it to start a child outside the root it is
+    // confined to. `read`/`write` had refused that since D-02; `exec` did not.
+    //
+    // This is the assertion that keeps the fix above from being cosmetic. If it
+    // ever goes green-by-not-throwing, the guard has been removed and the suite
+    // is quietly relying on the gap again.
+    await expect(
+      runIn(host, ['git', '--version'], feature.root),
+    ).rejects.toThrow(ContainmentError);
+  });
 });
 
 describe('the poisoned configuration path a linked worktree opens', () => {
