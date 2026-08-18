@@ -295,3 +295,164 @@ Files claimed as created, all present on disk:
 - `packages/workspace/README.md`
 
 Commits claimed, all present in `git log`: `859b3c7`, `0c6779a`, `4d9aaea`.
+
+---
+
+# ADDENDUM — first Linux CI run (`32127511018`), diagnosis and fix
+
+**Added after the first CI run, which was RED on both matrix legs. The Task 4
+checkpoint is still OPEN — `status` stays `awaiting-checkpoint`. Nothing in this
+addendum is evidence that the gate is satisfied; only a human reading a green
+Linux run may close it.**
+
+## What the red run actually produced
+
+Read carefully, because most of it is the evidence the plan was after:
+
+| Observation | Reading |
+| --- | --- |
+| `test/exec/privilege.test.ts` — **8/8 passing on both legs** | WORK-05's Linux-only assertions **executed**. The uid, the gid, the supplementary-group comparison (T-2-30) and the three write probes all ran against a real `adl-worker` child. |
+| **Zero `[ADL][SKIPPED]` lines** anywhere in the Linux log | Nothing declined to run. D-21's asymmetry held: the cases that skip on Windows executed here. |
+| The tracer test passed, `HOME:` and all | `sudo --preserve-env` **does** deliver `buildChildEnv`'s zero-inherit environment to the child. Unverified row 1 is now verified. |
+| `/bin/sh -c 'id …'` probes and bare-name `git` / `npm` resolved inside dropped children | `Defaults>adl-worker !secure_path` and the corepack `PATH` through `sg` both held. Unverified rows 2 and 3 are now verified. |
+| The T-2-30 vacuity guard did not trip | The runner's user does carry a supplementary group `adl-worker` lacks. Unverified row 4 is now verified. |
+| Two cases in `test/exec/credentials.test.ts` failed on both legs | Unverified row 5 — "existing exec-based tests still pass with the drop active" — is the one that was false, and it was false in one narrow, specific way. |
+
+Both failures were the same assertion at the same line, inside `dumpChildEnv`:
+`expect(result.exitCode).toBe(0)` received `1`.
+
+## Root cause
+
+**The dropped child could not read its own program.**
+
+Under WORK-05 the child runs as `adl-worker`, and the only places that identity
+can reach are the system directories, the workspace's scratch `HOME`, and the
+feature worktree — the three trees `applyWorkerAccess` widens to the shared
+group. **ADL's own checkout is deliberately not among them, and that is the
+property working, not failing.** On a GitHub-hosted runner the checkout sits
+under `/home/runner`, which is not world-traversable, so `adl-worker` cannot
+open a file inside it at all.
+
+`dumpChildEnv` launched `[process.execPath, <repo>/test/helpers/env-dump-child.cjs]`.
+The interpreter resolved (the tool cache is world-accessible); the **program
+file** did not. Node exited 1 before running a line, and the helper's assertion
+saw `1`.
+
+Note it is the *program path* that was unreachable, not the working directory:
+the cwd is established by the parent — which is the daemon user and can traverse
+the fixture — and survives the `setuid`, so `cwd` was never the problem. The
+`0711` chmod added to `openTempRepo` in Task 2 (deviation 4 above) was the right
+fix for the cwd half; this is the other half, and it lives outside the fixture.
+
+**Why exactly these two cases and nothing else.** They are the only cases in the
+package that ask a workspace child to execute a file **from the repository
+checkout**. Everything else runs either a `node -e` string (`tracer.test.ts`,
+`privilege.test.ts`, `helpers/contract.ts`) or a system binary (`git`, `npm`,
+`/bin/sh`). The third case in `credentials.test.ts` — the git/npm neutraliser
+one — passed on Linux for that reason, which is also the positive control: it
+proves a dropped child can write and read back inside its scratch `HOME`, which
+is precisely where the fix puts the program.
+
+## The apparent contradiction, resolved: the `ADL_WORKER_USER is not set` banner
+
+The Linux log contains
+
+```
+[ADL][WORK-05] Privilege drop NOT applied: ADL_WORKER_USER is not set, so there is no pre-provisioned worker identity to drop to (D-06).
+```
+
+while the step environment plainly sets `ADL_WORKER_USER: adl-worker`, and while
+`privilege.test.ts` passed — which, per T-2-33, means the variable *was* visible
+there. That looked like the same variable being visible to one vitest worker and
+invisible to another. It is not, and no environment variable went missing.
+
+The banner is a **true statement about a different backend**. `src/stub/backend.ts`
+— the second peer backend from `02-06`, the one that makes success criterion 3
+provable — calls `run(execSpec, scratchHome.path, log)` with **no worker
+identity and the default `'agent'` owner**. On Linux that resolves to
+`worker-user-unset`, which is correct: the stub genuinely runs agent-shaped
+children undropped, and it never calls `applyWorkerAccess`. The contract suite
+(`test/contract/workspace-contract.test.ts`) runs `describeWorkspaceContract`
+twice, once per registered backend, so the stub executes on every run.
+
+Two further facts make the attribution in the log misleading rather than wrong:
+
+1. `warnPrivilegeModeOnce` fires **once per process**, so the first
+   non-dropping workspace in a worker silences every later one.
+2. Vitest shares one forked worker across several test files. Reproduced on this
+   machine after the fix: 13 test files produced **5** banners, not 13 — so a
+   banner raised while the contract file was running appears in the same
+   worker's stderr as the tracer / worktree-list / credentials files.
+
+This is the same failure mode `02-08` closed for ADL's own git with `ExecOwner`
+(`run(execSpec, home, log, {}, 'adl')`), arriving through a second door. The
+difference is that `'adl'` would be a lie here: a stub workspace handed a real
+feature would be running an agent's children undropped, and that is exactly what
+the operator must hear about. **So the banner has been left alone.** Suppressing
+it would trade a confusing log line for a genuine T-2-32 hole, and making the
+stub drop instead would give it a `sudo` prefix with no `applyWorkerAccess`
+behind it — a half-configured state I cannot observe from Windows. Recorded in
+`deferred-items.md` as a design question for the plan that owns backend
+selection, not patched blind here.
+
+**For whoever reads the next run: this banner is expected, and it is not evidence
+that the worktree backend failed to drop.** The evidence that the drop happened
+is `privilege.test.ts` passing 8/8 with zero `[ADL][SKIPPED]` lines.
+
+## What changed (commit `f7dd0c4`)
+
+`packages/workspace/test/exec/credentials.test.ts`
+
+- New `stageEnvDumpChild(workspace)`: copies `helpers/env-dump-child.cjs` **byte
+  for byte** into the workspace's own scratch `HOME` and returns that path, which
+  is what the child is now launched with. The destination is `0770` and
+  group-owned by the worker on Linux, sits under a world-traversable `/tmp`, and
+  is removed by `destroy()` — so nothing outlives the workspace. It is also the
+  more faithful arrangement: in production an agent's child only ever executes
+  something inside its worktree, inside its scratch `HOME`, or on the system.
+- The staged file's mode is set explicitly (`0644`, skipped on Windows) rather
+  than inherited from the copy or the umask, so a runner with a restrictive
+  umask cannot reintroduce the same failure with a different cause. `0644` is
+  safe because the containing directory is what confines it — `0770`, no world
+  bit, per T-2-35.
+- `expect(result.exitCode, output).toBe(0)` now carries the child's own output as
+  the failure message, matching `privilege.test.ts`. A bare `expected 1 to be +0`
+  from inside a helper cost this plan a full CI round trip; the launcher's or
+  node's own complaint names the cause on the first read. It renders only when
+  the child exited non-zero — that is, when it never reached its single write —
+  so a leaked credential is still reported by the assertions, not printed here.
+
+`packages/workspace/test/helpers/env-dump-child.cjs`
+
+- Docblock note: do not hand this path to a workspace child directly, and why.
+
+**No assertion was changed, added, relaxed, or skipped.** The credential
+patterns, the two sentinel values, the both-sides scoping proof and the
+non-emptiness check are all byte-identical. The instrument is still a real `.cjs`
+file executed by a real child process, which is the entire reason it exists
+rather than a `node -e` string.
+
+## Local gates after the fix (Windows, all exit 0)
+
+| Check | Result |
+| --- | --- |
+| `pnpm -r test` | core 404, plugin-sdk 10, db 43, workspace **129 passed / 2 skipped (131)** |
+| `pnpm vitest run --project root` | 2 files, 30 passed |
+| `pnpm -r typecheck` | pass |
+| `pnpm lint` | pass |
+| `pnpm format` | pass |
+
+The two skips are still the two platform-gated privilege cases, still writing
+their `[ADL][SKIPPED][WORK-05]` reasons to stderr. The workspace count is 131
+rather than the 108 of the red run because `02-08` landed in between.
+
+## Still UNVERIFIED until the next Linux run
+
+| Unverified | Why it could still go wrong |
+| --- | --- |
+| That the checkout being unreadable to `adl-worker` was the mechanism | Argued from a perfect correlation — the two failing cases are the only two that execute a file from the checkout — and from `/home/runner` not being world-traversable on GitHub-hosted images. It was **not** reproduced: this machine is Windows and has no second OS identity. If the real cause is something else about `sudo`, the fix is a no-op and the same two cases fail again — but now with the child's own error text attached, which names it on the first read. |
+| That the scratch `HOME` is readable by the dropped child | Strongly indicated rather than assumed: the third credentials case already **passed** on Linux, and `privilege.test.ts`'s `echo probe > "$HOME/worker-probe"` exited 0 — the worker can write there, so it can certainly traverse and read there. Still, that is evidence from a neighbouring case, not from this one. |
+| Everything the red run already established | Rows 1–4 of the original table are now verified by that run. They are listed above as verified and are **not** re-opened here. |
+| Whether the stub backend should carry a worker identity | Deliberately not changed. See the banner section; deferred rather than guessed at from a platform that cannot observe it. |
+
+**A green run is the evidence; this document is not.**
