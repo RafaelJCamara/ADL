@@ -155,3 +155,45 @@ rest of the GC's ownership.
 
 **Status:** open. Not blocking — it costs disk on a daemon that has crashed
 mid-snapshot, and nothing depends on the namespace being empty.
+
+## D-2-07-2: the stub backend spends WORK-05's once-per-process banner
+
+**Found during:** the diagnosis of the first Linux CI run (`32127511018`), while
+accounting for a `[ADL][WORK-05] Privilege drop NOT applied: ADL_WORKER_USER is
+not set` line in a job whose step environment plainly sets `ADL_WORKER_USER`.
+
+**What happens:** `src/stub/backend.ts` calls
+`run(execSpec, scratchHome.path, log)` — no worker identity, and the default
+`'agent'` owner. On Linux that resolves to `worker-user-unset`, which is a
+**true** statement about that backend: it runs agent-shaped children undropped
+and never calls `applyWorkerAccess`. But `warnPrivilegeModeOnce` fires once per
+process, and vitest shares one forked worker across several test files
+(reproduced locally: 13 files, 5 banners). So the contract suite's stub run
+prints a banner that a reader attributes to whichever file the worker happened to
+be executing, and silences any later, genuinely interesting one in that process.
+
+**Why it matters:** this is `02-08`'s `ExecOwner` problem arriving through a
+second door. There, an ADL-owned `git` child resolved to `worker-user-unset` and
+was fixed with `run(execSpec, home, log, {}, 'adl')`. The reason that fix does
+**not** transfer is that `'adl'` would be a lie here: a stub workspace handed a
+real feature is running an agent's children undropped, and T-2-32 says that is
+precisely what an operator must hear about. The banner is not spurious — its
+*scope* is.
+
+**Why it was not fixed now:** the two candidate fixes are both design decisions
+that cannot be observed from Windows. Giving the stub a worker identity would
+hand it a `sudo` prefix with no `applyWorkerAccess` behind it — a half-configured
+drop, and a new way for the contract suite to go red on Linux only. Adding a
+third `ExecOwner` member for "a backend that carries no worker identity by
+construction" is a change to a type `02-08` has just settled, made in a fix whose
+reviewers were asked to look at something else.
+
+**What picking it up requires:** the plan that owns backend *selection* — where
+"may this backend serve a real feature?" is answered — plus a Linux runner to
+observe the contract suite under a real drop. Until then the mitigation is
+documentary: `02-07-SUMMARY.md`'s addendum tells the checkpoint reader that this
+banner is expected and that the drop evidence is `privilege.test.ts` passing 8/8
+with zero `[ADL][SKIPPED]` lines.
+
+**Status:** open. Not blocking — it is a log-clarity and evidence-attribution
+problem, not a containment one. No production deployment runs the stub backend.
