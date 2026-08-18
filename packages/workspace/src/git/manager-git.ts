@@ -51,12 +51,28 @@
  * argv builder — which is why they inherit the overrides without anyone
  * remembering to add them. A new call site that assembles its own `git` argv
  * and hands it to `workspace.exec()` would compile, pass lint, and be wrong.
+ *
+ * **There is exactly one other consumer of {@link NEUTRALISE_ARGS}, and it is
+ * not a call site — it is the other chokepoint.** `git/adl-git.ts` runs the
+ * worktree plumbing (`worktree add/remove/list/prune`, `branch`, `status`,
+ * `stash create`, `update-ref`, `checkout`) that this narrow client deliberately
+ * does not expose, and it splices the same frozen list into the same position.
+ * That module exists because those eight invocations went through `simple-git`
+ * with no overrides and no controlled environment for the whole of plan `02-08`
+ * — 02-REVIEW.md CR-01 and CR-02 — which is to say the claim two paragraphs up
+ * was false in this package's own source at the moment it was written. Read
+ * `adl-git.ts`'s docblock for what now makes a ninth bypass fail the build
+ * rather than pass review.
  */
 import type { LogChunk, Workspace } from '@adl/core/stage';
 import { WorkspaceError } from '../errors.js';
 
 /**
- * Every executable configuration key, overridden with something inert.
+ * The executable configuration keys ADL neutralises, overridden with something
+ * inert — **not every executable key git has**. See
+ * {@link NEUTRALISATION_RESIDUAL_RISK}, which is the honest half of this
+ * sentence and was missing until 02-REVIEW.md WR-12 pointed out that the word
+ * "every" was doing work the list could not support.
  *
  * Each entry carries the answer to "what does an attacker get from this one",
  * because eight opaque assignments is a list a future contributor will trim —
@@ -68,6 +84,11 @@ import { WorkspaceError } from '../errors.js';
  * All eight were verified locally, one at a time, against a repository whose
  * local configuration had that key poisoned: in every case
  * `git -c <entry> config --get <key>` returned the neutralised value.
+ *
+ * **Adding an entry is a two-file change.** `test/git/manager-git.test.ts`
+ * asserts this list and the README's "What ADL's own git overrides" table
+ * describe the same key set, so an addition here without a README row fails the
+ * suite. That correspondence is what keeps accepted risk T-2-42 discoverable.
  */
 export const NEUTRALISED_CONFIG = Object.freeze([
   // A directory of scripts git executes around ordinary operations. Verified to
@@ -97,6 +118,42 @@ export const NEUTRALISED_CONFIG = Object.freeze([
   // is git's own refusal, rather than a value this module invents.
   'protocol.ext.allow=never',
 ] as const);
+
+/**
+ * What {@link NEUTRALISED_CONFIG} does **not** cover, stated rather than implied
+ * (02-REVIEW.md WR-12, threat T-2-42).
+ *
+ * A residual risk that is written down is an accepted one; a residual risk that
+ * a reader has to infer from the absence of a key is one nobody accepted. Two
+ * families are open, and they differ in kind:
+ *
+ * 1. **Wildcard driver keys, which cannot be neutralised by name at all.**
+ *    `filter.<driver>.clean` / `.smudge` and `diff.<driver>.textconv` /
+ *    `.command` name programs git runs when a `.gitattributes` entry selects
+ *    that driver — on checkout, on status, and on diff. `<driver>` is chosen by
+ *    the attacker, so `-c filter.x.clean=` closes one driver and not the
+ *    mechanism. This is the substantive part of the finding: the reachable
+ *    surface here is *repository content* (a committed `.gitattributes`), not
+ *    configuration, and closing it needs a different control — `-c
+ *    core.attributesFile=` only disables the *global* attributes file, never
+ *    the tracked one or `.git/info/attributes`.
+ * 2. **Fixed-name keys not yet in the list**, each of which is a one-line
+ *    addition above plus a README row: `core.alternateRefsCommand`,
+ *    `core.askPass`, `gpg.program`, `gpg.ssh.program`, `sequence.editor`,
+ *    `uploadpack.packObjectsHook`. None of them is reachable through an
+ *    operation `ManagerGitClient` ships today — ADL neither signs, nor prompts,
+ *    nor serves an upload-pack — which is why they are recorded here rather
+ *    than added blind; Phase 5's push and Phase 9's forge operations make
+ *    `gpg.*` and `uploadpack.*` live, and that is the change that should add
+ *    them.
+ *
+ * Both are additionally covered by the OS layer wherever WORK-05's privilege
+ * drop is in force, because the worker cannot write `<mainRepo>/.git/config` at
+ * all there — but D-05 makes that Linux-only, so it is a second layer and never
+ * the argument.
+ */
+export const NEUTRALISATION_RESIDUAL_RISK =
+  'filter.<driver>.clean/.smudge and diff.<driver>.textconv/.command remain reachable through a committed .gitattributes: the driver name is attacker-chosen, so no fixed -c override closes the mechanism. core.alternateRefsCommand, core.askPass, gpg.program, gpg.ssh.program, sequence.editor and uploadpack.packObjectsHook are unneutralised fixed-name keys, none reachable through an operation ManagerGitClient ships today.';
 
 /**
  * {@link NEUTRALISED_CONFIG} flattened into argv form.

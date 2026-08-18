@@ -85,6 +85,7 @@ export {
   destroyWorktree,
   featureIdFromBranch,
   type CreatedWorktree,
+  type WorktreeTeardown,
 } from './worktree/lifecycle.js';
 
 // The disk inventory (D-20). Deliberately the MECHANISM only: it reports which
@@ -138,14 +139,24 @@ export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
 //
 // ADL's own workspace (D-17). Registered as `'host-git'`, and the reason it is a
 // backend rather than a second `adl/no-direct-spawn` exemption is written out at
-// the top of `git/host-backend.ts`. `defaultHostGitHome` is exported because an
-// operator-facing status view has to be able to say where ADL's git home is
-// without constructing a workspace to ask.
+// the top of `git/host-backend.ts`.
 export {
-  defaultHostGitHome,
   hostGitWorkspace,
   type HostGitWorkspaceOptions,
 } from './git/host-backend.js';
+//
+// `defaultHostGitHome` is exported because an operator-facing status view has to
+// be able to say where ADL's git home is without constructing a workspace to
+// ask. It lives beside `adlGit` — the chokepoint every ADL-side git invocation
+// in `src/` goes through (02-REVIEW.md CR-01, CR-02) — rather than beside the
+// host-git backend, because the worktree modules need the same home and may not
+// import a backend module by rule.
+//
+// What is deliberately NOT exported is `adlGit` itself, for the reason
+// `managerGitClient`'s private argv builder is not exported: publishing it would
+// publish a git invocation an out-of-tree caller could point anywhere, and the
+// package's promise is that there is one.
+export { defaultHostGitHome } from './git/adl-git.js';
 
 // The manager-owned git client (D-12) and the neutralisation every one of its
 // invocations carries (D-19, WORK-07).
@@ -164,8 +175,14 @@ export {
 // `managerGitClient`. It is the reason there is no reachable path to a git
 // invocation without the overrides, and publishing it would be publishing the
 // bypass.
+//
+// `NEUTRALISATION_RESIDUAL_RISK` travels with them for the same reason and is
+// the half that was missing: a status view that lists what ADL overrides and
+// stays silent about what it does not lets a reader infer a completeness the
+// list does not have (02-REVIEW.md WR-12).
 export {
   managerGitClient,
+  NEUTRALISATION_RESIDUAL_RISK,
   NEUTRALISE_ARGS,
   NEUTRALISED_CONFIG,
   type GitStatusEntry,

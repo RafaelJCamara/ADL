@@ -1,13 +1,21 @@
 /**
  * The git worktree lifecycle (WORK-01, WORK-04, D-13).
  *
- * `simple-git` shells out to the real `git` binary, so worktree semantics here
- * are exactly git's. That is the reason it is used rather than a pure-JS git
- * implementation: a linked worktree's `.git` is a *file* containing
- * `gitdir: …/.git/worktrees/<name>`, and `isomorphic-git` cannot resolve
- * references through it (CLAUDE.md § What NOT to Use).
+ * The real `git` binary does the work, so worktree semantics here are exactly
+ * git's. That is the reason a pure-JS git implementation is not used: a linked
+ * worktree's `.git` is a *file* containing `gitdir: …/.git/worktrees/<name>`,
+ * and `isomorphic-git` cannot resolve references through it (CLAUDE.md § What
+ * NOT to Use).
  *
- * Two properties in this module are load-bearing and neither is a style choice:
+ * **The binary is reached through {@link adlGit} and nowhere else.** This module
+ * used to hold a `simpleGit(mainRepo)` handle, and 02-REVIEW.md CR-01/CR-02 is
+ * what that cost: `git branch --list` and `git worktree add` — the latter fires
+ * the `post-checkout` hook — ran against the main repository with no
+ * configuration neutralisation and with the daemon's entire environment,
+ * credentials included. `adlGit` is the single chokepoint that carries both; see
+ * its docblock for why a reminder at each call site was not an acceptable fix.
+ *
+ * Three properties in this module are load-bearing and none is a style choice:
  *
  * 1. **Teardown is two ordered steps.** `git worktree remove` does not delete
  *    the branch and `git worktree prune` does not either; `git branch -D`
@@ -16,21 +24,14 @@
  * 2. **Each step is independently idempotent.** The GC backstop in `gc.ts`
  *    re-runs teardown over worktrees a crashed worker left half torn down, so
  *    "already gone" must be a no-op rather than an error.
+ * 3. **What teardown actually did is returned, not discarded.** `destroy()`
+ *    cannot report `reclaimed` honestly without it (WR-04).
  */
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRepoRelativePath } from '@adl/core/config';
-// Named import, NOT the default import CLAUDE.md's ESM/CJS row suggests for CJS
-// packages. `simple-git@3.36.0` ships a real ESM build (`exports.import` ->
-// `dist/esm/index.js`) alongside the CJS one, but its `.d.ts` is classified as
-// CommonJS by `nodenext` (no `"type"` in its package.json). With
-// `esModuleInterop` off — which this repo's `tsconfig.base.json` leaves off —
-// a default import of a CJS-classified module yields the module NAMESPACE, and
-// `simpleGit(repo)` then fails to typecheck with "has no call signatures".
-// `simpleGit` is a genuine named export of the same module, so this form is
-// correct at both the type level and runtime.
-import { simpleGit } from 'simple-git';
 import { WorkspaceError } from '../errors.js';
+import { adlGit, type AdlGitOutcome } from '../git/adl-git.js';
 
 /**
  * The branch-name prefix that marks a branch as ADL's own.
@@ -91,6 +92,29 @@ export interface CreatedWorktree {
 }
 
 /**
+ * Everything `git check-ref-format` forbids in a single refname component, plus
+ * the glob metacharacters `git branch --list` would otherwise interpret.
+ *
+ * WR-08. A feature id becomes `adl/<id>` — a ref — either way, so validating it
+ * against git's own refname rules is the durable form of this guard rather than
+ * a list of characters someone thought of. Reproduced against git 2.49, each
+ * alternative below is one of git's documented refusals:
+ *
+ * - `*?[` and `~^:` — refname metacharacters. `*` is the interesting one: it is
+ *   legal in a *directory* name, so `featureId = '*'` passed the old guard, and
+ *   `git branch --list 'adl/*'` (below) then matched every existing ADL branch
+ *   and refused creation for a reason naming a branch nobody asked about.
+ * - `\` and the ASCII control range and DEL — rejected by git, and by the
+ *   separator check below for `\`.
+ * - a leading `.` or `-`, `..` anywhere, a trailing `.` or `.lock`, and `@{` —
+ *   git's refname rules verbatim. A leading `-` is separately why `.` and `-`
+ *   are grouped: `featureId = '.'` resolved `worktreePath` to the scratch root
+ *   ITSELF, so a teardown would have removed every feature's directory.
+ * - whitespace — legal in a directory name, never in a refname.
+ */
+const REFNAME_UNSAFE = /[*?[\]~^:\\\x00-\x1f\x7f\s]|^[.-]|\.\.|\.lock$|\.$|@\{/;
+
+/**
  * Reject a feature id that must never reach the filesystem or a branch name.
  *
  * A feature id originates in a directory name under the watched repository's
@@ -102,7 +126,9 @@ export interface CreatedWorktree {
  * reimplemented — a second path guard is a second thing to keep correct, and
  * the two would drift. It contributes the `..`-segment, drive-letter, UNC and
  * NUL rejections; the separator check below is the additional constraint a
- * *single path segment* has over a relative path.
+ * *single path segment* has over a relative path, and
+ * {@link REFNAME_UNSAFE} is the additional constraint a *git ref* has over
+ * both (WR-08).
  */
 function assertUsableFeatureId(featureId: string): void {
   if (featureId.trim() === '') {
@@ -125,6 +151,13 @@ function assertUsableFeatureId(featureId: string): void {
       featureId,
     );
   }
+
+  if (REFNAME_UNSAFE.test(featureId)) {
+    throw new WorkspaceError(
+      `Feature id ${JSON.stringify(featureId)} is not a usable git refname component: it becomes the branch ${JSON.stringify(branchNameFor(featureId))}, and git rejects (or globs) it. See git check-ref-format.`,
+      featureId,
+    );
+  }
 }
 
 /** Whether `path` exists, without distinguishing why it does not. */
@@ -139,9 +172,6 @@ async function exists(path: string): Promise<boolean> {
 
 /**
  * Create the feature's worktree at `<scratchRoot>/<featureId>` on a new branch.
- *
- * There is no `.worktree()` helper on `simple-git` — `raw` with the argv is the
- * supported form (CLAUDE.md § Git, forge, and workspace).
  *
  * **A live feature is never reused or clobbered.** If the target directory or
  * the `adl/` branch already exists this throws, rather than attaching to what
@@ -161,7 +191,7 @@ export async function createWorktree(
 
   const worktreePath = join(scratchRoot, featureId);
   const branch = branchNameFor(featureId);
-  const git = simpleGit(mainRepo);
+  const git = adlGit(mainRepo);
 
   if (await exists(worktreePath)) {
     throw new WorkspaceError(
@@ -172,8 +202,16 @@ export async function createWorktree(
 
   // `branch --list` rather than `rev-parse --verify`: it reports absence as
   // empty output instead of a non-zero exit, so a missing branch — the normal
-  // case — does not travel as an exception.
-  const existingBranch = await git.raw(['branch', '--list', branch]);
+  // case — does not travel as an exception. `--end-of-options` because the
+  // branch name is derived from an untrusted feature id (D-22); the id is
+  // separately barred from carrying a glob by `assertUsableFeatureId`, since
+  // `branch --list` takes a PATTERN and no terminator makes a pattern literal.
+  const existingBranch = await git.rawOk([
+    'branch',
+    '--list',
+    '--end-of-options',
+    branch,
+  ]);
   if (existingBranch.trim() !== '') {
     throw new WorkspaceError(
       `Refusing to create a worktree for feature ${JSON.stringify(featureId)}: branch ${branch} already exists.`,
@@ -181,7 +219,23 @@ export async function createWorktree(
     );
   }
 
-  await git.raw(['worktree', 'add', '-b', branch, worktreePath, baseRef]);
+  // `--end-of-options` so a `baseRef` beginning with `-` is a revision and not
+  // a flag (WR-08). `baseRef` reaches here from `WorkspaceSpec` — configuration
+  // or feature metadata, which D-22 records as untrusted — and git accepts
+  // `--detach`, `--no-checkout`, `--lock` and `--reason=<x>` in that position.
+  // `manager-git.ts` already carries the same guard on `revParse` and
+  // `effectiveConfig`; the worktree lifecycle did not get it until WR-08.
+  // Verified against git 2.49: with the terminator, `--detach` in the ref slot
+  // fails with `fatal: invalid reference: --detach` rather than being obeyed.
+  await git.rawOk([
+    'worktree',
+    'add',
+    '-b',
+    branch,
+    '--end-of-options',
+    worktreePath,
+    baseRef,
+  ]);
 
   return { worktreePath, branch };
 }
@@ -190,27 +244,59 @@ export async function createWorktree(
  * Whether a `git worktree remove` failure means the worktree was already gone.
  *
  * Keyed on git's message rather than on a pre-flight filesystem check, which
- * would race a concurrent sweep between the check and the removal.
+ * would race a concurrent sweep between the check and the removal — **and the
+ * message is a constant here rather than a setting**, which it was not until
+ * WR-08's sibling finding WR-03 was fixed.
  *
- * It is keyed on the message *only*, and not also on an exit status, because
- * `simple-git@3.36.0`'s `GitError` carries exactly two own properties — `task`
- * and `message` — and no exit code at all (verified against the installed
- * package: `e.exitCode`, `e.code` and `e.status` are all `undefined` for a
- * failed `raw`). Git's own exit code for this case is 128, but it never
- * reaches us.
+ * Git localises its messages through gettext. The old implementation matched
+ * `/is not a working tree/i` against a `simple-git` child that inherited the
+ * daemon's `LANG`/`LC_ALL` (CR-02), so on a French or Japanese deployment the
+ * regex missed, `destroyWorktree` rethrew, and the property this module calls
+ * load-bearing at the top — "already gone must be a no-op" — was gone. The GC
+ * backstop then reported every already-collected worktree as a permanent
+ * failure, on exactly the crash-recovery path it exists for. Every ADL-side git
+ * child now runs under `LC_ALL=C` / `LANG=C`, set at the {@link adlGit}
+ * chokepoint and asserted in `test/git/adl-git.test.ts`, so this text is git's
+ * source string and nothing else.
+ *
+ * The exit code is checked as well, and that is new too: `simple-git`'s
+ * `GitError` carries exactly `task` and `message` and no status, which is why
+ * the old code *could* only match prose. Git's own code for this case is 128,
+ * and `AdlGitOutcome` now carries it.
  *
  * Note what does *not* need handling here: a worktree whose directory a crash
  * deleted while the administrative entry survived. `worktree remove --force`
  * exits 0 on that and cleans the entry itself (verified against git 2.49).
  */
-function isWorktreeAlreadyGone(error: unknown): boolean {
-  return error instanceof Error && /is not a working tree/i.test(error.message);
+function isWorktreeAlreadyGone(outcome: AdlGitOutcome): boolean {
+  return (
+    outcome.exitCode !== 0 && /is not a working tree/i.test(outcome.stderr)
+  );
 }
 
 /** Whether a `git branch -D` failure means the branch was already deleted. */
-function isBranchAlreadyGone(error: unknown): boolean {
-  return error instanceof Error && /branch .* not found/i.test(error.message);
+function isBranchAlreadyGone(outcome: AdlGitOutcome): boolean {
+  return outcome.exitCode !== 0 && /branch .* not found/i.test(outcome.stderr);
 }
+
+/** A failed step that was not one of the two idempotent no-ops. */
+function gitFailed(what: string, outcome: AdlGitOutcome): WorkspaceError {
+  return new WorkspaceError(
+    `git ${what} failed with exit code ${String(outcome.exitCode)}: ${outcome.stderr.trim() || '(no stderr)'}`,
+  );
+}
+
+/**
+ * What a teardown actually did to the worktree.
+ *
+ * WR-04: `destroyWorktree` used to swallow both "already gone" cases and return
+ * `void`, so `Workspace.destroy()` could not tell "I removed a worktree" from
+ * "there was nothing there" and reported `reclaimed` either way. That is a
+ * false statement to the operator on every second teardown — and `teardown.ts`
+ * justifies the whole reporting sink on the grounds that "an operator can
+ * believe what it says".
+ */
+export type WorktreeTeardown = 'removed' | 'already-absent';
 
 /**
  * Remove the worktree and then delete its branch — in that order, always, and
@@ -229,31 +315,48 @@ function isBranchAlreadyGone(error: unknown): boolean {
  * the flag conditional on a cleanliness probe would race whatever process the
  * agent leaked (T-2-13).
  *
- * Each step swallows only its own "already gone" failure and rethrows anything
+ * Each step swallows only its own "already gone" failure and raises anything
  * else. That per-step idempotency is what lets the GC backstop re-run over a
  * feature whose teardown died between the two steps and still finish the job.
+ *
+ * The return value describes the **worktree**, not the branch. The two can
+ * disagree — the half-torn-down shape is exactly a missing worktree with a
+ * surviving branch — and the caller reports one resource, so reporting the more
+ * conservative half would say `already-absent` about a teardown that had just
+ * deleted a branch.
  */
 export async function destroyWorktree(
   mainRepo: string,
   worktreePath: string,
   branch: string,
-): Promise<void> {
-  const git = simpleGit(mainRepo);
+): Promise<WorktreeTeardown> {
+  const git = adlGit(mainRepo);
+  let outcome: WorktreeTeardown = 'removed';
 
-  try {
-    await git.raw(['worktree', 'remove', '--force', worktreePath]);
-  } catch (error) {
-    if (!isWorktreeAlreadyGone(error)) throw error;
+  const removed = await git.raw([
+    'worktree',
+    'remove',
+    '--force',
+    '--end-of-options',
+    worktreePath,
+  ]);
+  if (removed.exitCode !== 0) {
+    if (!isWorktreeAlreadyGone(removed)) {
+      throw gitFailed(`worktree remove --force ${worktreePath}`, removed);
+    }
+    outcome = 'already-absent';
     // The worktree is gone but a stale administrative entry may remain — from
     // a directory deleted out from under git, say. Prune clears it so the
     // inventory in `list.ts` stops reporting a worktree that is not there.
-    await git.raw(['worktree', 'prune']);
+    const pruned = await git.raw(['worktree', 'prune']);
+    if (pruned.exitCode !== 0) throw gitFailed('worktree prune', pruned);
   }
 
   // Only now can the branch go.
-  try {
-    await git.raw(['branch', '-D', branch]);
-  } catch (error) {
-    if (!isBranchAlreadyGone(error)) throw error;
+  const deleted = await git.raw(['branch', '-D', '--end-of-options', branch]);
+  if (deleted.exitCode !== 0 && !isBranchAlreadyGone(deleted)) {
+    throw gitFailed(`branch -D ${branch}`, deleted);
   }
+
+  return outcome;
 }

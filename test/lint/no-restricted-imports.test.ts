@@ -193,6 +193,10 @@ function anchoredPattern(specifier: string): string {
 const NON_EXEMPT_SOURCE = 'packages/db/src/index.ts';
 /** Inside the one exemption. Need not exist: resolution is by path. */
 const EXEMPT_SOURCE = 'packages/workspace/src/exec/run.ts';
+/** Inside the exemption's one carve-out — workspace SOURCE, not workspace tests. */
+const WORKSPACE_SRC_SOURCE = 'packages/workspace/src/worktree/lifecycle.ts';
+/** Inside the exemption and outside the carve-out. The control's own home. */
+const WORKSPACE_TEST_SOURCE = 'packages/workspace/test/helpers/temp-repo.ts';
 /** Matched by BOTH the core entry and the verdict entry — the merge target. */
 const DOUBLY_MATCHED_SOURCE = 'packages/core/src/verdict/verdict.ts';
 
@@ -417,11 +421,75 @@ describe('the spawn boundary (WORK-02)', () => {
     ).toContain('execa');
   });
 
+  it('bans simple-git inside packages/workspace/src, in all three import forms', async () => {
+    // 02-REVIEW.md CR-01/CR-02. The package-wide exemption is right for `execa`
+    // — `src/exec/run.ts` is the one process launch — and was wrong for
+    // `simple-git`: three modules under `src/` built handles that spawned git
+    // with no configuration neutralisation and with the daemon's whole
+    // environment, and every one of those commands reads a file an agent can
+    // write. Asserted on the RESOLVED options rather than on the config source,
+    // for the reason the section header above gives: a later entry overlapping
+    // this glob would silently replace it and every source-level check would
+    // stay green.
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute(WORKSPACE_SRC_SOURCE),
+    );
+    const rules = resolved.rules ?? {};
+
+    expect(
+      restrictedPathNames(rules),
+      `${WORKSPACE_SRC_SOURCE} must not be free to import simple-git — the workspace exemption exists for execa and the one exec primitive, not for a second git spawner (CR-01, CR-02)`,
+    ).toContain('simple-git');
+
+    const pattern = anchoredPattern('simple-git');
+    const selectors = syntaxSelectors(rules);
+    expect(
+      selectors.filter(
+        (selector) =>
+          selector.includes(pattern) && selector.startsWith('CallExpression'),
+      ),
+      `${WORKSPACE_SRC_SOURCE} has no require('simple-git') selector — the ban is bypassable by changing the import form (02-RESEARCH.md § Pitfall 2)`,
+    ).not.toHaveLength(0);
+    expect(
+      selectors.filter(
+        (selector) =>
+          selector.includes(pattern) && selector.startsWith('ImportExpression'),
+      ),
+      `${WORKSPACE_SRC_SOURCE} has no dynamic import('simple-git') selector — same bypass`,
+    ).not.toHaveLength(0);
+
+    // And NOT the rest of the spawn ban: `src/exec/run.ts` still has to be able
+    // to import execa, so this must be a carve-out for one specifier rather
+    // than the exemption quietly closing.
+    expect(
+      restrictedPathNames(rules),
+      'the workspace source carve-out must cover simple-git ONLY — banning execa here would break the one exec primitive',
+    ).not.toContain('execa');
+  });
+
+  it('leaves the workspace TESTS free to hold a simple-git handle', async () => {
+    // Deliberate, and the carve-out would be worse without it. The fixture in
+    // `temp-repo.ts` needs a git handle that is NOT the subject, and
+    // `test/git/adl-git.test.ts`'s CONTROL case exists specifically to show
+    // what a bare `simpleGit` child does with the daemon's environment. A ban
+    // that covered the tests would delete the evidence that the ban is worth
+    // having.
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute(WORKSPACE_TEST_SOURCE),
+    );
+
+    expect(
+      restrictedPathNames(resolved.rules ?? {}),
+      `${WORKSPACE_TEST_SOURCE} is inside the exemption and outside the src carve-out`,
+    ).not.toContain('simple-git');
+  });
+
   it.each([
     DOUBLY_MATCHED_SOURCE,
     'packages/core/src/stage/stage.ts',
     NON_EXEMPT_SOURCE,
     'packages/plugin-sdk/src/index.ts',
+    WORKSPACE_SRC_SOURCE,
   ])(
     'resolves exactly one architecture configuration for %s',
     async (source) => {

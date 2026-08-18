@@ -47,8 +47,7 @@
  * environment.
  */
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import type {
   ExecResult,
   ExecSpec,
@@ -61,6 +60,7 @@ import { WorkspaceError } from '../errors.js';
 import { run } from '../exec/run.js';
 import { assertWithinRoot, isWithinRoot } from '../paths.js';
 import { report } from '../teardown.js';
+import { defaultHostGitHome } from './adl-git.js';
 
 /** The OS error code behind a failed filesystem call, when there is one. */
 function codeOf(error: unknown): string | undefined {
@@ -84,19 +84,6 @@ export interface HostGitWorkspaceOptions {
    * write is not a home at all, and the failure would be silent.
    */
   readonly configHome?: string;
-}
-
-/**
- * The default ADL-owned git home: `~/.adl/git-home`.
- *
- * A function rather than a module-level constant so a test can observe the
- * default without the module having read anything at import time. `homedir()`
- * resolves the *daemon's* own home — a non-secret path, never a credential —
- * and this is deliberately not a temp directory: an operator who configures a
- * committer identity for ADL expects it to still be there next week.
- */
-export function defaultHostGitHome(): string {
-  return join(homedir(), '.adl', 'git-home');
 }
 
 /**
