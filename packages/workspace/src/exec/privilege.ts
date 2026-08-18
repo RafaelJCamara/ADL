@@ -317,6 +317,48 @@ export interface GroupEntry {
 }
 
 /**
+ * Parse one numeric id field out of a `/etc/group` or `/etc/passwd` line.
+ *
+ * **`Number()` is the wrong parser here, and its wrongness has a direction.**
+ * `Number('')` is `0`, `Number(' 12 ')` is `12`, and `Number('0x10')` is `16`,
+ * so `Number.isInteger(Number(field))` accepts a line whose id field is *empty*
+ * and resolves it to **0 — the root user and the root group**. A malformed or
+ * truncated line in the group database would then make {@link applyWorkerAccess}
+ * `chown` the worktree, the scratch `HOME` and the worktree administrative
+ * directory to group root, set group `rw` on them, and report `applied`: a
+ * privilege-boundary failure that announces success. The two other coercions are
+ * milder but the same shape — a padded or hex field silently naming an identity
+ * the operator did not write.
+ *
+ * So the accepted form is exactly what the file format allows: a bare,
+ * non-negative decimal, and nothing else. Anything else makes the entry *not an
+ * entry*, which surfaces as `resolveGroupId` returning `undefined` and
+ * `applyWorkerAccess` degrading with a named reason (and its banner) — loud, and
+ * never a grant to an identity nobody chose.
+ */
+function parseId(field: string | undefined): number | undefined {
+  if (field === undefined || !/^\d+$/.test(field)) return undefined;
+  const value = Number(field);
+  // A gid past 2^53 cannot round-trip through a JS number, and passing a
+  // rounded one to `chown` would name a DIFFERENT group than the file does.
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/**
+ * Strip a trailing carriage return from one line.
+ *
+ * A group file that has been through a Windows editor (or a CRLF-normalising
+ * container build) leaves `\r` on the last field of every line. Left in place it
+ * rides along on the final member name, so `entry.members.includes(user)` is
+ * `false` for a user who *is* a member — which would silently invert the
+ * environment guard in `privilege.test.ts` that exists to stop the T-2-30
+ * assertion going vacuous.
+ */
+function withoutCarriageReturn(line: string): string {
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+/**
  * Parse `/etc/group` content.
  *
  * A parser rather than a shell-out to `getent`, for the reason
@@ -325,15 +367,19 @@ export interface GroupEntry {
  * (LDAP/SSSD) does not appear in this file — in that deployment
  * {@link applyWorkerAccess} degrades with a named reason instead of silently
  * granting nothing, which is the behaviour that matters.
+ *
+ * A line whose gid field is not a bare decimal is **skipped**, not repaired and
+ * not defaulted. See {@link parseId} for why defaulting is the dangerous option.
  */
 export function parseGroupEntries(text: string): readonly GroupEntry[] {
   const entries: GroupEntry[] = [];
-  for (const line of text.split('\n')) {
+  for (const raw of text.split('\n')) {
+    const line = withoutCarriageReturn(raw);
     if (line === '' || line.startsWith('#')) continue;
     const fields = line.split(':');
     const name = fields[0];
-    const gid = Number(fields[2]);
-    if (name === undefined || !Number.isInteger(gid)) continue;
+    const gid = parseId(fields[2]);
+    if (name === undefined || name === '' || gid === undefined) continue;
     entries.push({
       name,
       gid,
@@ -366,18 +412,26 @@ export interface UserIds {
   readonly gid: number;
 }
 
-/** The numeric ids behind a user name, or `undefined` if it is not in the file. */
+/**
+ * The numeric ids behind a user name, or `undefined` if it is not in the file.
+ *
+ * Parsed with the same strictness as {@link parseGroupEntries}, and for the same
+ * reason: a `/etc/passwd` line whose uid field is empty would otherwise resolve
+ * to **uid 0**, and this function is what the privilege test compares a dropped
+ * child's reported identity against.
+ */
 export async function resolveUserIds(
   name: string,
   file = '/etc/passwd',
 ): Promise<UserIds | undefined> {
   const text = await readFile(file, 'utf8');
-  for (const line of text.split('\n')) {
+  for (const raw of text.split('\n')) {
+    const line = withoutCarriageReturn(raw);
     const fields = line.split(':');
     if (fields[0] !== name) continue;
-    const uid = Number(fields[2]);
-    const gid = Number(fields[3]);
-    if (!Number.isInteger(uid) || !Number.isInteger(gid)) continue;
+    const uid = parseId(fields[2]);
+    const gid = parseId(fields[3]);
+    if (uid === undefined || gid === undefined) continue;
     return { uid, gid };
   }
   return undefined;
@@ -532,7 +586,7 @@ export async function applyWorkerAccess(
   if (gid === undefined) {
     return {
       outcome: 'degraded',
-      reason: `group ${group} is not present in the local group database; a directory-service group is not visible here, and the operator must pre-provision a local group (D-06)`,
+      reason: `group ${group} could not be resolved to a gid from the local group database — it is either absent, or its line's gid field is not a bare decimal and was rejected rather than coerced to 0 (see parseId); a directory-service group is not visible here, and the operator must pre-provision a local group (D-06)`,
     };
   }
 

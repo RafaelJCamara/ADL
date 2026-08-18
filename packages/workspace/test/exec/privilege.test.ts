@@ -1,13 +1,16 @@
-import { readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExecSpec, LogChunk, Workspace } from '@adl/core/stage';
 import {
   applyWorkerAccess,
   createPrivilegeWarner,
+  parseGroupEntries,
   privilegeLauncher,
   privilegeWarning,
   readGroupEntries,
+  resolveGroupId,
   resolveUserIds,
   type PrivilegeMode,
 } from '../../src/exec/privilege.js';
@@ -194,6 +197,119 @@ describe('privilege: the launcher gate and the honest degraded mode', () => {
       }
     });
   }, 120_000);
+});
+
+/**
+ * WR-05: the identity database is parsed, not coerced.
+ *
+ * These cases run on every platform — they read fixture files, never
+ * `/etc/group` — because the defect they cover is arithmetic rather than
+ * OS-specific. What is Linux-only is the *consequence* (an actual `chown` to
+ * group root), and that is exactly why the assertions are placed here, one level
+ * before it, where the Windows development machine can still see them.
+ */
+describe('privilege: the identity database, parsed strictly', () => {
+  /** Every field shape `Number()` accepts and the file format does not. */
+  const COERCIBLE_BUT_INVALID: readonly (readonly [string, string])[] = [
+    ['', 'an empty gid field — Number("") is 0, which is the ROOT group'],
+    [' 12 ', 'a padded field — Number(" 12 ") is 12'],
+    ['0x10', 'a hex field — Number("0x10") is 16'],
+    ['1e3', 'exponent notation — Number("1e3") is 1000'],
+    ['-1', 'a negative id'],
+    ['12abc', 'trailing junk'],
+  ];
+
+  it('never resolves a malformed group line to gid 0, or to anything at all', () => {
+    for (const [field, why] of COERCIBLE_BUT_INVALID) {
+      const entries = parseGroupEntries(`adl-worker:x:${field}:adl\n`);
+
+      // Two assertions, because they fail differently and both matter. The
+      // first says the entry was rejected; the second says that whatever else
+      // this parser does, it does not hand `chown` the root group (WR-05).
+      expect(
+        entries.find((entry) => entry.name === 'adl-worker'),
+        `gid field ${JSON.stringify(field)} (${why}) was accepted as an entry`,
+      ).toBeUndefined();
+      expect(
+        entries.map((entry) => entry.gid),
+        `gid field ${JSON.stringify(field)} (${why}) resolved to a numeric id`,
+      ).toEqual([]);
+    }
+  });
+
+  it('still parses a well-formed line, including one written with CRLF', () => {
+    // The positive control. A parser that rejected everything would satisfy the
+    // case above and be useless, and `resolveGroupId` returning undefined for a
+    // real group degrades every run on a correctly provisioned host.
+    const unix = parseGroupEntries('adl-worker:x:987:adl,runner\n');
+    expect(unix).toEqual([
+      { name: 'adl-worker', gid: 987, members: ['adl', 'runner'] },
+    ]);
+
+    // CRLF leaves `\r` on the LAST member, so membership silently stops
+    // matching — which would make privilege.test.ts's own "the assertion would
+    // be vacuous" guard mis-fire rather than fail.
+    const crlf = parseGroupEntries('adl-worker:x:987:adl,runner\r\n');
+    expect(crlf[0]?.members).toEqual(['adl', 'runner']);
+    expect(crlf[0]?.gid).toBe(987);
+  });
+
+  it('reads a malformed database from disk as unresolvable rather than as root', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'adl-idfixture-'));
+
+    const groupFile = join(dir, 'group');
+    await writeFile(
+      groupFile,
+      // A truncated line of exactly the kind a half-written /etc/group has.
+      'root:x:0:\nadl-worker:x::adl\n',
+      'utf8',
+    );
+    expect(await resolveGroupId('adl-worker', groupFile)).toBeUndefined();
+    // The sibling that IS well-formed still resolves, so the file was read.
+    expect(await resolveGroupId('root', groupFile)).toBe(0);
+
+    const passwdFile = join(dir, 'passwd');
+    await writeFile(
+      passwdFile,
+      'root:x:0:0:root:/root:/bin/sh\nadl-worker:x:::,,,:/nonexistent:/usr/sbin/nologin\n',
+      'utf8',
+    );
+    // Before the fix this returned `{ uid: 0, gid: 0 }` — the identity the
+    // privilege test compares a dropped child against.
+    expect(await resolveUserIds('adl-worker', passwdFile)).toBeUndefined();
+    expect(await resolveUserIds('root', passwdFile)).toEqual({
+      uid: 0,
+      gid: 0,
+    });
+  });
+
+  it('degrades instead of chowning to group root when the group line is malformed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'adl-idfixture-'));
+    const groupFile = join(dir, 'group');
+    await writeFile(groupFile, 'adl-worker:x::adl\n', 'utf8');
+
+    const target = await mkdtemp(join(tmpdir(), 'adl-idtarget-'));
+    const before = await stat(target);
+
+    const report = await applyWorkerAccess([target], {
+      // `dropped` on purpose: this is the ONE mode in which the helper acts,
+      // so a not-applicable early return would make the case vacuous.
+      mode: 'dropped',
+      group: 'adl-worker',
+      groupFile,
+    });
+
+    expect(report.outcome).toBe('degraded');
+    if (report.outcome === 'degraded') {
+      expect(report.reason).toContain('could not be resolved to a gid');
+    }
+
+    // And nothing moved. Before the fix this directory was chowned to gid 0
+    // and reported `applied` — a grant to the root group, announced as success.
+    const after = await stat(target);
+    expect(after.gid).toBe(before.gid);
+    expect(after.mode).toBe(before.mode);
+  });
 });
 
 describe('privilege: the drop, as a child process reports it', () => {
