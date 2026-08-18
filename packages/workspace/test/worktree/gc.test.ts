@@ -1,4 +1,4 @@
-import { access, rm } from 'node:fs/promises';
+import { access, rm, writeFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import type { Kysely } from 'kysely';
 import {
@@ -7,7 +7,17 @@ import {
   type Database,
   type NewFeature,
 } from '@adl/db';
-import { sweepOrphans, type SweepFailure } from '../../src/worktree/gc.js';
+import {
+  createScratchHome,
+  destroyScratchHome,
+} from '../../src/exec/scratch-home.js';
+import {
+  processIsAlive,
+  sweepOrphans,
+  sweepScratchHomes,
+  type ScratchHomeSweepFailure,
+  type SweepFailure,
+} from '../../src/worktree/gc.js';
 import { createWorktree } from '../../src/worktree/lifecycle.js';
 import { listManagedWorktrees } from '../../src/worktree/list.js';
 import { openTempRepo, type OpenedTempRepo } from '../helpers/temp-repo.js';
@@ -280,5 +290,127 @@ describe('sweepOrphans', () => {
     } finally {
       await repo.cleanup();
     }
+  });
+});
+
+/**
+ * WR-06: the other half of the backstop.
+ *
+ * `sweepOrphans` reclaims worktrees and `adl/*` branches. Nothing reclaimed a
+ * scratch `HOME` — `Workspace.destroy()` was its only remover — so a worker that
+ * died between `createScratchHome()` and `destroy()`, which is the exact crash
+ * D-15 says the backstop exists for, leaked one permanently.
+ *
+ * **Why every case here injects `isProcessAlive`, and why the injected predicate
+ * is never a bare `() => false`.** The scratch-home root is shared by every test
+ * file in this package, and vitest runs them concurrently. A sweep that judged
+ * everything dead would delete the live `HOME` of whatever `credentials.test.ts`
+ * or `tracer.test.ts` happened to be doing at that moment. The predicate below
+ * declares exactly one fabricated pid dead and everything else alive, so these
+ * cases can only ever collect the home they staged themselves.
+ */
+describe('sweepScratchHomes', () => {
+  /** A pid this suite fabricates and the predicate below declares dead. */
+  const CRASHED_PID = 424_242;
+
+  /** Only the fabricated pid is dead. Every real owner stays live. */
+  const onlyCrashedIsDead = (pid: number): boolean => pid !== CRASHED_PID;
+
+  /** Stage the crash: a home whose recorded owner is no longer running. */
+  const stageCrashedHome = async (): Promise<string> => {
+    const home = await createScratchHome();
+    // Mirrors `ownerFileFor` in src/exec/scratch-home.ts. Rewriting the marker
+    // is how a *dead* owner is staged without killing a real process — the pid
+    // is the only thing that distinguishes a crashed worker's home from a live
+    // one's, and it is the thing under test.
+    await writeFile(`${home.path}.owner`, JSON.stringify({ pid: CRASHED_PID }));
+    return home.path;
+  };
+
+  it("collects a crashed worker's home and leaves a live one alone", async () => {
+    const crashed = await stageCrashedHome();
+    const live = await createScratchHome();
+
+    try {
+      const failures: ScratchHomeSweepFailure[] = [];
+      const removed = await sweepScratchHomes({
+        isProcessAlive: onlyCrashedIsDead,
+        onFailure: (failure) => failures.push(failure),
+      });
+
+      // Before this sweep existed, `crashed` survived every GC pass forever:
+      // `sweepOrphans` iterates `listManagedWorktrees`, and a scratch home has
+      // no worktree entry to iterate.
+      expect(removed).toContain(crashed);
+      expect(await exists(crashed)).toBe(false);
+
+      // And the live one is untouched — both by this assertion and by the fact
+      // that a concurrently running test file's home is in the same root.
+      expect(removed).not.toContain(live.path);
+      expect(await exists(live.path)).toBe(true);
+      expect(failures.map((failure) => failure.path)).not.toContain(live.path);
+    } finally {
+      await destroyScratchHome(live.path);
+      await destroyScratchHome(crashed);
+    }
+  });
+
+  it('leaves a home with no ownership record alone, and says why', async () => {
+    const home = await createScratchHome();
+    // The marker write failed, or an older ADL created this. Either way nobody
+    // knows who owns it.
+    await rm(`${home.path}.owner`, { force: true });
+
+    try {
+      const failures: ScratchHomeSweepFailure[] = [];
+      const removed = await sweepScratchHomes({
+        isProcessAlive: onlyCrashedIsDead,
+        onFailure: (failure) => failures.push(failure),
+      });
+
+      // "I do not know who owns this" is not grounds for deleting it — the
+      // opposite of `sweepOrphans`' treatment of an unknown FEATURE, where the
+      // absent database row proves nothing is coming back.
+      expect(removed).not.toContain(home.path);
+      expect(await exists(home.path)).toBe(true);
+
+      // Reported rather than silently skipped: an uncollectable home is a leak,
+      // and a leak nobody is told about is the state this whole sweep exists to
+      // end.
+      const reported = failures.find((failure) => failure.path === home.path);
+      expect(reported?.reason).toContain('owner marker');
+    } finally {
+      await destroyScratchHome(home.path);
+    }
+  });
+
+  it('is a no-op on a second consecutive pass', async () => {
+    const crashed = await stageCrashedHome();
+
+    try {
+      const first = await sweepScratchHomes({
+        isProcessAlive: onlyCrashedIsDead,
+      });
+      expect(first).toContain(crashed);
+
+      const second = await sweepScratchHomes({
+        isProcessAlive: onlyCrashedIsDead,
+      });
+      expect(second).not.toContain(crashed);
+    } finally {
+      await destroyScratchHome(crashed);
+    }
+  });
+
+  it('resolves an unanswerable liveness question as ALIVE', () => {
+    // The direction matters more than the answers. A live home judged dead
+    // deletes a running agent's HOME mid-round; a dead one judged live leaks a
+    // directory. Every ambiguous case must fall on the second side.
+    expect(processIsAlive(process.pid)).toBe(true);
+    // `process.kill(0, sig)` signals the whole process GROUP — a pid this
+    // function must never probe, and must never report as collectable.
+    expect(processIsAlive(0)).toBe(true);
+    expect(processIsAlive(-1)).toBe(true);
+    expect(processIsAlive(Number.NaN)).toBe(true);
   });
 });

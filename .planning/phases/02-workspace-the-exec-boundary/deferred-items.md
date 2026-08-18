@@ -245,3 +245,157 @@ does not turn into a spurious failure there.
 **Status:** open, and the most consequential item on this list — it blocks the
 developer stage having a usable worktree on any correctly-provisioned Linux
 deployment. Belongs to the phase that first has an agent write code.
+
+## D-2-R-1: one worker identity for every feature, so features are not isolated from each other
+
+**Found by:** `02-REVIEW.md` § CR-03 (critical). **Partially narrowed** by the
+02 review-fix pass; the residual — which is the substantive half — is recorded
+here rather than closed, and the reasoning for that is below.
+
+**What is true today.** `WorkerIdentity` is per *deployment* by construction —
+`worktree/backend.ts:66-73` says so outright: "a spec is per feature and an OS
+identity is per deployment". Every feature therefore calls
+`applyWorkerAccess([scratchHome, worktreePath, adminDir], { group: adl-worker })`
+and every one of those grants goes to the **same** group, whose only member that
+matters is the **same** uid. With features A and B running concurrently — the
+normal case, per `errors.ts:9-12` — A's agent can:
+
+- read and rewrite `<scratchRoot>/B/**`: the source ADL is about to review, test,
+  and open a pull request for, **after B's reviewer stage has already passed**;
+- read and write `<mainRepo>/.git/worktrees/B/**`, including B's index and `HEAD`;
+- enter B's scratch `HOME` and read a `.gitconfig` credential helper, an `.npmrc`
+  token, or an agent CLI's session file left there.
+
+D-22 records the feature spec as untrusted input written by anyone who can push.
+So this is a supply-chain path from a hostile spec into a human-approved PR, and
+it is the one thing the phase's isolation model exists to stop.
+
+**Reproduction** (Linux, worker provisioned; no ADL code required — the shell
+stands in for feature A's agent, which runs as exactly this identity):
+
+```sh
+# Two features, created by the daemon in the ordinary way.
+#   /srv/adl/scratch/feat-a   (worktree, group adl-worker, group rwx)
+#   /srv/adl/scratch/feat-b   (worktree, group adl-worker, group rwx)
+
+# Now act as feature A's agent — the identity every agent runs as.
+sudo --preserve-env --non-interactive --user adl-worker -- \
+  sh -c 'echo "// planted by A after B was reviewed" >> /srv/adl/scratch/feat-b/src/index.ts'
+echo $?          # 0 — the write succeeds
+```
+
+`stat -c '%U %G %a' /srv/adl/scratch/feat-b` reports `adl adl-worker 770`, which
+is the grant working exactly as designed, for an identity that is not one
+feature's.
+
+[NOT YET REPRODUCED ON A LINUX HOST — derived from the code and the mode bits
+`grantGroupAccess` sets (`0o070` on directories, `0o060` on files) plus the
+single `worker.group` the backend passes. The maintainer's machine is Windows,
+where the drop does not apply at all. Run it on the CI runner before treating the
+exploit as confirmed; run it before treating it as refuted, too.]
+
+**What the fix pass DID narrow** (see `02-07-SUMMARY.md` § review-fix addendum):
+
+- Scratch homes moved from directly under a world-readable `/tmp` into
+  `<tmp>/adl-homes`, a daemon-owned `0700` root that `applyWorkerAccess` gives
+  the worker group `--x` and nothing else. Reaching a sibling feature's `HOME`
+  now requires guessing a `mkdtemp` name instead of reading `ls /tmp`, which
+  restores the property `scratch-home.ts:9-16` claims for itself.
+- `README.md` § Permission model gained a row and a section stating plainly that
+  every concurrently running feature shares one OS identity and can reach the
+  others' worktrees, and the "what is enforced on Linux" list no longer reads as
+  though the grant were per-feature.
+- `WorkerIdentity`'s docblock says the same thing at the definition, so the next
+  reader of the code does not have to find the README first.
+
+**What is NOT narrowed, and why it cannot be here.** Worktree paths are
+`<scratchRoot>/<featureId>` — predictable by design, and their parent is the
+operator's scratch root, so the unlistable-parent trick does not transfer.
+More fundamentally: **group permissions cannot separate two processes running as
+the same uid.** Every concurrent feature drops to one `adl-worker`, so no
+arrangement of groups or modes produces per-feature isolation. The fix is a
+different *identity* per concurrent feature, not different bits.
+
+**What picking it up requires**, in the shape that looks right from here:
+
+```ts
+export interface WorkerIdentity {
+  readonly user?: string;   // adl-worker-<n>, allocated from a pre-provisioned pool
+  readonly group?: string;  // the pool member's own group
+}
+```
+
+- a pool of `adl-worker-0 … adl-worker-<N-1>` users, each with its own group,
+  sized to the manager's concurrency limit;
+- an allocator that leases a pool member to a workspace for its lifetime and
+  returns it at `destroy()` — which is manager-owned state, so it belongs
+  wherever the concurrency limit is enforced;
+- a sudoers entry per pool member (`adl ALL=(adl-worker-0) NOPASSWD:SETENV: ALL`,
+  …), which is a change to the thing an adopting team signs off on — the reason
+  this is not a quiet refactor;
+- `applyWorkerAccess` granting the *leased* group rather than a deployment-wide
+  one, which is a one-word change once the identity is right;
+- a test that stands up two workspaces and asserts A's child **cannot** write
+  B's worktree — the direct negation of the reproduction above. Without it the
+  fix has no regression guard, and this is exactly the kind of control that
+  passes for the wrong reason.
+
+**Why the fix pass did not close it:** it is a provisioning and concurrency
+design that changes the operator's install story (N sudoers entries, N users, a
+documented pool size) and needs manager-owned lease state that does not exist
+until Phase 3. Choosing the pool's shape from a Windows machine, unable to run
+the drop at all, would be guessing at the one thing that has to be right.
+
+**Status:** open, and the highest-severity item on this list. Not blocking a
+single-feature deployment or a deployment whose specs all come from one trust
+domain — which the README now says in as many words. Belongs to the phase that
+owns concurrency limits and worker provisioning (Phase 3).
+
+## D-2-R-2: the creation-time and run-time privilege decisions are still not reconciled
+
+**Found by:** `02-REVIEW.md` § WR-10. **Detector shipped, wiring deferred.**
+
+**What goes wrong:** the privilege mode is decided twice against two different
+PATHs, deliberately — `worktree/backend.ts:110-143` resolves it against the
+daemon's PATH to answer "does the worker need access to these directories?", and
+`exec/run.ts:91-96` resolves it against `ExecSpec.path` to answer "can execa
+resolve the launcher from *this child's* environment?". The reasoning is sound
+and the reviewer agrees with it. What is missing is what happens when the two
+answers differ:
+
+- creation says `dropped` → `applyWorkerAccess` widens the worktree, the admin
+  directory and the scratch `HOME` to the shared group; a later `exec` whose
+  `spec.path` has no `sudo` resolves `launcher-missing` and runs **as the
+  daemon**, leaving those directories group-writable with no beneficiary — the
+  exact condition `applyWorkerAccess`'s `mode !== 'dropped'` early return exists
+  to avoid. Note the exposure is bounded by D-2-R-1: the group that can reach
+  them is ADL's own worker group, not the world.
+- the reverse hands the worker a `sudo` prefix with no grant behind it, and every
+  command fails to write its own worktree with a permission error that reads like
+  an agent bug.
+
+**What shipped:** `privilegeModeMismatch(creation, runtime)` in
+`exec/privilege.ts` — a pure function that returns a distinct banner naming both
+modes, both PATHs, and which direction the mismatch runs in, or `undefined` when
+the two agree. It is tested, and `PrivilegeDecision` now carries the `path` it
+was decided against so a caller has both halves without re-deriving anything.
+
+**What is NOT wired:** nothing calls it. The two call sites are
+`worktree/backend.ts` (which must keep its `PrivilegeDecision` past creation) and
+`exec/run.ts` (which must compare against it), and both were owned by a
+concurrent agent during the fix pass — see `02-07-SUMMARY.md` § review-fix
+addendum § carry-forward for the exact two-line change.
+
+**Why it was not done with module-level state instead:** `privilegeLauncher` and
+`applyWorkerAccess` both live in `exec/privilege.ts`, so a module-global ledger
+could observe both decisions without touching either caller. That was rejected
+deliberately. This module's own `createPrivilegeWarner` is a *factory*
+specifically so that once-per-process state lives in a closure a test can own
+rather than in a module a test has to reset, and a hidden global that couples two
+exported functions by call order would contradict that in the same file — and
+would be latently wrong under the shared vitest worker that already produced
+D-2-07-2.
+
+**Status:** open. Not blocking — the mismatch requires a `PATH` that differs
+between the daemon and the child in whether it contains `sudo`, which no current
+call site produces. Belongs with whichever plan next touches `run()`'s signature.

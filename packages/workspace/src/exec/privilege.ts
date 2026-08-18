@@ -53,7 +53,8 @@ import {
   readFile,
   readdir,
 } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
+import { scratchHomeRoot } from './scratch-home.js';
 
 /**
  * What actually happened to the privilege drop.
@@ -74,6 +75,25 @@ export type PrivilegeMode =
  * Two non-secret NAMES. Never a credential, and never anything read out of the
  * child's environment — this is the one place ADL legitimately reads its own
  * process environment, and what it reads is a user name and a group name.
+ *
+ * ── The limit of this identity, stated where it is defined (CR-03) ─────────
+ *
+ * It is per **deployment**, not per feature — one `adl-worker` user and one
+ * `adl-worker` group for every feature the daemon runs, concurrently or
+ * otherwise. So the isolation this module buys is between *ADL's agents* and
+ * *the host*, and there is **no isolation between one feature and another**:
+ * every concurrent feature's child is the same uid in the same group, and
+ * {@link applyWorkerAccess} grants that one group `rwx` on every feature's
+ * worktree. Feature A's agent can therefore read and rewrite feature B's source
+ * — including after B's reviewer stage has passed and before its pull request
+ * opens, which is the gate ADL exists to be.
+ *
+ * That is a real gap, it is not closable with group permissions alone (a second
+ * identity requires a second uid), and it is recorded with a reproduction and a
+ * proposed shape in
+ * `.planning/phases/02-workspace-the-exec-boundary/deferred-items.md` § D-2-R-1.
+ * `packages/workspace/README.md` § Permission model states it to operators. Do
+ * not read the grants below as per-feature; they are not.
  */
 export interface WorkerIdentity {
   /** The dedicated unprivileged OS user children are dropped to. */
@@ -139,6 +159,16 @@ export interface PrivilegeDecision {
    * the call site rather than something guarded by an `if`.
    */
   readonly prefix: readonly string[];
+  /**
+   * The PATH this decision was made against — `PrivilegeConfig.path`, echoed.
+   *
+   * Carried so that two decisions can be compared without a caller having to
+   * remember which PATH produced which. The mode alone is not enough to explain
+   * a disagreement, and "the PATH the daemon has and the PATH this child gets
+   * differ in whether they contain sudo" is the entire content of the WR-10
+   * banner. See {@link privilegeModeMismatch}.
+   */
+  readonly path: string;
 }
 
 const NO_PREFIX: readonly string[] = Object.freeze([]);
@@ -207,26 +237,82 @@ function launcherPrefix(launcher: string, user: string): readonly string[] {
 export async function privilegeLauncher(
   config: PrivilegeConfig,
 ): Promise<PrivilegeDecision> {
+  const path = config.path;
+
   const platform = config.platform ?? process.platform;
   if (platform !== 'linux') {
-    return { mode: 'unsupported-platform', prefix: NO_PREFIX };
+    return { mode: 'unsupported-platform', prefix: NO_PREFIX, path };
   }
 
   const user = config.worker.user?.trim() ?? '';
   if (user === '') {
-    return { mode: 'worker-user-unset', prefix: NO_PREFIX };
+    return { mode: 'worker-user-unset', prefix: NO_PREFIX, path };
   }
 
   const resolve = config.resolveLauncher ?? resolveOnPath;
-  const launcher = await resolve(PRIVILEGE_LAUNCHER, config.path);
+  const launcher = await resolve(PRIVILEGE_LAUNCHER, path);
   if (launcher === undefined) {
-    return { mode: 'launcher-missing', prefix: NO_PREFIX };
+    return { mode: 'launcher-missing', prefix: NO_PREFIX, path };
   }
 
   // The RESOLVED absolute path, not the bare name. `sudo` is setuid root; being
   // explicit about which one is being invoked costs nothing and removes a
   // second, later PATH lookup nobody would think to audit.
-  return { mode: 'dropped', prefix: launcherPrefix(launcher, user) };
+  return { mode: 'dropped', prefix: launcherPrefix(launcher, user), path };
+}
+
+/**
+ * The banner for a creation-time / run-time privilege disagreement, or
+ * `undefined` when the two agree (WR-10).
+ *
+ * The mode is decided twice, deliberately, against two different PATHs:
+ * `worktree/backend.ts` resolves it against the DAEMON's PATH to answer "will a
+ * drop happen, and therefore does the worker need access to these
+ * directories?", and `exec/run.ts` resolves it against `ExecSpec.path` to answer
+ * "can execa resolve the launcher from the environment THIS child gets?"
+ * (02-RESEARCH.md § Pitfall 7). Both questions are real. What was missing is any
+ * handling of the two answers differing, and each direction has a consequence:
+ *
+ * - **creation dropped, run-time not** — `applyWorkerAccess` widened the
+ *   worktree, the administrative directory and the scratch `HOME` to the shared
+ *   group, and then the child ran as the daemon anyway. That is exposure with no
+ *   beneficiary: exactly the state `applyWorkerAccess`'s `mode !== 'dropped'`
+ *   early return exists to avoid, arrived at from the other side.
+ * - **creation not dropped, run-time dropped** — the child is handed a `sudo`
+ *   prefix with no access grant behind it, so every command fails to write its
+ *   own worktree with a permission error that reads like an agent bug.
+ *
+ * A separate banner from {@link privilegeWarning} rather than a fourth
+ * {@link PrivilegeMode}, because this is not a statement about one decision: it
+ * is a statement about two of them being inconsistent, and it names both PATHs
+ * because "a silent half-configured drop" (T-2-32's shape) is only actionable if
+ * the operator can see which PATH is missing the launcher.
+ *
+ * **Not wired to a call site yet.** Both call sites are outside this module, and
+ * the wiring is recorded in
+ * `.planning/phases/02-workspace-the-exec-boundary/deferred-items.md` § D-2-R-2
+ * together with why a module-level ledger inside this file was rejected instead.
+ */
+export function privilegeModeMismatch(
+  creation: PrivilegeDecision,
+  runtime: PrivilegeDecision,
+): string | undefined {
+  if (creation.mode === runtime.mode) return undefined;
+
+  const consequence =
+    creation.mode === 'dropped'
+      ? 'the workspace directories were widened to the shared worker group at creation and this child then ran as the DAEMON — group access with no beneficiary'
+      : runtime.mode === 'dropped'
+        ? 'this child was handed a launcher prefix with no access grant behind it — it will fail to write its own worktree, with an error that looks like the agent misbehaving'
+        : 'the two non-dropped modes disagree about WHY the drop did not happen, so the banner above may name the wrong cause';
+
+  return [
+    `${ADL_WARNING_PREFIX} Privilege mode MISMATCH: the workspace resolved ${creation.mode} at creation and ${runtime.mode} for this exec.`,
+    `${ADL_WARNING_PREFIX} Consequence: ${consequence}.`,
+    `${ADL_WARNING_PREFIX} Creation-time PATH (the daemon's): ${creation.path}`,
+    `${ADL_WARNING_PREFIX} Run-time PATH (ExecSpec.path): ${runtime.path}`,
+    `${ADL_WARNING_PREFIX} These two PATHs must agree about whether ${PRIVILEGE_LAUNCHER} is resolvable. See packages/workspace/README.md.`,
+  ].join('\n');
 }
 
 /** Prefix on every line this module writes. Greppable in a CI log on purpose. */
@@ -303,7 +389,13 @@ export function createPrivilegeWarner(
 
 const processWarner = createPrivilegeWarner();
 
-/** The process-wide warner `run()` uses. See {@link createPrivilegeWarner}. */
+/**
+ * The process-wide warner `run()` uses. See {@link createPrivilegeWarner}.
+ *
+ * It says what THIS decision was, and cannot say whether it agrees with the one
+ * the workspace was created under — that is {@link privilegeModeMismatch}, which
+ * needs both decisions and therefore a caller that kept the first one.
+ */
 export function warnPrivilegeModeOnce(mode: PrivilegeMode): void {
   processWarner(mode);
 }
@@ -317,6 +409,48 @@ export interface GroupEntry {
 }
 
 /**
+ * Parse one numeric id field out of a `/etc/group` or `/etc/passwd` line.
+ *
+ * **`Number()` is the wrong parser here, and its wrongness has a direction.**
+ * `Number('')` is `0`, `Number(' 12 ')` is `12`, and `Number('0x10')` is `16`,
+ * so `Number.isInteger(Number(field))` accepts a line whose id field is *empty*
+ * and resolves it to **0 — the root user and the root group**. A malformed or
+ * truncated line in the group database would then make {@link applyWorkerAccess}
+ * `chown` the worktree, the scratch `HOME` and the worktree administrative
+ * directory to group root, set group `rw` on them, and report `applied`: a
+ * privilege-boundary failure that announces success. The two other coercions are
+ * milder but the same shape — a padded or hex field silently naming an identity
+ * the operator did not write.
+ *
+ * So the accepted form is exactly what the file format allows: a bare,
+ * non-negative decimal, and nothing else. Anything else makes the entry *not an
+ * entry*, which surfaces as `resolveGroupId` returning `undefined` and
+ * `applyWorkerAccess` degrading with a named reason (and its banner) — loud, and
+ * never a grant to an identity nobody chose.
+ */
+function parseId(field: string | undefined): number | undefined {
+  if (field === undefined || !/^\d+$/.test(field)) return undefined;
+  const value = Number(field);
+  // A gid past 2^53 cannot round-trip through a JS number, and passing a
+  // rounded one to `chown` would name a DIFFERENT group than the file does.
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/**
+ * Strip a trailing carriage return from one line.
+ *
+ * A group file that has been through a Windows editor (or a CRLF-normalising
+ * container build) leaves `\r` on the last field of every line. Left in place it
+ * rides along on the final member name, so `entry.members.includes(user)` is
+ * `false` for a user who *is* a member — which would silently invert the
+ * environment guard in `privilege.test.ts` that exists to stop the T-2-30
+ * assertion going vacuous.
+ */
+function withoutCarriageReturn(line: string): string {
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+/**
  * Parse `/etc/group` content.
  *
  * A parser rather than a shell-out to `getent`, for the reason
@@ -325,15 +459,19 @@ export interface GroupEntry {
  * (LDAP/SSSD) does not appear in this file — in that deployment
  * {@link applyWorkerAccess} degrades with a named reason instead of silently
  * granting nothing, which is the behaviour that matters.
+ *
+ * A line whose gid field is not a bare decimal is **skipped**, not repaired and
+ * not defaulted. See {@link parseId} for why defaulting is the dangerous option.
  */
 export function parseGroupEntries(text: string): readonly GroupEntry[] {
   const entries: GroupEntry[] = [];
-  for (const line of text.split('\n')) {
+  for (const raw of text.split('\n')) {
+    const line = withoutCarriageReturn(raw);
     if (line === '' || line.startsWith('#')) continue;
     const fields = line.split(':');
     const name = fields[0];
-    const gid = Number(fields[2]);
-    if (name === undefined || !Number.isInteger(gid)) continue;
+    const gid = parseId(fields[2]);
+    if (name === undefined || name === '' || gid === undefined) continue;
     entries.push({
       name,
       gid,
@@ -366,18 +504,26 @@ export interface UserIds {
   readonly gid: number;
 }
 
-/** The numeric ids behind a user name, or `undefined` if it is not in the file. */
+/**
+ * The numeric ids behind a user name, or `undefined` if it is not in the file.
+ *
+ * Parsed with the same strictness as {@link parseGroupEntries}, and for the same
+ * reason: a `/etc/passwd` line whose uid field is empty would otherwise resolve
+ * to **uid 0**, and this function is what the privilege test compares a dropped
+ * child's reported identity against.
+ */
 export async function resolveUserIds(
   name: string,
   file = '/etc/passwd',
 ): Promise<UserIds | undefined> {
   const text = await readFile(file, 'utf8');
-  for (const line of text.split('\n')) {
+  for (const raw of text.split('\n')) {
+    const line = withoutCarriageReturn(raw);
     const fields = line.split(':');
     if (fields[0] !== name) continue;
-    const uid = Number(fields[2]);
-    const gid = Number(fields[3]);
-    if (!Number.isInteger(uid) || !Number.isInteger(gid)) continue;
+    const uid = parseId(fields[2]);
+    const gid = parseId(fields[3]);
+    if (uid === undefined || gid === undefined) continue;
     return { uid, gid };
   }
   return undefined;
@@ -467,6 +613,35 @@ async function grantGroupAccess(path: string, gid: number): Promise<void> {
 }
 
 /**
+ * Give the shared group the ability to PASS THROUGH one directory, and nothing
+ * else.
+ *
+ * `--x` without `r` is the whole point: a process can `cd` into the directory
+ * and open a child whose name it already knows, and cannot list what is in it.
+ * That is what makes `mkdtemp`'s unpredictable name a control again rather than
+ * a decoration — see `exec/scratch-home.ts` § Why the homes live under a
+ * directory of their own, and CR-03.
+ *
+ * Used on {@link scratchHomeRoot} only. It is emphatically NOT a general
+ * "grant the parent too" helper: the parent of a worktree is the operator's
+ * scratch root, and the parent of anything else could be `/tmp` or `/`.
+ */
+async function grantTraverse(path: string, gid: number): Promise<void> {
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) {
+    throw new Error(
+      `${path} is a symbolic link; refusing to chmod through it (the target is outside this module's knowledge).`,
+    );
+  }
+  await chown(path, -1, gid);
+  // `| 0o010` — group execute. Never `0o040` (read: the listing this root
+  // exists to withhold) and never `0o020` (write: the owner markers beside each
+  // home are what the sweep trusts, and a worker that could rewrite one could
+  // ask the sweep to delete a live feature's HOME).
+  await chmod(path, (info.mode & 0o7777) | 0o010);
+}
+
+/**
  * Take group and world write permission off a file, and never add any.
  *
  * The counterpart to {@link grantGroupAccess}, and the structural half of the
@@ -500,6 +675,19 @@ async function protectFromWorker(path: string): Promise<void> {
  * repository's `.git/config` is deliberately NOT among them; it is passed as
  * `protect` instead.
  *
+ * One path is granted that no caller passes: {@link scratchHomeRoot}, and only
+ * `--x`. Without it the worker cannot reach its own `HOME`; with anything more
+ * it could list every other live feature's, which is exactly what moving the
+ * homes out of `/tmp` was for (CR-03). It is granted here rather than by the
+ * backend because this is the module that knows the gid, and it is guarded on a
+ * granted path actually being a child of that root so it can never become a
+ * general "widen the parent too" rule.
+ *
+ * **What this does NOT grant is per-feature separation.** See
+ * {@link WorkerIdentity}: one group for every feature, so these grants make each
+ * feature's worktree reachable by every other concurrently running feature's
+ * agent.
+ *
  * A no-op when the mode is not `dropped`. There is no second identity in that
  * case, so widening anything would be pure exposure with no beneficiary.
  */
@@ -532,13 +720,30 @@ export async function applyWorkerAccess(
   if (gid === undefined) {
     return {
       outcome: 'degraded',
-      reason: `group ${group} is not present in the local group database; a directory-service group is not visible here, and the operator must pre-provision a local group (D-06)`,
+      reason: `group ${group} could not be resolved to a gid from the local group database — it is either absent, or its line's gid field is not a bare decimal and was rejected rather than coerced to 0 (see parseId); a directory-service group is not visible here, and the operator must pre-provision a local group (D-06)`,
     };
+  }
+
+  // The scratch-home root, and ONLY when a home under it is being granted.
+  // Ordered before the grants so that a run which cannot traverse to its own
+  // HOME degrades before anything has been widened, rather than after.
+  const granted: string[] = [];
+  if (paths.some((path) => dirname(path) === scratchHomeRoot())) {
+    try {
+      await grantTraverse(scratchHomeRoot(), gid);
+      granted.push(scratchHomeRoot());
+    } catch (error) {
+      return {
+        outcome: 'degraded',
+        reason: `could not give group ${group} traverse access to the scratch-home root ${scratchHomeRoot()}: ${codeOf(error)}`,
+      };
+    }
   }
 
   for (const path of paths) {
     try {
       await grantGroupAccess(path, gid);
+      granted.push(path);
     } catch (error) {
       // Setting a group requires the calling process to be a member of it,
       // which the install documentation establishes. EPERM here almost always
@@ -561,7 +766,10 @@ export async function applyWorkerAccess(
     }
   }
 
-  return { outcome: 'applied', group, gid, paths };
+  // `granted`, not `paths`: the caller asked about three trees and the helper
+  // also touched the scratch-home root, so reporting the argument back would
+  // understate what this function changed on disk.
+  return { outcome: 'applied', group, gid, paths: granted };
 }
 
 /**
@@ -587,5 +795,22 @@ export function reportWorkerAccess(
   sink: PrivilegeWarningSink = stderrSink,
 ): void {
   const text = workerAccessWarning(report);
+  if (text !== undefined) sink(text);
+}
+
+/**
+ * Write a {@link privilegeModeMismatch} banner to standard error, if there is
+ * one.
+ *
+ * Deliberately NOT once-per-process, for {@link workerAccessWarning}'s reason:
+ * a mismatch is a fact about one workspace's exec, so suppressing repeats would
+ * hide the second broken feature behind the first.
+ */
+export function reportPrivilegeModeMismatch(
+  creation: PrivilegeDecision,
+  runtime: PrivilegeDecision,
+  sink: PrivilegeWarningSink = stderrSink,
+): void {
+  const text = privilegeModeMismatch(creation, runtime);
   if (text !== undefined) sink(text);
 }

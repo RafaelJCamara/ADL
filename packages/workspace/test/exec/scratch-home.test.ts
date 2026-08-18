@@ -1,10 +1,20 @@
-import { access, open, readFile, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import {
+  access,
+  open,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createScratchHome,
   destroyScratchHome,
+  listScratchHomes,
+  scratchHomeRoot,
 } from '../../src/exec/scratch-home.js';
+import { posixOnly } from '../helpers/platform.js';
 
 const exists = async (path: string): Promise<boolean> => {
   try {
@@ -127,6 +137,93 @@ describe('scratch home: create and destroy', () => {
       }
     } finally {
       await handle.close();
+      await destroyScratchHome(home.path);
+    }
+  });
+
+  it("creates every home inside ADL's own root, not loose in the temp directory", async () => {
+    const home = await createScratchHome();
+
+    try {
+      // CR-03: loose under a world-readable `/tmp`, every live home's name is
+      // one `ls` away, and the shared worker group makes the name the only
+      // thing standing between one feature's agent and another's HOME. Inside
+      // a root the group can traverse but not list, `mkdtemp`'s
+      // unpredictability is a control again rather than a decoration.
+      expect(dirname(home.path)).toBe(scratchHomeRoot());
+      expect(basename(scratchHomeRoot())).toBe('adl-homes');
+      expect(await exists(scratchHomeRoot())).toBe(true);
+    } finally {
+      await destroyScratchHome(home.path);
+    }
+  });
+
+  it('keeps the ownership record BESIDE the home, never inside it', async () => {
+    const home = await createScratchHome();
+
+    try {
+      // Inside would be a file the agent — and, while one worker identity is
+      // shared by every concurrent feature, any *other* feature's agent — can
+      // rewrite. A marker naming a dead pid is a request to the sweep to delete
+      // the directory, so a writable one is a way to ask ADL to destroy a
+      // running feature's HOME. The home therefore starts EMPTY.
+      expect(await readdir(home.path)).toEqual([]);
+
+      // Mirrors `ownerFileFor` in src/exec/scratch-home.ts.
+      const marker = `${home.path}.owner`;
+      expect(await exists(marker)).toBe(true);
+      expect(JSON.parse(await readFile(marker, 'utf8'))).toEqual({
+        pid: process.pid,
+      });
+
+      // And the inventory the GC backstop reads finds both halves.
+      const found = (await listScratchHomes()).find(
+        (entry) => entry.path === home.path,
+      );
+      expect(found?.owner).toEqual({ pid: process.pid });
+    } finally {
+      await destroyScratchHome(home.path);
+    }
+  });
+
+  it('takes the ownership record with the home at teardown', async () => {
+    const home = await createScratchHome();
+    const marker = `${home.path}.owner`;
+
+    const teardown = await destroyScratchHome(home.path);
+
+    expect(teardown.outcome).toBe('removed');
+    // A marker left behind would accumulate in the root forever, and — worse —
+    // would still be there if the OS ever handed the same name out again.
+    expect(await exists(marker)).toBe(false);
+    expect((await listScratchHomes()).map((entry) => entry.path)).not.toContain(
+      home.path,
+    );
+  });
+
+  it('gives the root no group or world permission of its own', async (ctx) => {
+    const gate = posixOnly(
+      "the scratch-home root's containment is POSIX mode bits, and fs.Stats.mode on Windows reports the read-only attribute rather than permissions",
+      'CR-03',
+    );
+    if (gate.kind === 'skip') {
+      ctx.skip(gate.reason);
+      return;
+    }
+
+    const home = await createScratchHome();
+
+    try {
+      const info = await stat(scratchHomeRoot());
+      const mode = info.mode & 0o777;
+
+      // 0700 as created. `applyWorkerAccess` adds group `--x` — traverse only —
+      // when and only when the privilege drop is actually in force, so the
+      // resting state carries no group or world bit at all.
+      expect(mode & 0o007, `world bits on ${scratchHomeRoot()}`).toBe(0);
+      expect(mode & 0o060, `group read/write on ${scratchHomeRoot()}`).toBe(0);
+      expect(mode & 0o700).toBe(0o700);
+    } finally {
       await destroyScratchHome(home.path);
     }
   });
