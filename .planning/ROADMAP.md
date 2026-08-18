@@ -91,13 +91,13 @@ Plans:
   4. The worker runs as a dedicated unprivileged OS user with a per-run scratch `HOME`; agent-written `.npmrc`, `.gitconfig`, or hooks-path configuration does not survive the run and never affects ADL's own git operations.
   5. Forge tokens and model API keys are absent from the worker's ambient environment — asserted by dumping a child process's environment in a test.
 
-**Plans**: 8 plans
+**Plans**: 2/8 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Package legitimacy gate for execa and simple-git (blocking human checkpoint)
-- [ ] 02-02-PLAN.md — The spawn boundary: one rule object per glob, every import form and every specifier, and the regression guards
+- [x] 02-01-PLAN.md — Package legitimacy gate for execa and simple-git (blocking human checkpoint)
+- [x] 02-02-PLAN.md — The spawn boundary: one rule object per glob, every import form and every specifier, and the regression guards
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -414,7 +414,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
-| 2. Workspace & the Exec Boundary | 0/8 | Planned | - |
+| 2. Workspace & the Exec Boundary | 2/8 | In Progress|  |
 | 3. Manager Skeleton | 0/TBD | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
