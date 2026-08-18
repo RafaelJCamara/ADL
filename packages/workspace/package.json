@@ -1,0 +1,35 @@
+{
+  "name": "@adl/workspace",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "ADL workspace backends — the git worktree lifecycle and the one exec boundary. The only package that touches execa and simple-git.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "pretypecheck": "tsc -b ../core",
+    "typecheck": "tsc --noEmit",
+    "pretest": "tsc -b ../core",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@adl/core": "workspace:*",
+    "execa": "10.0.1",
+    "simple-git": "3.36.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -91,8 +91,27 @@ export {
   type CostClass,
   type LogChunk,
 
-  // `Workspace` is a forward declaration until Phase 2 lands the real interface.
+  // The workspace surface a harness receives through `StageContext.workspace` —
+  // exec, read, write, snapshot — and the shape of one process run. Every
+  // process ADL starts goes through `exec()`, which is what bounds a gate's
+  // blast radius (WORK-02). `networkPolicy` and `resources` are present on
+  // `ExecSpec` from the first release so that running a gate inside a container
+  // is a configuration change rather than a break in this contract.
+  //
+  // `NETWORK_POLICIES` is a runtime value — a frozen tuple — so it is exported
+  // without the `type` modifier, unlike everything around it.
   type Workspace,
+  type ExecSpec,
+  type ExecResult,
+  type RestoreHandle,
+  type NetworkPolicy,
+  NETWORK_POLICIES,
+  type ResourceLimits,
+
+  // The rest of `StageContext`, still forward declarations in `@adl/core` until
+  // the phase that owns each one lands it: the feature view and the artifact
+  // sink in Phase 3, the agent runner in Phase 4, the round summary in Phase 5.
+  // A harness can name these types today; their members arrive with the phase.
   type FeatureView,
   type StageConfig,
   type AgentRunner,

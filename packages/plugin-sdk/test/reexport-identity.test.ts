@@ -1,8 +1,13 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import * as PluginSdk from '../src/index.js';
 import * as CoreStage from '@adl/core/stage';
 import * as CoreVerdict from '@adl/core/verdict';
+
+/** The package's only source file, read as text by the redeclaration guard below. */
+const SDK_SOURCE = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 
 /**
  * Reference identity, not structural equality.
@@ -33,6 +38,37 @@ describe('@adl/plugin-sdk re-exports @adl/core by reference', () => {
       expect(fromSdk).toBe(fromCore);
     },
   );
+
+  it('re-exports NETWORK_POLICIES by reference, not as a copy of the tuple', () => {
+    // The one runtime value in the workspace surface. A `toEqual` here would
+    // pass against `Object.freeze(['full', 'none', 'allowlist'])` written out a
+    // second time in this package, which is exactly the duplication the package
+    // exists to prevent — and the copy would then silently keep the old
+    // membership on the day the container backend adds a policy.
+    expect(PluginSdk.NETWORK_POLICIES).toBe(CoreStage.NETWORK_POLICIES);
+  });
+
+  it('declares no type of its own — every export is a re-export', async () => {
+    // The workspace types erase at runtime, so no `toBe` can reach them: a
+    // redeclared `interface Workspace` with today's shape would satisfy every
+    // assertion above and every typecheck, and would then drift the first time
+    // @adl/core changed. What IS checkable is that this package declares
+    // nothing — its whole source is `export { ... } from '@adl/core/*'`.
+    const source = await readFile(SDK_SOURCE, 'utf8');
+    // Strip block comments so prose about interfaces cannot trip the guard.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '');
+
+    const declarations = [
+      ...code.matchAll(
+        /^\s*(?:export\s+)?(?:declare\s+)?(interface|class|enum)\s+(\w+)/gm,
+      ),
+      // `export type X = ...` is a declaration; `export { type X } from '...'`
+      // and `export type { X } from '...'` are re-exports and must not match.
+      ...code.matchAll(/^\s*export\s+type\s+(\w+)\s*=/gm),
+    ].map((match) => match[0].trim());
+
+    expect(declarations).toEqual([]);
+  });
 
   it('re-exports functions by reference too', () => {
     expect(PluginSdk.consumesRound).toBe(CoreVerdict.consumesRound);

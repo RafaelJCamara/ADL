@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Unlike `@adl/db`, there is no `migrations/` sibling to hoist, so `rootDir`
+    // is `src` and `dist` mirrors it directly.
+    "rootDir": "src",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    // Required, not incidental: this package owns the filesystem and the process
+    // table, so it uses `node:fs`, `node:os`, and `node:path`.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

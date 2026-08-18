@@ -19,6 +19,14 @@
  */
 import type { Finding } from '../verdict/finding.js';
 import type { StageOutcome } from './stage-error.js';
+import type { Workspace } from './workspace.js';
+
+/**
+ * Re-exported so `@adl/core/stage` remains the single import path for the whole
+ * stage surface, and so `StageContext.workspace` below needs no edit now that
+ * the forward declaration has been replaced by the real interface.
+ */
+export type { Workspace } from './workspace.js';
 
 /**
  * How a stage is implemented: a model-driven agent, or a shell command.
@@ -59,13 +67,11 @@ export interface LogChunk {
  * Each declaration below names the phase that replaces it with the real thing.
  * They are deliberately opaque rather than `{}`: an empty interface is satisfied
  * by every non-nullish value, so `workspace: {}` would happily accept a number.
+ *
+ * `Workspace` used to be one of them. Phase 2 replaced it with the real
+ * interface in `./workspace.js`, which is imported and re-exported above — the
+ * declarations below are what remains.
  * ---------------------------------------------------------------------- */
-
-/** **Forward declaration.** Phase 2 supplies the real `WorkspaceBackend` — exec, read, write, snapshot. */
-export interface Workspace {
-  /** Structural placeholder only; never read. Phase 2 replaces this interface wholesale. */
-  readonly __adlForwardDeclaration?: never;
-}
 
 /** **Forward declaration.** Phase 3 supplies the feature view: normalized spec, branch, round, headSha. */
 export interface FeatureView {
@@ -99,7 +105,7 @@ export interface RoundSummary {
 
 /** Everything a stage is given when it runs. */
 export interface StageContext {
-  /** Exec / read / write / snapshot. Phase 2 (see forward declaration above). */
+  /** Exec / read / write / snapshot. The real interface lives in `./workspace.ts`. */
   readonly workspace: Workspace;
   /** The normalized spec, branch, round and head sha for this feature. */
   readonly feature: FeatureView;
