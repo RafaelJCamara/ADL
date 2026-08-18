@@ -3,7 +3,7 @@ phase: 02-workspace-the-exec-boundary
 plan: 07
 subsystem: workspace
 tags: [privilege-drop, os-isolation, ci, work-05, d-05, d-18, d-21]
-status: awaiting-checkpoint
+status: complete
 requires:
   - '02-05: the credential boundary and the scratch HOME this drop widens for the worker'
   - '02-06: the named registry, which reaches worktreeWorkspace unchanged'
@@ -456,3 +456,68 @@ rather than the 108 of the red run because `02-08` landed in between.
 | Whether the stub backend should carry a worker identity | Deliberately not changed. See the banner section; deferred rather than guessed at from a platform that cannot observe it. |
 
 **A green run is the evidence; this document is not.**
+
+
+---
+
+## Task 4 — checkpoint RESOLVED (blocking-human gate closed)
+
+**Human response:** `approved`
+
+**Evidence:** GitHub Actions run
+[`32151746034`](https://github.com/RafaelJCamara/ADL/actions/runs/32151746034)
+on branch `gsd/phase-2-workspace` — **green on both matrix legs**.
+
+| Task 4 criterion | Observed |
+| --- | --- |
+| `adl-worker` user and group created | `adl-worker:x:999:987::/home/adl-worker:/usr/sbin/nologin`; group `adl-worker:x:987:runner` — both legs |
+| `ADL_WORKER_USER` exported and reaching the test process | present in the `Test` step env, both legs |
+| Privilege cases **passed, not skipped** | `test/exec/privilege.test.ts` — **8 tests passed** on `verify (node 22)` and `verify (node 24)` |
+| No `[ADL][SKIPPED][WORK-05]` in the Linux log | **0 occurrences** across the whole run |
+| Both matrix legs green | `verify (node 22): success`, `verify (node 24): success` |
+| Green overall (lint, format, typecheck, root suite) | yes |
+
+The decisive number: `packages/workspace` reports **`131 passed (131)` with zero
+skipped on Linux**, against `129 passed | 2 skipped` on the Windows development
+machine. The two cases that close the gap are exactly the T-2-30
+supplementary-group-list comparison and the T-2-31 `.git/config` write denial.
+
+The provisioning step independently corroborates T-2-30: the child reports
+`uid=999(adl-worker) gid=987(adl-worker) groups=987(adl-worker)` — the
+supplementary-group list collapsed to the worker's own group, which is the leak
+a uid-only comparison would have passed straight through.
+
+### What it took to get there
+
+Two red runs preceded this one; both failures were real and neither was
+reproducible on Windows.
+
+1. Run `32127511018` — the two `credentials.test.ts` cases failed
+   (`expected 1 to be +0`). Cause: under the drop, the program file
+   `test/helpers/env-dump-child.cjs` lives in ADL's checkout, which
+   `adl-worker` deliberately cannot read. Fixed in `f7dd0c4` by staging the
+   program into the workspace's own scratch `HOME`. The unverified rows in the
+   table above are resolved by this run: the mechanism was the checkout's
+   readability, and the scratch `HOME` is readable by the dropped child.
+2. Run `32149311523` — 11 cases in `02-08`'s `poisoned-config.test.ts` failed
+   (exit 128, plus the negative CONTROL not firing). Cause: git's
+   `safe.directory` check refuses before consulting any permission bit, because
+   the agent is `adl-worker` while the fixture repo is owned by the runner.
+   Fixed in `28c1fc3`, test-only, with an assertion **added** rather than
+   relaxed. `02-08`'s decision not to add a platform skip was vindicated — its
+   existing `chmod(0o755)` is what makes the hook fire on Linux.
+
+### Gap this gate uncovered — carried forward, not closed
+
+`D-2-08-1` (`deferred-items.md`): on a correctly provisioned Linux deployment
+the agent currently **cannot run any git inside its own worktree** — the same
+`safe.directory` refusal, exit 128 `fatal: not in a git directory`. This is not
+a fixture artifact; the permission-based refusal is exit 255 and is never
+reached. It does not weaken any property Phase 2 claims, and it is load-bearing
+for Phase 3.
+
+`D-2-07-2` also remains open: the stub backend legitimately emits the
+`[ADL][WORK-05] Privilege drop NOT applied` banner, and because
+`warnPrivilegeModeOnce` fires once per process across a shared vitest worker, it
+can appear to belong to a neighbouring file. The banner is a true statement
+about the stub, not evidence that the worktree backend failed to drop.
