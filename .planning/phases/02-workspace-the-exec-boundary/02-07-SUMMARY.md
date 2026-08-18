@@ -521,3 +521,225 @@ for Phase 3.
 `warnPrivilegeModeOnce` fires once per process across a shared vitest worker, it
 can appear to belong to a neighbouring file. The banner is a true statement
 about the stub, not evidence that the worktree backend failed to drop.
+
+---
+
+# ADDENDUM — `02-REVIEW.md` fix pass: CR-03, WR-05, WR-06, WR-10
+
+_Added after the phase review. This section is the record for the
+privilege/scratch-home half of the review findings; the `simple-git`
+neutralisation half (CR-01, CR-02, WR-03, WR-04, WR-08, WR-09, WR-12) was fixed
+concurrently and is recorded separately._
+
+**Commits:** `40ad0f0` (WR-05), `e1d65d1` (WR-06), `19ff1f8` (CR-03),
+`18f57a1` (WR-10).
+
+**Gates, all green on the Windows development machine:** `pnpm -r test`
+(core 404, plugin-sdk 10, db 43, workspace **146 passed | 4 skipped**),
+`pnpm vitest run --project root` (30), `pnpm -r typecheck`, `pnpm lint`,
+`pnpm format`. No existing assertion was weakened, relaxed, or skipped; the
+workspace suite went from 140 to 146 passing cases.
+
+## CR-03 — one worker identity for every feature
+
+**What ADL actually provides today, after this change.** The privilege drop
+isolates **ADL's agents from the host**. It does **not** isolate one feature from
+another. `ADL_WORKER_USER` names one user and `ADL_WORKER_GROUP` one group for
+the whole deployment, so every concurrently running feature's child is the same
+uid in the same group, and `applyWorkerAccess` grants that one group `rwx` on
+every feature's worktree, git admin directory, and scratch `HOME`. Feature A's
+agent can read and rewrite feature B's source — including after B's reviewer
+stage has passed and before its pull request opens.
+
+**Why it is not closed here.** Group and mode bits cannot separate two processes
+running as the same uid. Per-feature isolation needs a *pool* of pre-provisioned
+identities (a distinct uid per concurrent slot), manager-owned lease state that
+does not exist until Phase 3, and one sudoers entry per pool member — a change to
+the thing an adopting team signs off on. Choosing that shape from a Windows
+machine, where the drop does not run at all, would be guessing.
+
+**What was narrowed.** The review's third bullet — "enumerate `/tmp` and enter
+any `adl-home-*`" — is closed:
+
+- Scratch homes moved out of `os.tmpdir()` into `<tmp>/adl-homes`, a daemon-owned
+  `0700` root.
+- `applyWorkerAccess` grants that root group **`--x` and nothing else** — never
+  `r` (the listing is the point) and never `w` (the sweep's owner markers live
+  there) — and only when a path being granted is actually a child of it, so it
+  can never become a general "widen the parent" rule.
+- Net effect: reaching a sibling's `HOME` is guessing an `mkdtemp` name again,
+  rather than reading a directory listing. That restores the property
+  `scratch-home.ts`'s own opening paragraph claims for itself, which the review
+  correctly said was not true while the homes sat in `/tmp`.
+- An existing root is **verified** (a directory, not a symlink, owned by our uid,
+  not group/world-writable) rather than trusted, and a failed verification throws
+  instead of falling back to `tmpdir()`. A fixed name inside a sticky
+  world-writable `/tmp` is squattable, and a silent fallback is exactly the
+  "control that passed for the wrong reason" shape this phase has a history of.
+- Worktrees are **not** narrowed and cannot be: their paths are
+  `<scratchRoot>/<featureId>`, predictable by design, with the operator's scratch
+  root as parent.
+
+**What was stated.** `README.md` § Permission model gained the root's row, a row
+for "every other running feature's worktree and `HOME`", and a
+`### What is not isolated` section giving the three concrete cross-feature
+capabilities, the two things that narrow them, the two that do not, and the
+operational consequence (one trust domain per daemon, or one feature at a time,
+until this is closed). The "what is enforced on Linux" list no longer reads as
+per-feature, the three-controls table says outright that none of them measures
+feature-to-feature blast radius, and `WorkerIdentity`'s docblock says the same at
+the definition so a reader of the code does not have to find the README first.
+
+**Recorded:** `deferred-items.md` § **D-2-R-1**, with a shell reproduction, the
+argument for why group bits cannot fix it, the pool-of-identities shape, and the
+regression test it needs (two workspaces; A's child cannot write B's worktree).
+The reproduction is marked **NOT YET REPRODUCED** — see § Unverified below.
+
+## WR-05 — `Number('') === 0`
+
+`parseId` now accepts a bare non-negative decimal and nothing else, and a
+trailing `\r` is stripped before fields are split. A rejected id makes the line
+not-an-entry, which surfaces as `resolveGroupId` → `undefined` and
+`applyWorkerAccess` → `degraded` (with its banner), never as a grant.
+
+**Tests that fail without the fix** — verified by reverting `parseId` to
+`Number.isInteger(Number(field))` and re-running:
+
+| Case | Old behaviour |
+| --- | --- |
+| `never resolves a malformed group line to gid 0, or to anything at all` | `adl-worker:x::adl` parsed as `{ gid: 0 }` — the root group |
+| `reads a malformed database from disk as unresolvable rather than as root` | `resolveUserIds` returned `{ uid: 0, gid: 0 }` |
+| `degrades instead of chowning to group root when the group line is malformed` | `applyWorkerAccess` reported **`applied`** where it now reports `degraded` |
+
+The third discriminates on Windows too: `fs.chown(path, -1, 0)` succeeds there,
+so the old code reached `applied` on the maintainer's own machine.
+
+## WR-06 — nothing collected an orphaned scratch `HOME`
+
+`sweepScratchHomes()` joins `sweepOrphans()` in `worktree/gc.ts`, with
+`listScratchHomes()` in `exec/scratch-home.ts` as its inventory — the same
+mechanism/policy split `list.ts`/`gc.ts` already uses.
+
+- **The signal is process liveness, not a clock** (D-16's reasoning, reached
+  through a different door). Each home gets an owner marker recording the
+  creating pid.
+- **The marker lives beside the home, not inside it.** Inside, it would be
+  group-writable — and a marker naming a dead pid is a request to delete the
+  directory, so a writable one is a way to ask ADL to destroy a *running*
+  feature's `HOME`. The root is `0700` + group `--x`, so the worker can traverse
+  it and cannot write in it.
+- **Every ambiguous answer resolves to leave-alone**: `EPERM` on the liveness
+  probe (the process exists and is someone else's), `pid <= 0` (which would
+  signal the process *group*), and a missing or unparseable marker. The opposite
+  error deletes a running agent's `HOME` mid-round; a leaked directory is a
+  disk-space problem. Pid reuse also falls on the safe side.
+- **Failures are reported, never thrown**, through an `onFailure` sink, following
+  `GcDeps.onFailure` exactly. An unowned home is reported rather than silently
+  skipped, because a leak nobody is told about is the state this sweep exists to
+  end.
+- `destroyScratchHome` takes the marker with it, and — deliberately — cannot
+  report anything different because of it: the marker `rm` is wrapped so the
+  `already-absent` / `removed` discrimination stays a fact about the *directory*.
+
+**Test that fails without the fix:** `collects a crashed worker's home and leaves
+a live one alone`. Verified by disabling owner recording: the sweep then reports
+the live home as uncollectable and never collects the crashed one.
+`keeps the ownership record BESIDE the home, never inside it` also goes red.
+
+Note on suite hygiene: the scratch-home root is shared by every test file and
+vitest runs them concurrently, so these cases inject an `isProcessAlive` that
+declares exactly **one fabricated pid** dead — never a bare `() => false`, which
+would delete a neighbouring file's live `HOME`.
+
+## WR-10 — the two privilege decisions
+
+Detector shipped, **wiring deferred**. `PrivilegeDecision` now carries the `path`
+it was decided against, and `privilegeModeMismatch(creation, runtime)` returns a
+banner naming both modes, both PATHs, and the direction-specific consequence:
+"widened, then ran as the daemon — access with no beneficiary" versus "a launcher
+prefix with no grant behind it, which reads like an agent bug". Agreeing modes
+with *differing* PATHs are not a mismatch — differing environments are D-10
+working. `reportPrivilegeModeMismatch` mirrors `reportWorkerAccess` and is
+deliberately not once-per-process.
+
+Nothing calls it: both call sites (`worktree/backend.ts`, `exec/run.ts`) were
+outside this agent's file ownership. A module-level ledger inside `privilege.ts`
+*could* have observed both decisions without touching either caller, and was
+rejected on purpose — `createPrivilegeWarner` is a factory precisely so that
+cross-call state is not hidden in this module, and a global coupled by call order
+would be latently wrong under the shared vitest worker that already produced
+`D-2-07-2`. Recorded as **D-2-R-2**.
+
+### Carry-forward: the wiring, and one barrel export
+
+`src/index.ts` was owned by the concurrent agent, so **none of the new symbols is
+exported from the package barrel yet.** They are:
+
+```ts
+// from './exec/privilege.js'
+privilegeModeMismatch, reportPrivilegeModeMismatch
+// from './exec/scratch-home.js'
+listScratchHomes, scratchHomeRoot,
+type ScratchHomeEntry, type ScratchHomeOwner
+// from './worktree/gc.js'
+sweepScratchHomes, processIsAlive,
+type ScratchHomeGcDeps, type ScratchHomeSweepFailure
+```
+
+`sweepScratchHomes` in particular is a manager-facing verb: Phase 3 owns the
+schedule that calls it beside `sweepOrphans`, and it cannot reach it until it is
+on the barrel.
+
+The WR-10 wiring, for whoever takes it:
+
+```ts
+// worktree/backend.ts — keep the decision past creation
+const privilege = await privilegeLauncher({ worker, path: process.env.PATH ?? '' });
+// …and pass it through exec():
+exec: (execSpec, log) => run(execSpec, scratchHome.path, log, worker, 'agent', privilege),
+
+// exec/run.ts — compare, and report
+const runtime = await privilegeLauncher({ worker, path: spec.path });
+warnPrivilegeModeOnce(runtime.mode);
+if (creation !== undefined) reportPrivilegeModeMismatch(creation, runtime);
+```
+
+## Unverified until Linux CI
+
+Every one of these is Linux-only behaviour that cannot execute on the Windows
+development machine. Each skips **visibly** — `[ADL][SKIPPED][<id>] … (platform:
+win32)` on standard error — via `test/helpers/platform.ts`, never silently.
+
+1. **The `--x` grant on the scratch-home root** (`CR-03`). The mode-bit
+   assertions — group traverse set, group read/write clear, world clear — skip on
+   win32 because `fs.Stats.mode` there reports the read-only attribute rather
+   than permissions. The *platform-independent* half (the root appears in the
+   grant report; a non-home path does not drag it in) runs everywhere.
+2. **That a dropped child can still reach its own `HOME` through a `0710`
+   parent.** This is the one behavioural risk the change introduces: if the
+   traverse grant were wrong, every agent would lose its `HOME` on Linux. The
+   existing `lets the worker write its HOME and its worktree` case in
+   `privilege.test.ts` covers it and is `linuxOnly` — **watch this case
+   specifically on the first CI run.**
+3. **The scratch-home root's `0700` creation mode** (`CR-03`, `posixOnly`).
+4. **That a malformed group line degrades rather than chowning to gid 0 on a real
+   filesystem.** The parse itself is asserted everywhere; the *consequence*
+   (`chown` to group root) is Linux-only, and on Windows `chown` is a no-op that
+   succeeds.
+5. **D-2-R-1's cross-feature reproduction.** Written from the code and the mode
+   bits `grantGroupAccess` sets, and explicitly marked `NOT YET REPRODUCED`.
+   Run it on the CI runner before treating the exploit as confirmed — and before
+   treating it as refuted.
+
+A new gate helper, `posixOnly()`, sits beside `linuxOnly()` rather than reusing
+it: `linuxOnly` *throws* on a Linux runner with no worker user provisioned, which
+is right for privilege-drop evidence and wrong for a mode-bit assertion that
+needs no provisioning at all. Both write the same `[ADL][SKIPPED]` line.
+
+## Not touched
+
+`WR-01`, `WR-02`, `WR-07`, `WR-11`, `WR-13`, `WR-14` and every `IN-*` finding are
+outside this fix pass's scope and remain open in `02-REVIEW.md`. `WR-13` (the
+workspace package's tests are never typechecked) is worth noting here: the new
+cases in this pass are, like all the others, transpiled without being
+type-checked.
