@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Unlike `@adl/db`, there is no `migrations/` sibling to hoist, so `rootDir`
+    // is `src` and `dist` mirrors it directly.
+    "rootDir": "src",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    // Required, not incidental: this package is the executable entry
+    // (`process.exit`, stdout/stderr) and reads the environment for the
+    // manager's API token, so it uses `node:process` and friends.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
