@@ -248,6 +248,47 @@ deployment. Belongs to the phase that first has an agent write code.
 
 ## D-2-R-1: one worker identity for every feature, so features are not isolated from each other
 
+> **DISPOSITION — ACCEPTED FOR v1, MUST BE REVISITED.**
+> Decided by the maintainer at the Phase 02 UAT gate on 2026-08-19 (`02-UAT.md`
+> test 1). Accepted so v1 can ship; explicitly **not** closed and **not**
+> withdrawn as a risk.
+>
+> **What was accepted:** ADL v1 runs one trust domain per daemon. Concurrent
+> features are isolated from the host but not from each other, so feature A's
+> agent can rewrite feature B's source after B's reviewer stage passed and
+> before its PR opens.
+>
+> **Why accepting is defensible for v1:** WORK-05's wording is satisfied (a
+> dedicated unprivileged user, singular per deployment, with a per-run scratch
+> home). Human approval is mandatory before merge, so a cross-feature tamper
+> still faces a human reading the PR. Group and mode bits cannot separate two
+> processes sharing a uid, so the alternative is not a smaller fix — it is a uid
+> pool plus manager-owned lease state that does not exist until Phase 3.
+>
+> **Revisit triggers — any ONE of these makes this blocking again:**
+> 1. **Phase 3** introduces manager-owned lease state. That is the first point
+>    at which a uid pool is buildable, and the natural home for the fix.
+> 2. ADL is run with **concurrency > 1** on a shared or multi-tenant host.
+>    Single-feature-at-a-time deployments do not hit this.
+> 3. The **human approval gate before merge is ever relaxed or automated** — that
+>    gate is the only remaining control standing between this and a tampered PR.
+> 4. Before any **public/multi-tenant** deployment of ADL is advertised.
+>
+> **Still outstanding:** the reproduction below is marked
+> `[NOT YET REPRODUCED ON A LINUX HOST]` — it is argued from the code, not run.
+> `02-UAT.md` test 2 was SKIPPED at the UAT gate because it cannot run from a
+> Windows development machine. The maintainer's direction was that it must be
+> run on Linux eventually, and it is tracked as an open todo:
+> `.planning/todos/pending/reproduce-d-2-r-1-on-linux.md` (no `resolves_phase:`,
+> so no phase completion can auto-close it).
+>
+> Until it runs, the v1 acceptance above rests on an ARGUED rather than a
+> DEMONSTRATED severity. If the reproduction does not behave as reasoned, the
+> acceptance was made against a wrong model and must be re-decided.
+>
+> **Proposed shape when revisited:** a pool of distinct uids leased per feature,
+> one sudoers entry per pool member, lease state owned by the Phase 3 manager.
+
 **Found by:** `02-REVIEW.md` § CR-03 (critical). **Partially narrowed** by the
 02 review-fix pass; the residual — which is the substantive half — is recorded
 here rather than closed, and the reasoning for that is below.
@@ -468,6 +509,42 @@ same window wider; the two want to be reasoned about together.
 `read`/`write` on the same path, and in v1 nothing schedules those concurrently.
 
 ## D-2-R-4: an attacker-named `filter.<driver>.clean` still executes during ADL's own `snapshot()` (WR-12 residual)
+
+> **DISPOSITION — ACCEPTED FOR v1, OWNER: PHASE 15.**
+> Decided by the maintainer at the Phase 02 UAT gate on 2026-08-19
+> (`02-UAT.md` test 3). Accepted so v1 can ship; **not** closed.
+>
+> **What makes this different from D-2-R-1:** this is not an argued risk. There
+> is a PASSING test demonstrating it right now —
+> `packages/workspace/test/git/neutralisation-residual-risk.test.ts` executes a
+> chosen program during ADL's own `snapshot()` with full neutralisation in
+> force. If that test ever goes red, the residual closed by accident and the
+> entry should be revisited; if it is ever deleted or weakened, the acceptance
+> below silently stops being observable, which is the failure mode this whole
+> phase kept producing.
+>
+> **What bounds it today:** `git status` does not reach the filter; `git stash
+> create` does, and that is what `snapshot()` runs. Exploiting it requires a
+> committed `.gitattributes` in the repository being snapshotted — reachable,
+> since D-22 treats the feature spec as untrusted input written by anyone who
+> can push. The six remaining fixed-name keys (`core.askPass`, `gpg.program`,
+> `sequence.editor`, `core.alternateRefsCommand`, `gpg.ssh.program`,
+> `uploadpack.packObjectsHook`) are NOT reachable through any operation ADL
+> ships today, which is why they were not added.
+>
+> **Owner: Phase 15 (published threat model).** Accepted on the verifier's
+> reasoning: the threat model is where an accepted residual either appears with
+> its reasoning or silently stops being accepted. Recorded caveat — Phase 15's
+> stated success criteria cover write auditing, secret scanning and egress, and
+> say nothing about git-config neutralisation. **Phase 15 must gain an explicit
+> criterion for this, or the residual will land in a phase with no acceptance
+> point and quietly become invisible.**
+>
+> **Revisit earlier than Phase 15 if ANY of these is true:**
+> 1. `ManagerGitClient` gains an operation that reaches one of the six
+>    fixed-name keys — they were excluded for unreachability, not safety.
+> 2. ADL ever runs `snapshot()` against a repository it does not control.
+> 3. The `.gitattributes` path becomes reachable without a commit.
 
 **Found by:** `02-REVIEW.md` § WR-12. The fixed-name half was closed; the
 **wildcard** half is open, and this entry is that half.

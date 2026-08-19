@@ -1,14 +1,16 @@
 ---
-status: testing
+status: complete
 phase: 02-workspace-the-exec-boundary
 source: [02-VERIFICATION.md]
 started: 2026-08-18T22:40:00Z
-updated: 2026-08-19T06:30:00Z
+updated: 2026-08-19T09:20:00Z
 ---
 
 ## Current Test
 
-number: 1
+[testing complete]
+
+<!-- resolved: number: 1
 name: Accept or reject the cross-feature isolation residual (D-2-R-1)
 expected: |
   A human decides whether ADL v1 ships with one trust domain per daemon.
@@ -35,13 +37,30 @@ expected: |
   scratch home directory") IS satisfied: the user is singular per deployment by
   specification, and the scratch home genuinely is per-run. This is an
   acceptance decision, not a requirement failure.
-awaiting: user response
+awaiting: resolved — accepted 2026-08-19 -->
 
 ## Tests
 
 ### 1. Accept or reject the cross-feature isolation residual (D-2-R-1)
 expected: A human decides whether v1 ships with one trust domain per daemon, or whether per-feature uids block the milestone. See Current Test for the full picture.
-result: [pending]
+result: pass
+note: |
+  ACCEPTED FOR v1 BY THE MAINTAINER, EXPLICITLY TO BE REVISITED — not closed,
+  not withdrawn as a risk. v1 ships with one trust domain per daemon.
+
+  Documented in two places so it resurfaces rather than fading:
+  - `deferred-items.md` § D-2-R-1 now carries a DISPOSITION block with the
+    decision, the reasoning, and four revisit triggers.
+  - `.planning/todos/pending/revisit-cross-feature-isolation.md` — deliberately
+    carries NO `resolves_phase:`, so no phase completion can auto-close it. It
+    surfaces in `/gsd-progress` and `/gsd-audit-uat` until a uid pool ships or
+    the risk is re-accepted with fresh reasoning.
+
+  Revisit triggers: (1) Phase 3 lands manager-owned lease state, the first point
+  a uid pool is buildable; (2) concurrency > 1 on a shared/multi-tenant host;
+  (3) the mandatory human approval gate before merge is relaxed or automated —
+  it is the only remaining control; (4) before any public/multi-tenant
+  deployment is advertised.
 
 ### 2. Reproduce D-2-R-1 on a Linux host
 expected: |
@@ -50,7 +69,21 @@ expected: |
   deployment that feature A's agent can in fact write into feature B's worktree.
   Until this runs, the severity is argued rather than demonstrated — the same
   standard this phase applied to every other claim.
-result: [pending]
+result: skipped
+reason: |
+  Cannot be run from the maintainer's Windows development machine — it needs a
+  provisioned Linux host with the `adl-worker` user. Maintainer's direction at
+  the UAT gate: this MUST be run on Linux eventually; skip for now.
+
+  TRACKED, not dropped:
+  `.planning/todos/pending/reproduce-d-2-r-1-on-linux.md` carries the full
+  reproduction, deliberately with NO `resolves_phase:` so no phase completion
+  can auto-close it. It closes when the reproduction is actually RUN.
+
+  Consequence while it stays open: the v1 acceptance of D-2-R-1 (test 1) rests
+  on an ARGUED rather than DEMONSTRATED severity. If the reproduction does not
+  behave as reasoned, that acceptance was made against a wrong model of the risk
+  and must be re-decided. The todo says so explicitly.
 
 ### 3. Accept D-2-R-4 against WORK-07
 expected: |
@@ -68,7 +101,28 @@ expected: |
   silently stops being accepted.
 
   Decide: accept for v1 with Phase 15 as the owner, or pull it forward.
-result: [pending]
+result: pass
+note: |
+  ACCEPTED FOR v1 BY THE MAINTAINER, OWNER: PHASE 15. Not closed.
+
+  Unlike test 1's residual, this one is DEMONSTRATED, not argued —
+  `neutralisation-residual-risk.test.ts` passes today and executes a chosen
+  program during `snapshot()` with full neutralisation in force. If that test
+  goes red the residual closed by accident; if it is deleted or weakened, this
+  acceptance stops being observable.
+
+  Documented in two places:
+  - `deferred-items.md` § D-2-R-4 — DISPOSITION block with what bounds it and
+    three triggers for revisiting EARLIER than Phase 15 (ManagerGitClient gains
+    an operation reaching the six excluded fixed-name keys; snapshot() runs
+    against a repo ADL does not control; the .gitattributes path becomes
+    reachable without a commit).
+  - `.planning/todos/pending/phase-15-needs-config-neutralisation-criterion.md`
+    — because Phase 15's stated criteria (write auditing, secret scanning,
+    egress) say NOTHING about config neutralisation. Without a criterion added
+    when Phase 15 is planned, this residual lands in a phase with no acceptance
+    point and becomes invisible rather than re-decided. That todo carries
+    `resolves_phase: 15` so it closes with the phase that owns it.
 
 ### 4. Disposition Warning A — an assertion that cannot fail
 expected: |
@@ -135,10 +189,10 @@ note: |
 ## Summary
 
 total: 5
-passed: 2
+passed: 4
 issues: 0
-pending: 3
-skipped: 0
+pending: 0
+skipped: 1
 blocked: 0
 
 ## Gaps
