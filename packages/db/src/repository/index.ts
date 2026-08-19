@@ -14,6 +14,10 @@ export {
   type NewFeature,
   type NewFeatureEvent,
   type NewRound,
+  type AcquireLeaseInput,
+  type RenewLeaseInput,
+  type ExpireLeaseInput,
+  type ReleaseLeaseInput,
 } from './features.js';
 
 export {

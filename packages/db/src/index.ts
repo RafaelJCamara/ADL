@@ -1,5 +1,7 @@
 export { createDb, migrateToLatest, type MigrateResult } from './migrator.js';
 
+export { nowIso, assertIsoTimestamp, ISO_TIMESTAMP_PATTERN } from './time.js';
+
 export {
   CHECKSUM_TABLE,
   ensureChecksumTable,
