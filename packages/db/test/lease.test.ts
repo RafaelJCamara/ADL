@@ -270,7 +270,10 @@ describe('expireLease', () => {
         heartbeat_at: PAST,
       });
 
-      const expired = await repo.expireLease({ id: featureId, leaseToken: token });
+      const expired = await repo.expireLease({
+        id: featureId,
+        leaseToken: token,
+      });
 
       expect(expired).toBe(true);
 
@@ -319,7 +322,10 @@ describe('releaseLease', () => {
         heartbeat_at: NOW,
       });
 
-      const released = await repo.releaseLease({ id: featureId, leaseToken: token });
+      const released = await repo.releaseLease({
+        id: featureId,
+        leaseToken: token,
+      });
 
       expect(released).toBe(true);
 
@@ -419,7 +425,11 @@ describe('D-08: leaseToken is required, not optional, on every lease-scoped inpu
 
     const callRenew = () =>
       // @ts-expect-error — leaseToken is required on RenewLeaseInput; omitting it must fail to typecheck
-      repo.renewLease({ id: 'feature-1', heartbeatAt: NOW, leaseExpiresAt: NOW });
+      repo.renewLease({
+        id: 'feature-1',
+        heartbeatAt: NOW,
+        leaseExpiresAt: NOW,
+      });
 
     const callExpire = () =>
       // @ts-expect-error — leaseToken is required on ExpireLeaseInput; omitting it must fail to typecheck

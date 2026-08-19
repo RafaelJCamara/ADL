@@ -214,6 +214,17 @@ const FORBIDDEN_CORE_SIBLINGS = [
   },
 ];
 
+/**
+ * 03-04 / D-01: the worker never opens the database — the manager is the
+ * only writer, which `schema.ts`'s header comment states and this rule keeps
+ * literally true. A second writer into the SQLite file would invalidate the
+ * single-writer reasoning the lease-table-instead-of-Redis choice rests on
+ * (`.claude/CLAUDE.md` § "No Redis. No Postgres."). Send state to the
+ * manager over the `fork()` IPC channel instead (`packages/manager/src/ipc/protocol.ts`).
+ */
+const WORKER_ENTRY_DB_BAN_MESSAGE =
+  "@adl/db is banned inside packages/manager/src/worker-entry (D-01): the manager is the only writer to the database, and this ban is what keeps that literally true now that the worker lives inside @adl/manager, which depends on @adl/db as a real dependency (D-21's two-package split means pnpm's strict node_modules can no longer enforce this structurally on its own). A second writer into the SQLite file invalidates the single-writer reasoning the lease-table-instead-of-Redis choice rests on. Report state to the manager over the fork() IPC channel (packages/manager/src/ipc/protocol.ts) instead.";
+
 const SPAWN_MESSAGE =
   'Direct process launch is banned outside packages/workspace (WORK-02). Every process ADL starts — including the agent CLIs — goes through Workspace.exec(), which is what makes the container backend in v2 a registry entry rather than a repository-wide call-site sweep. The Phase 3 manager→worker seam is not an exception: fork() lands as a named export of packages/workspace too, so the exemption count stays at one. If you need to run something, take the Workspace instance the caller already has.';
 
@@ -598,6 +609,53 @@ export const architectureConfigs = [
     name: 'adl/no-direct-spawn-fixtures',
     files: [mod('test/lint/fixtures/spawn-*')],
     rules: SPAWN_BAN_RULES,
+  },
+  {
+    // D-01 / 03-04: the worker never opens the database — the manager is the
+    // only writer, and `@adl/db` staying out of the worker's dependency graph
+    // is what `schema.ts`'s header comment claims literally rather than
+    // aspirationally. That used to be enforced structurally by pnpm's strict
+    // `node_modules`, the way `adl/core-purity`'s sibling ban still is for
+    // `@adl/core` — but D-21 fixes the package count at two and
+    // `03-PATTERNS.md` places the worker entry INSIDE `@adl/manager`, which
+    // depends on `@adl/db` as a real production dependency. The module
+    // resolves from anywhere in the package once that dependency exists, so
+    // the guarantee needs a rule of its own, "in the spirit of D-27"
+    // (03-CONTEXT.md's own words for this gap).
+    //
+    // `paths` merges in `FORBIDDEN_SPAWN` rather than naming only `@adl/db`:
+    // this entry configures `no-restricted-imports` for a glob
+    // `adl/no-direct-spawn` above ALSO matches (`packages/manager/src` is not
+    // in that rule's `ignores`), and flat config REPLACES rather than merges
+    // per rule id for an overlapping glob (02-RESEARCH.md § Pitfall 1). Not
+    // merging the spawn paths in here would silently lift the spawn ban for
+    // worker-entry's static imports the moment this entry landed — exactly
+    // the failure mode `adl/core-purity` already guards against for
+    // `@adl/core`. `no-restricted-syntax` (the require()/dynamic-import
+    // layer) is untouched by this entry, so it keeps resolving from
+    // `adl/no-direct-spawn` above.
+    name: 'adl/worker-entry-no-db',
+    files: [
+      mod('packages/manager/src/worker-entry/**/*'),
+      mod('test/lint/fixtures/worker-entry-*'),
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...FORBIDDEN_SPAWN,
+            {
+              name: '@adl/db',
+              message: WORKER_ENTRY_DB_BAN_MESSAGE,
+            },
+          ],
+          patterns: [
+            { group: ['@adl/db/*'], message: WORKER_ENTRY_DB_BAN_MESSAGE },
+          ],
+        },
+      ],
+    },
   },
 ];
 

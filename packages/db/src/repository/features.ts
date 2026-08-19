@@ -229,7 +229,13 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .executeTakeFirst();
     },
 
-    async acquireLease({ id, leaseOwner, leaseToken, leaseExpiresAt, heartbeatAt }) {
+    async acquireLease({
+      id,
+      leaseOwner,
+      leaseToken,
+      leaseExpiresAt,
+      heartbeatAt,
+    }) {
       assertIsoTimestamp(leaseExpiresAt, 'leaseExpiresAt');
       assertIsoTimestamp(heartbeatAt, 'heartbeatAt');
 

@@ -30,7 +30,9 @@ describe('reposRepository', () => {
       });
 
       const row = await repo.findById(id);
-      expect(row?.remote_url).toBe('https://github.com/example/target-repo.git');
+      expect(row?.remote_url).toBe(
+        'https://github.com/example/target-repo.git',
+      );
       expect(row?.default_branch).toBe('main');
     });
   });
@@ -65,7 +67,9 @@ describe('reposRepository', () => {
       expect(all).toHaveLength(1);
 
       const row = await repo.findById(id);
-      expect(row?.remote_url).toBe('https://github.com/example/renamed-repo.git');
+      expect(row?.remote_url).toBe(
+        'https://github.com/example/renamed-repo.git',
+      );
       expect(row?.default_branch).toBe('develop');
       expect(row?.features_dir).toBe('app/features');
       expect(row?.updated_at).toBe(LATER);
