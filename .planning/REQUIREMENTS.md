@@ -101,8 +101,8 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 
 - [ ] **EXEC-01**: Manager process owns detection, queue, state, config, credentials, and accounting
 - [ ] **EXEC-02**: Worker runs as a separate OS process holding a lease on one feature
-- [ ] **EXEC-03**: A worker killed mid-loop is detected and its feature recovered, with committed work preserved and burned spend retained on the ledger
-- [ ] **EXEC-04**: A resumed zombie worker cannot write stale results over newer state
+- [x] **EXEC-03**: A worker killed mid-loop is detected and its feature recovered, with committed work preserved and burned spend retained on the ledger
+- [x] **EXEC-04**: A resumed zombie worker cannot write stale results over newer state
 - [ ] **EXEC-05**: Maintainer sets concurrency; it defaults to one feature in flight
 - [ ] **EXEC-06**: Feature state, rounds, spend, and transcripts survive daemon restart
 - [x] **EXEC-07**: Adding a harness requires no change to the feature lifecycle state machine
@@ -246,8 +246,8 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | FORGE-12 | Phase 9 | Pending |
 | EXEC-01 | Phase 3 | Pending |
 | EXEC-02 | Phase 3 | Pending |
-| EXEC-03 | Phase 3 | Pending |
-| EXEC-04 | Phase 3 | Pending |
+| EXEC-03 | Phase 3 | Complete |
+| EXEC-04 | Phase 3 | Complete |
 | EXEC-05 | Phase 3 | Pending |
 | EXEC-06 | Phase 3 | Pending |
 | EXEC-07 | Phase 1 | Complete |

@@ -1,7 +1,12 @@
 import { forkWorker, type ForkedWorker } from '@adl/workspace';
 import type { FeaturesTable } from '@adl/db';
 import type { Logger } from 'pino';
-import { parseWorkerMessage, type AssignMessage } from '../ipc/protocol.js';
+import {
+  parseWorkerMessage,
+  type AssignMessage,
+  type LeaseLostMessage,
+} from '../ipc/protocol.js';
+import { checkFence, type StaleRejectionCounter } from '../fencing.js';
 
 /**
  * One feature's forked worker, and everything the supervisor tracks about it.
@@ -20,11 +25,17 @@ export type RenewLease = (params: {
   leaseExpiresAt: string;
 }) => Promise<boolean>;
 
+/** Reads a feature row's *current* `lease_token`, or `null` if unleased/gone. */
+export type GetCurrentLeaseToken = (
+  featureId: string,
+) => Promise<string | null>;
+
 /** One rejected worker message, for D-09's "expected-but-notable, counted" handling. */
 export interface StaleMessage {
   readonly featureId: string;
   readonly kind: string;
   readonly presentedToken: string;
+  readonly currentToken: string | null;
 }
 
 /** The `ready` message's payload, surfaced for observability (tests; later, status). */
@@ -42,10 +53,34 @@ export interface SupervisorDeps {
   readonly logger: Logger;
   readonly leaseTtlMs: number;
   readonly renewLease: RenewLease;
-  /** Called whenever a heartbeat's token no longer matches the lease (D-09). */
+  /**
+   * Reads the row's *current* lease token before any lease-scoped write —
+   * the message-level half of D-06's fence (`checkFence`) runs against this,
+   * applied to every lease-scoped kind (`heartbeat`, `stage_result`,
+   * `fatal`), not only to results. `daemon.ts` always supplies this in
+   * production; optional here only so a narrowly-scoped test exercising
+   * something else (the fast path, self-termination) is not forced to stub
+   * it. When absent, the message-level check is skipped and `renewLease`'s
+   * own `WHERE lease_token = ?` predicate remains the sole guard for
+   * `heartbeat` — the SQL half of D-06's fence, which holds regardless.
+   */
+  readonly getCurrentLeaseToken?: GetCurrentLeaseToken;
+  /** D-09's rejection counter — incremented once per dropped stale message. */
+  readonly staleRejectionCounter?: StaleRejectionCounter;
+  /** Called whenever a lease-scoped message's token no longer matches the lease (D-09). */
   readonly onStaleMessage?: (message: StaleMessage) => void;
   /** Called once a forked worker reports `ready` — the pid it started as. */
   readonly onReady?: (ready: WorkerReady) => void;
+  /**
+   * Called when a forked worker's process exits without the manager having
+   * accepted a `stage_result` from it or itself requesting the exit (D-04).
+   * The database write that recovers the feature (`reapOne`, the same
+   * function the reaper's own tick calls) is deliberately not this
+   * supervisor's job — see `../daemon.ts` for the wiring, and the reaper's
+   * own `expectedLeaseToken` guard for why a late-arriving exit from an
+   * already-superseded lease is safe to report here unconditionally.
+   */
+  readonly onUnexpectedExit?: (featureId: string, leaseToken: string) => void;
 }
 
 export interface WorkerSupervisor {
@@ -62,6 +97,13 @@ export interface WorkerSupervisor {
   ): ActiveWorker;
   get(featureId: string): ActiveWorker | undefined;
   list(): readonly ActiveWorker[];
+  /**
+   * Mark a worker's next exit as manager-requested, so it does not trigger
+   * `onUnexpectedExit`. Used by daemon shutdown (`stop()`), which kills every
+   * active worker deliberately and does not want the fast path racing its
+   * own `db.destroy()`.
+   */
+  markExpectedExit(featureId: string): void;
 }
 
 /**
@@ -81,6 +123,14 @@ export interface WorkerSupervisor {
  */
 export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
   const active = new Map<string, ActiveWorker>();
+  /**
+   * Whether this feature's currently-active worker's next exit is
+   * manager-requested (a stage result was accepted, or the manager itself
+   * asked it to stop) — D-04's "expected exit" case, kept separately from
+   * `active` so it survives being read from the `exit` handler after
+   * `active.delete()` has already run.
+   */
+  const expectingExit = new Map<string, boolean>();
 
   function spawn(
     feature: FeaturesTable,
@@ -92,6 +142,7 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
       execArgv: deps.execArgv,
     });
     const log = deps.logger.child({ featureId: feature.id, leaseToken });
+    expectingExit.set(feature.id, false);
 
     worker.stdout.on('data', (chunk: Buffer) => {
       log.info({ stream: 'stdout' }, chunk.toString().trimEnd());
@@ -101,6 +152,18 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
     });
     worker.child.on('error', (error: Error) => {
       log.warn({ err: error }, 'forked worker reported an error');
+    });
+
+    worker.child.on('exit', () => {
+      const expected = expectingExit.get(feature.id) ?? false;
+      active.delete(feature.id);
+      expectingExit.delete(feature.id);
+      if (!expected) {
+        log.warn(
+          'forked worker exited without an accepted result — applying the fast-path lease_expired recovery',
+        );
+        deps.onUnexpectedExit?.(feature.id, leaseToken);
+      }
     });
 
     worker.child.on('message', (raw: unknown) => {
@@ -126,35 +189,96 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
         });
       }
 
-      if (message.t === 'heartbeat') {
-        const leaseExpiresAt = new Date(
-          Date.parse(message.at) + deps.leaseTtlMs,
-        ).toISOString();
-        void deps
-          .renewLease({
-            id: feature.id,
-            leaseToken: message.leaseToken,
-            heartbeatAt: message.at,
-            leaseExpiresAt,
-          })
-          .then((renewed) => {
-            if (!renewed) {
+      if (
+        message.t === 'heartbeat' ||
+        message.t === 'stage_result' ||
+        message.t === 'fatal'
+      ) {
+        const kind = message.t;
+        const leaseToken = message.leaseToken;
+        void (async () => {
+          // D-06's message-level fence, run before any repository write, for
+          // every lease-scoped kind — not only `stage_result`.
+          const current = deps.getCurrentLeaseToken
+            ? await deps.getCurrentLeaseToken(feature.id)
+            : undefined;
+
+          if (current !== undefined) {
+            const verdict = checkFence(feature.id, leaseToken, current);
+            if (verdict.kind === 'stale') {
+              deps.staleRejectionCounter?.increment(feature.id);
               deps.onStaleMessage?.({
                 featureId: feature.id,
-                kind: message.t,
-                presentedToken: message.leaseToken,
+                kind,
+                presentedToken: verdict.presented,
+                currentToken: verdict.current,
               });
               log.warn(
-                { presentedToken: message.leaseToken },
+                {
+                  presentedToken: verdict.presented,
+                  currentToken: verdict.current,
+                },
+                `dropped a stale '${kind}' message — the presented lease token is no longer current`,
+              );
+              return;
+            }
+          }
+
+          if (kind === 'heartbeat') {
+            const leaseExpiresAt = new Date(
+              Date.parse(message.at) + deps.leaseTtlMs,
+            ).toISOString();
+            const renewed = await deps.renewLease({
+              id: feature.id,
+              leaseToken,
+              heartbeatAt: message.at,
+              leaseExpiresAt,
+            });
+            if (!renewed) {
+              // The row moved between the fence check above and this write
+              // (a genuine race, not the common case the fence already
+              // caught) — same response either way: tell the worker its
+              // lease is gone.
+              deps.onStaleMessage?.({
+                featureId: feature.id,
+                kind,
+                presentedToken: leaseToken,
+                currentToken: null,
+              });
+              log.warn(
+                { presentedToken: leaseToken },
                 'renewLease rejected a heartbeat — the presented token is no longer current',
               );
+              // D-05: tell the worker its lease is gone so it self-terminates
+              // rather than continuing to work a stage nobody trusts anymore.
+              // Fencing at the database is the guarantee; this is defence in
+              // depth, so a worker that stops on its own never races a
+              // replacement worker inside the same worktree.
+              const leaseLost: LeaseLostMessage = {
+                t: 'lease_lost',
+                featureId: feature.id,
+              };
+              worker.child.send?.(leaseLost);
             }
-          });
+            return;
+          }
+
+          if (kind === 'stage_result') {
+            // The worker is finishing on its own after a *fence-matched*
+            // result — D-04's "expected exit" case. The fast path must not
+            // also apply `lease_expired` for the exit that follows.
+            expectingExit.set(feature.id, true);
+          }
+          // 'fatal' is deliberately NOT marked as an expected exit — a
+          // self-reported fatal error is a worker dying just as surely as a
+          // SIGKILL, and the fast path recovers it the same way.
+          // Round/stage bookkeeping (writing stage_attempts, verdicts) for
+          // an accepted 'stage_result' is a later plan's job — this plan
+          // proves the fence, the heartbeat path, and the exit
+          // classification end to end.
+        })();
       }
-      // 'ready', 'stage_result', and 'fatal' are logged above; their full
-      // handling (round/stage bookkeeping, the fencing check on a result
-      // write) is a later plan's job — this tracer proves the channel and
-      // the heartbeat path end to end.
+      // 'ready' is handled above.
     });
 
     worker.child.send?.(assign);
@@ -168,5 +292,8 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
     spawn,
     get: (featureId) => active.get(featureId),
     list: () => [...active.values()],
+    markExpectedExit: (featureId) => {
+      expectingExit.set(featureId, true);
+    },
   };
 }

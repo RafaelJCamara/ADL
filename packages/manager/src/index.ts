@@ -30,12 +30,26 @@ export type { FeatureView } from './api/routes/features.js';
 export {
   createSupervisor,
   type ActiveWorker,
+  type GetCurrentLeaseToken,
   type RenewLease,
   type StaleMessage,
   type SupervisorDeps,
   type WorkerReady,
   type WorkerSupervisor,
 } from './worker-supervisor/supervisor.js';
+
+// D-06's message-level fence, and D-09's rejection counter. Published so a
+// caller can construct the counter once and pass it to both `createSupervisor`
+// and the status view — `daemon.ts` is that caller.
+export {
+  checkFence,
+  createStaleRejectionCounter,
+  type FenceMatch,
+  type FenceStale,
+  type FenceVerdict,
+  type StaleRejectionCounter,
+  type StaleRejectionSnapshot,
+} from './fencing.js';
 
 // The scheduler — one dispatch attempt at a time (D-15..17).
 export {
@@ -44,6 +58,35 @@ export {
   type DispatcherDeps,
   type SpawnCall,
 } from './scheduler/dispatcher.js';
+
+// The lease-expiry backstop and the child-exit fast path's shared
+// implementation (D-03, D-04). Exported so a test can drive `reapOne` and
+// `reapExpiredLeases` directly against a temp database, the same way
+// `dispatchOnce` already is.
+export {
+  createFastPathRecovery,
+  reapExpiredLeases,
+  reapOne,
+  resetCrashCountOnSuccess,
+  startReaper,
+  type ReapedFeature,
+  type ReaperDeps,
+  type ReaperHandle,
+  type ReapOutcome,
+  type StartReaperDeps,
+} from './scheduler/reaper.js';
+
+// The crash-recovery policy (D-10, D-11) — a pure decision, published so a
+// test (or a later plan's stage-completion write site) can drive it
+// directly without going through the reaper.
+export {
+  MAX_CONSECUTIVE_CRASHES,
+  planRecovery,
+  type EscalateDecision,
+  type RecoverDecision,
+  type RecoveryDecision,
+  type RecoveryInput,
+} from './recovery/policy.js';
 
 // The manager<->worker IPC contract (D-01, D-06). Published because the
 // worker entry, the supervisor, and any out-of-tree test double all need the

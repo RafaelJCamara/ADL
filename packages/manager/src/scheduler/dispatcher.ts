@@ -101,6 +101,18 @@ export async function dispatchOnce(
   );
   const effectiveConfigJson = JSON.stringify(config);
 
+  // D-12's other half, made an explicit branch rather than left as an
+  // always-derive expression: a feature with no `workspace_handle` yet is
+  // leasing for the first time, so one is derived and *persisted* here — the
+  // one and only place this row's handle is ever written. A feature that
+  // already has one (recovered from a crash by the reaper, which never
+  // clears `workspace_handle`) attaches to that exact value instead; nothing
+  // here derives a fresh one or asks `@adl/workspace` to create anything.
+  // Actual worktree creation is a later plan's job — this plan's contract is
+  // only that a recovered feature's handle survives dispatch unchanged.
+  const isFirstAttempt = feature.workspace_handle === null;
+  const workspaceHandle = feature.workspace_handle ?? feature.path;
+
   const events = await repo.listEvents(feature.id);
   const lastEventSeq = events.reduce(
     (max, event) => Math.max(max, event.seq),
@@ -157,7 +169,13 @@ export async function dispatchOnce(
     }
     await trx
       .updateTable('features')
-      .set({ effective_config_json: effectiveConfigJson })
+      .set({
+        effective_config_json: effectiveConfigJson,
+        // Attach-if-present: only a first-ever lease writes the handle.
+        // A recovery dispatch reads the same value it already had and
+        // leaves this column exactly as it found it.
+        ...(isFirstAttempt ? { workspace_handle: workspaceHandle } : {}),
+      })
       .where('id', '=', feature.id)
       .execute();
   });
@@ -166,7 +184,7 @@ export async function dispatchOnce(
     t: 'assign',
     featureId: feature.id,
     leaseToken,
-    workspaceHandle: feature.workspace_handle ?? feature.path,
+    workspaceHandle,
     effectiveConfigJson,
     heartbeatIntervalMs: deps.heartbeatIntervalMs,
   };
@@ -179,6 +197,7 @@ export async function dispatchOnce(
       current_stage_index:
         feature.current_stage_index + outcome.counters.currentStageIndex,
       effective_config_json: effectiveConfigJson,
+      workspace_handle: workspaceHandle,
     },
     leaseToken,
     assign,
