@@ -11,6 +11,7 @@ import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
+import { createStaleRejectionCounter } from './fencing.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import { createFastPathRecovery, startReaper } from './scheduler/reaper.js';
 import {
@@ -71,6 +72,8 @@ export async function startDaemon(
   const logger = options.logger ?? pino({ level: 'info' });
   const host = options.host ?? '127.0.0.1';
 
+  const staleRejectionCounter = createStaleRejectionCounter();
+
   const supervisor = createSupervisor({
     entryPath: options.workerEntryPath ?? DEFAULT_WORKER_ENTRY_PATH,
     cwd: options.workerCwd ?? process.cwd(),
@@ -78,6 +81,11 @@ export async function startDaemon(
     logger,
     leaseTtlMs: options.leaseTtlMs,
     renewLease: (params) => featuresRepository(db).renewLease(params),
+    getCurrentLeaseToken: async (featureId) => {
+      const row = await featuresRepository(db).findById(featureId);
+      return row?.lease_token ?? null;
+    },
+    staleRejectionCounter,
     onReady: options.onWorkerReady,
     // D-04's fast path: a forked worker exited without an accepted result.
     // `createFastPathRecovery` re-reads the row (it may have moved since the
@@ -124,6 +132,7 @@ export async function startDaemon(
         pipelineLength,
         ageMs: now - Date.parse(row.created_at),
         worker: active ? { pid: active.worker.pid } : null,
+        staleRejections: staleRejectionCounter.forFeature(row.id),
       };
     });
   }

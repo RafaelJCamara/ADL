@@ -17,6 +17,12 @@ export interface FeatureView {
   readonly pipelineLength: number;
   readonly ageMs: number;
   readonly worker: { readonly pid: number } | null;
+  /**
+   * D-09's stale-rejection counter, surfaced per feature. Zero for a feature
+   * that has never had a zombie write rejected — this field always has a
+   * value, never `null`/absent, so its presence is not itself a signal.
+   */
+  readonly staleRejections: number;
 }
 
 export interface FeaturesRouteDeps {

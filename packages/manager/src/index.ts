@@ -30,12 +30,26 @@ export type { FeatureView } from './api/routes/features.js';
 export {
   createSupervisor,
   type ActiveWorker,
+  type GetCurrentLeaseToken,
   type RenewLease,
   type StaleMessage,
   type SupervisorDeps,
   type WorkerReady,
   type WorkerSupervisor,
 } from './worker-supervisor/supervisor.js';
+
+// D-06's message-level fence, and D-09's rejection counter. Published so a
+// caller can construct the counter once and pass it to both `createSupervisor`
+// and the status view — `daemon.ts` is that caller.
+export {
+  checkFence,
+  createStaleRejectionCounter,
+  type FenceMatch,
+  type FenceStale,
+  type FenceVerdict,
+  type StaleRejectionCounter,
+  type StaleRejectionSnapshot,
+} from './fencing.js';
 
 // The scheduler — one dispatch attempt at a time (D-15..17).
 export {

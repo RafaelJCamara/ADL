@@ -301,6 +301,7 @@ const FIXTURE_FEATURE_VIEW: FeatureView = {
   pipelineLength: 3,
   ageMs: 1234,
   worker: { pid: 4242 },
+  staleRejections: 0,
 };
 
 describe('createApi', () => {
@@ -355,6 +356,7 @@ describe('createApi', () => {
           'pipelineLength',
           'ageMs',
           'worker',
+          'staleRejections',
         ].sort(),
       );
     });

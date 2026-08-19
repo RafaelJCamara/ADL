@@ -33,3 +33,25 @@ export function withScriptedWorker(
     execArgv: ['--import', 'tsx'],
   };
 }
+
+/** The D-31 zombie's own entry module — see `zombie-worker-entry.ts`'s docblock. */
+export const zombieWorkerEntry = fileURLToPath(
+  new URL('./zombie-worker-entry.ts', import.meta.url),
+);
+
+/**
+ * The fork() options that launch the D-31 zombie double: a scripted worker
+ * that pauses (sending zero heartbeats) and never reacts to a
+ * manager-to-worker message once assigned — D-05's self-termination
+ * suppressed by construction, not by a flag. Used only by the zombie
+ * scenario in `test/lease/fencing.test.ts`.
+ */
+export function withZombieWorker(
+  options: { readonly cwd?: string } = {},
+): ScriptedWorkerConfig {
+  return {
+    entryPath: zombieWorkerEntry,
+    cwd: options.cwd ?? process.cwd(),
+    execArgv: ['--import', 'tsx'],
+  };
+}

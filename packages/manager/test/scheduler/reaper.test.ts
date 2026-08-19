@@ -16,7 +16,10 @@ import {
   startReaper,
   type ReaperDeps,
 } from '../../src/index.js';
-import { MIGRATIONS_DIR, withTempDb } from '../../../db/test/helpers/temp-db.js';
+import {
+  MIGRATIONS_DIR,
+  withTempDb,
+} from '../../../db/test/helpers/temp-db.js';
 import { withScriptedWorker } from '../helpers/worker-harness.js';
 import { createCapturingLogger } from '../helpers/capturing-logger.js';
 
@@ -85,7 +88,8 @@ async function seedFeature(
       effective_config_json: null,
       workspace_handle: null,
       lease_owner: options.leaseToken === null ? null : 'manager',
-      lease_token: options.leaseToken === undefined ? ulid() : options.leaseToken,
+      lease_token:
+        options.leaseToken === undefined ? ulid() : options.leaseToken,
       lease_expires_at: options.leaseExpiresAt ?? now,
       heartbeat_at: now,
       crash_count: options.crashCount ?? 0,
@@ -160,11 +164,7 @@ describe('reapExpiredLeases', () => {
       const { logger } = createCapturingLogger();
 
       const row = await featuresRepository(db).findById(featureId);
-      const reaped = await reapOne(
-        { db, logger },
-        row!,
-        nowIso(),
-      );
+      const reaped = await reapOne({ db, logger }, row!, nowIso());
       expect(reaped?.featureId).toBe(featureId);
 
       const after = await featuresRepository(db).findById(featureId);
@@ -198,7 +198,7 @@ describe('reapExpiredLeases', () => {
     });
   });
 
-  it("ReaperDeps declares no clock member", () => {
+  it('ReaperDeps declares no clock member', () => {
     const keys: readonly (keyof ReaperDeps)[] = ['db', 'logger', 'actor'];
     expect(keys.sort()).toEqual(['actor', 'db', 'logger']);
     expect(keys).not.toContain('now');
@@ -333,7 +333,7 @@ describe('the child-exit fast path', () => {
     });
   }, 10_000);
 
-  it("a worker whose renewLease is refused receives lease_lost and exits non-zero", async () => {
+  it('a worker whose renewLease is refused receives lease_lost and exits non-zero', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
       const leaseTtlMs = 60_000;
