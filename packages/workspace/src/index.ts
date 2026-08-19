@@ -32,6 +32,20 @@ export { assertWithinRoot, isWithinRoot, resolveWithinRoot } from './paths.js';
 // package exists to be.
 export { run, type ExecOwner } from './exec/run.js';
 //
+// The manager's supervision seam (WORK-02, eslint.config.js:218): the second
+// and last process-launch primitive in the repository, and the reason it is
+// public rather than a second `adl/no-direct-spawn` exemption. `@adl/manager`
+// obtains a forked worker with a live IPC channel by importing `forkWorker`
+// from here — publishing this seam is precisely what keeps the exemption
+// count at one, which `test/lint/no-restricted-imports.test.ts` measures
+// rather than trusts.
+export {
+  forkWorker,
+  WORKER_ENV_ALLOWLIST,
+  type ForkedWorker,
+  type ForkWorkerOptions,
+} from './exec/fork.js';
+//
 // The privilege drop (WORK-05, D-05, D-18). Exported because the absence of the
 // drop is an operator-facing fact, not an internal detail: a manager building a
 // status view needs `privilegeWarning` and `PrivilegeMode` to say what a run

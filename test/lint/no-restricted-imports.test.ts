@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHITECTURE_RULE_IDS,
   FORBIDDEN_SPAWN_SPECIFIERS,
+  WORKSPACE_EXEMPTION,
   architectureConfigs,
   baseConfigs,
 } from '../../eslint.config.js';
@@ -136,6 +137,20 @@ const FIXTURES: readonly FixtureCase[] = [
     file: 'test/lint/fixtures/spawn-dynamic-javascript.js',
     ruleId: 'no-restricted-syntax',
     mentions: 'execa',
+  },
+  // ── The manager→worker fork() seam (03-03) ─────────────────────────────
+  //
+  // This fixture is not one of the "watch the glob" rows above — it exists to
+  // show the spawn ban applies to a `fork`-shaped import specifically, the
+  // exact form a manager author would reach for if they bypassed
+  // `forkWorker` (`@adl/workspace`) and imported `node:child_process`
+  // directly instead. See the "the fork() seam..." describe block below for
+  // the other half of this proof: the real `fork.ts` source lints clean, and
+  // the exemption that lets it stays at exactly one entry.
+  {
+    file: 'test/lint/fixtures/manager-fork-direct.ts',
+    ruleId: 'no-restricted-imports',
+    mentions: 'node:child_process',
   },
 ];
 
@@ -745,4 +760,85 @@ describe('the spawn boundary (WORK-02)', () => {
       ).toHaveLength(selectors.length);
     },
   );
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The fork() seam (03-03): the settled question answered by measurement, not
+ * by the comment in eslint.config.js that states the intent
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `eslint.config.js:21`/`:218` already state the intended resolution to "how
+ * does the manager→worker `fork()` seam relate to `adl/no-direct-spawn`":
+ * `forkWorker` lands as a named export of `packages/workspace`, and the
+ * exemption count stays at one. The two assertions below are what turns that
+ * sentence into something a later edit cannot silently falsify:
+ *
+ *  1. The real `packages/workspace/src/exec/fork.ts` — which imports a banned
+ *     specifier (`node:child_process`) — lints clean. This is the POSITIVE
+ *     half: it proves `WORKSPACE_EXEMPTION` already covers the new file with
+ *     no config change, which `git diff eslint.config.js` also shows (at most
+ *     a named export was added — see the `WORKSPACE_EXEMPTION` export's own
+ *     docblock).
+ *  2. Exactly one flat-config entry clears the spawn rules for
+ *     `packages/workspace`, and its glob names it. This is the count
+ *     `WORKSPACE_EXEMPTION`'s own docblock warned nothing was measuring: "a
+ *     SECOND entry here makes success criterion 2 false while the rule still
+ *     looks like it is enforcing something, which is strictly worse than
+ *     having no rule at all." A future PR that reaches for `packages/manager`
+ *     with its own `no-direct-spawn` carve-out — rather than importing
+ *     `forkWorker` — now fails HERE instead of shipping unnoticed.
+ */
+describe('the fork() seam does not need — and did not receive — a second exemption', () => {
+  const SPAWN_RULE_IDS = ['no-restricted-imports', 'no-restricted-syntax'];
+
+  it('packages/workspace/src/exec/fork.ts lints clean under the spawn ban rule ids', async () => {
+    const [result] = await realConfigLinter().lintFiles([
+      absolute('packages/workspace/src/exec/fork.ts'),
+    ]);
+
+    expect(result).toBeDefined();
+    const spawnMessages = (result!.messages ?? []).filter((message) =>
+      SPAWN_RULE_IDS.includes(message.ruleId ?? ''),
+    );
+    expect(
+      spawnMessages,
+      `packages/workspace/src/exec/fork.ts imports node:child_process — a banned specifier — and must lint clean under ${SPAWN_RULE_IDS.join('/')} because WORKSPACE_EXEMPTION already covers it. Any reported message here means the exemption stopped covering this file, or fork.ts drifted outside packages/workspace.`,
+    ).toEqual([]);
+  });
+
+  it('exactly one flat-config entry clears the spawn rules for packages/workspace, and its glob names it', () => {
+    const workspaceGlob = WORKSPACE_EXEMPTION[0];
+    expect(workspaceGlob, 'WORKSPACE_EXEMPTION must not be empty').toBeDefined();
+    expect(workspaceGlob).toContain('packages/workspace');
+
+    // Every architectureConfigs entry whose OWN `ignores` array carves
+    // `packages/workspace` out of a rule set it configures. `ignores` — not
+    // `files` — is deliberately what is counted: `WORKSPACE_SRC`
+    // (`adl/no-simple-git-in-workspace-src`'s `files:` glob) also names
+    // `packages/workspace`, but that entry RE-BANS simple-git inside it
+    // rather than clearing anything, so counting `files` globs would
+    // over-count a carve-out as a second exemption when it is the opposite.
+    const clearingEntries = architectureConfigs.filter((config) => {
+      const ignores = (config as { readonly ignores?: readonly string[] })
+        .ignores;
+      return (ignores ?? []).some((glob) =>
+        glob.includes('packages/workspace'),
+      );
+    });
+
+    expect(
+      clearingEntries,
+      'exactly one architectureConfigs entry may clear the spawn rules for packages/workspace — a second one is the T-2-40/CR-01 failure mode this test exists to catch: the build stays green while the boundary is gone',
+    ).toHaveLength(1);
+
+    const [exemptionEntry] = clearingEntries;
+    const ignores =
+      (exemptionEntry as { readonly ignores?: readonly string[] }).ignores ??
+      [];
+    expect(
+      ignores,
+      'the one clearing entry must carve out WORKSPACE_EXEMPTION itself, not a differently-spelled glob that happens to also match packages/workspace',
+    ).toContain(workspaceGlob);
+  });
 });

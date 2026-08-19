@@ -522,22 +522,35 @@ describe('no module under src/ reaches git through simple-git', () => {
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
- * And the fourth: exactly one module in this PACKAGE can launch a process
+ * And the fourth: exactly the SANCTIONED modules in this PACKAGE can launch a
+ * process — two now, not one, and this block is what keeps a third from
+ * arriving silently
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
  * T-2-40, which until now had a mitigation nobody had written.
  *
- * The threat is "a second exec primitive is introduced, bypassing every control
- * while every lint check passes because the bypass lives inside the exempted
- * directory". The register's mitigation promised an assertion that the
- * repository still has exactly one file importing the process-launch library.
+ * The threat is "an UNSANCTIONED second exec primitive is introduced,
+ * bypassing every control while every lint check passes because the bypass
+ * lives inside the exempted directory". The register's mitigation promised an
+ * assertion that the repository still has exactly the sanctioned set of files
+ * importing a process-launch library — one, at the time T-2-40 was written.
  * `02-08-SUMMARY.md` then recorded T-2-40 as mitigated on the strength of an
  * OBSERVATION — "one file in `packages/workspace/src` imports execa" — which
- * was true, is still true, and enforces nothing. A true sentence about today's
- * tree is not a control over tomorrow's; the whole content of T-2-40 is that
- * the second primitive arrives LATER and invisibly, which is exactly what
- * already happened once as 02-REVIEW.md CR-01.
+ * was true, is still true, and enforces nothing on its own. A true sentence
+ * about today's tree is not a control over tomorrow's; the whole content of
+ * T-2-40 is that an unreviewed primitive arrives LATER and invisibly, which is
+ * exactly what already happened once as 02-REVIEW.md CR-01.
+ *
+ * `src/exec/fork.ts` (Phase 3, `eslint.config.js:21`/`:218`) is the deliberate
+ * exception the count now has to accommodate: it is the manager→worker `fork()`
+ * seam, reviewed, exported from the barrel, and built with its own environment
+ * discipline (`WORKER_ENV_ALLOWLIST`) — not a bypass CR-01's shape. This block
+ * is updated to name it as the SECOND sanctioned launcher rather than widened
+ * or dropped, because the property T-2-40 protects — "no THIRD, unreviewed
+ * primitive arrives invisibly" — still needs a live assertion, and one that
+ * still fails the instant a module neither of these two names imports a
+ * launcher.
  *
  * ── Why none of the four existing guards catches it ────────────────────────
  *
@@ -592,8 +605,18 @@ describe('no module under src/ reaches git through simple-git', () => {
 /** One directory up from `src/`: the exemption is package-wide, so this is too. */
 const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-/** The one module in this package that may hold a process-launch primitive. */
+/** The module that owns the execa-based launch — the one `run()` uses. */
 const SOLE_EXEC_PRIMITIVE = 'src/exec/run.ts';
+
+/**
+ * The second sanctioned launcher (Phase 3, `eslint.config.js:21`/`:218`): the
+ * manager→worker `fork()` seam, a SIBLING of `run.ts` rather than a bypass of
+ * it. Named as its own constant rather than folded into
+ * {@link SOLE_EXEC_PRIMITIVE} because the two are not interchangeable — each
+ * one names a different specifier below, and each is the sole namer of that
+ * specifier, not of "process launching" in general.
+ */
+const FORK_PRIMITIVE = 'src/exec/fork.ts';
 
 /**
  * This file, exempt from the bare-identifier scan only.
@@ -637,12 +660,13 @@ const EXEC_PRIMITIVES = [
     // other leaves the guard bypassable by deleting five characters, which is
     // the reasoning `FORBIDDEN_CORE_BUILTINS` already carries.
     mention: /\bchild_process\b/,
-    // Nothing in this package may name it. `run()` uses the library.
-    soleNamer: undefined as string | undefined,
+    // `fork.ts` is the one sanctioned namer (Phase 3). `run()` never imports
+    // this builtin — it uses `execa`, which is the row above.
+    soleNamer: FORK_PRIMITIVE as string | undefined,
   },
 ] as const;
 
-describe('exactly one module in this package can launch a process', () => {
+describe('exactly the sanctioned modules in this package can launch a process', () => {
   it('scans the whole package — src/, test/ and the root — not only src/', async () => {
     // Anti-vacuity for the two assertions below, and it is the half that would
     // have caught the original defect. A scan rooted at `src/` finds nothing
@@ -656,6 +680,7 @@ describe('exactly one module in this package can launch a process', () => {
     // Root-level, so the walk demonstrably starts at the package and not at src/.
     expect(names).toContain('vitest.config.ts');
     expect(names).toContain(SOLE_EXEC_PRIMITIVE);
+    expect(names).toContain(FORK_PRIMITIVE);
     expect(names).toContain(THIS_GUARD);
     // And the skip set did its job, or every install would be an offender.
     expect(names.filter((name) => name.startsWith('node_modules/'))).toEqual(
@@ -664,7 +689,7 @@ describe('exactly one module in this package can launch a process', () => {
   });
 
   for (const primitive of EXEC_PRIMITIVES) {
-    it(`finds no module naming ${primitive.specifier} outside its one exemption`, async () => {
+    it(`finds no module naming ${primitive.specifier} outside its sanctioned namer`, async () => {
       const files = await moduleSources(PACKAGE_ROOT, GENERATED_DIRECTORIES);
       expect(files.length).toBeGreaterThan(25);
 
@@ -679,7 +704,7 @@ describe('exactly one module in this package can launch a process', () => {
           primitive.mention.test(withoutComments(await readFile(file, 'utf8')))
         ) {
           offenders.push(
-            `${name} — a second process-launch primitive inside packages/workspace (T-2-40). Every lint check in this repository passes for it: adl/no-direct-spawn ignores this package wholesale, and adl/no-simple-git-in-workspace-src re-bans simple-git ONLY. A child started here inherits none of run()'s controls — not the zero-inherit environment, not the scratch HOME, not the privilege drop, not the git-config neutralisation — and none of those bypasses is visible in a diff. Route it through run() in ${SOLE_EXEC_PRIMITIVE}.`,
+            `${name} — an UNSANCTIONED process-launch primitive inside packages/workspace (T-2-40). Every lint check in this repository passes for it: adl/no-direct-spawn ignores this package wholesale, and adl/no-simple-git-in-workspace-src re-bans simple-git ONLY. A child started here inherits none of an existing primitive's controls — not the zero-inherit environment, not the scratch HOME, not the privilege drop, not the git-config neutralisation — and none of those bypasses is visible in a diff. Route it through run() in ${SOLE_EXEC_PRIMITIVE} (an agent-facing exec) or forkWorker() in ${FORK_PRIMITIVE} (the manager→worker seam) — the only two reviewed launchers this package has.`,
           );
         }
       }
@@ -688,7 +713,7 @@ describe('exactly one module in this package can launch a process', () => {
     });
   }
 
-  it('confirms the one exemption really is still the process launch', async () => {
+  it('confirms the execa launcher really is still the process launch', async () => {
     // Without this, deleting `execa` from `run.ts` — or replacing the launch
     // with a re-export of somebody else's — would leave the assertion above
     // green over a package that no longer has the primitive it is pinning. The
@@ -701,6 +726,22 @@ describe('exactly one module in this package can launch a process', () => {
     expect(source, 'the exemption imports the launcher and calls it').toMatch(
       /\bexeca\s*\(/,
     );
+  });
+
+  it('confirms the fork() launcher really is still the process launch', async () => {
+    // The same vacuity guard as the execa one above, applied to the second
+    // sanctioned launcher: deleting `fork` from `fork.ts` — or replacing the
+    // call with a re-export — would leave the scan above green over a package
+    // that no longer has the primitive it is pinning.
+    const source = withoutComments(
+      await readFile(join(PACKAGE_ROOT, FORK_PRIMITIVE), 'utf8'),
+    );
+
+    expect(source).toMatch(/from ['"]node:child_process['"]/);
+    expect(
+      source,
+      'the fork seam imports the launcher and calls it',
+    ).toMatch(/\bfork\s*\(/);
   });
 
   it('finds no IMPORT of a launcher outside the exemption, this guard included', async () => {
@@ -722,7 +763,7 @@ describe('exactly one module in this package can launch a process', () => {
           );
           if (specifier.test(statement)) {
             offenders.push(
-              `${name}: ${statement.replace(/\s+/g, ' ')} — only ${SOLE_EXEC_PRIMITIVE} may import a process launcher (T-2-40)`,
+              `${name}: ${statement.replace(/\s+/g, ' ')} — only ${primitive.soleNamer ?? '(no module)'} may import '${primitive.specifier}' (T-2-40)`,
             );
           }
         }
