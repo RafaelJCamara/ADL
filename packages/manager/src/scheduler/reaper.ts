@@ -12,22 +12,26 @@ import {
   type FeatureState,
   type TransitionCtx,
 } from '@adl/core/state';
+import { planRecovery } from '../recovery/policy.js';
 
 /**
- * The lease-expiry backstop (D-03) and the child-exit fast path's shared
- * implementation (D-04). `reapOne` is the one function both the periodic
- * tick and the supervisor's `child.on('exit')` handler call, so the two
- * paths that detect a dead or wedged worker cannot diverge in behaviour —
- * one route is fast (milliseconds, via the fork's own `exit` event), the
- * other is the backstop for what `exit` structurally cannot cover: a
- * restarted manager with no `ChildProcess` handle, and a worker that is
- * wedged but still alive.
+ * The lease-expiry backstop (D-03), the child-exit fast path's shared
+ * implementation (D-04), and the crash-recovery policy applied wherever
+ * either one detects a dead or wedged worker (D-10, D-11, D-12). `reapOne`
+ * is the one function both the periodic tick and the supervisor's
+ * `child.on('exit')` handler call, so the two paths cannot diverge in
+ * behaviour — one route is fast (milliseconds, via the fork's own `exit`
+ * event), the other is the backstop for what `exit` structurally cannot
+ * cover: a restarted manager with no `ChildProcess` handle, and a worker
+ * that is wedged but still alive.
  */
 
-/** One feature `reapOne` moved back to `queued`. */
+/** One feature `reapOne` acted on. */
 export interface ReapedFeature {
   readonly featureId: string;
   readonly fromState: FeatureState;
+  /** `'recovered'` — back to `queued`, stage 0, same round. `'escalated'` — the crash ceiling was already reached (D-11). */
+  readonly decision: 'recovered' | 'escalated';
 }
 
 export interface ReapOutcome {
@@ -47,14 +51,29 @@ export interface ReaperDeps {
 }
 
 /**
- * Recover one feature row whose worker is gone — an expired lease found by
- * the tick, or an unexpected `child.on('exit')` from the fast path.
+ * Recover — or, at the crash ceiling, escalate — one feature row whose
+ * worker is gone: an expired lease found by the tick, or an unexpected
+ * `child.on('exit')` from the fast path.
  *
  * `expectedLeaseToken`, when supplied, guards the fast path against a
  * worker's late exit racing a lease the reaper (or a fresh dispatch) already
  * reassigned: if the row's current token no longer matches, this is a
  * no-op — the row belongs to someone else now, and this exit has nothing to
  * say about it.
+ *
+ * `planRecovery` decides recover-vs-escalate purely from `feature.crash_count`
+ * (D-11); this function is what turns that decision into the write. A
+ * recover applies the `lease_expired` transition and resets
+ * `current_stage_index` to 0 (D-10 — `transition()`'s own `lease_expired`
+ * edges never touch the stage index, so the reset happens here, in the same
+ * transaction, rather than by editing the checksum-guarded `transition.ts`).
+ * An escalate applies `unrecoverable` instead, landing the feature in
+ * `escalated`. Either way `crash_count` is incremented in the same
+ * transaction as the state write, per D-11's "increment and decision happen
+ * together" requirement — a manager that dies mid-recovery cannot
+ * double-count. `workspace_handle` is never touched by either branch: D-12's
+ * "recovery re-attaches, never rebuilds" is true because nothing here
+ * deletes or overwrites it, not because a restore step ran.
  *
  * Returns `undefined` when there was nothing to do (the token guard failed)
  * or when `transition()` rejected the pair — logged at `warn` and treated as
@@ -81,14 +100,26 @@ export async function reapOne(
     0,
   );
 
+  const decision = planRecovery({
+    state: feature.state as FeatureState,
+    round: feature.round,
+    currentStageIndex: feature.current_stage_index,
+    crashCount: feature.crash_count,
+  });
+
+  const event =
+    decision.kind === 'recover'
+      ? ({ t: 'lease_expired' } as const)
+      : ({ t: 'unrecoverable', reason: decision.reason } as const);
+
   const ctx: TransitionCtx = {
     featureId: feature.id,
     stateVersion: feature.state_version,
     lastEventSeq,
     round: feature.round,
-    // `lease_expired`'s edges never consult these two fields — they are
-    // state-independent of the pipeline shape — so a placeholder here is
-    // inert, never load-bearing.
+    // Neither `lease_expired` nor `unrecoverable` consults these two fields
+    // — both are state-independent of the pipeline shape — so a placeholder
+    // here is inert, never load-bearing.
     maxRounds: 0,
     pipelineLength: 0,
     currentStageIndex: feature.current_stage_index,
@@ -96,18 +127,24 @@ export async function reapOne(
     at: now,
   };
 
-  const outcome = transition(
-    feature.state as FeatureState,
-    { t: 'lease_expired' },
-    ctx,
-  );
+  const outcome = transition(feature.state as FeatureState, event, ctx);
   if (!outcome.ok) {
     deps.logger.warn(
-      { featureId: feature.id, state: feature.state, reason: outcome.reason },
-      'reaper: lease_expired rejected by transition()',
+      {
+        featureId: feature.id,
+        state: feature.state,
+        event: event.t,
+        reason: outcome.reason,
+      },
+      'reaper: transition rejected',
     );
     return undefined;
   }
+
+  const nextCurrentStageIndex =
+    decision.kind === 'recover'
+      ? decision.resetStageIndexTo
+      : feature.current_stage_index + outcome.counters.currentStageIndex;
 
   await deps.db.transaction().execute(async (trx) => {
     const trxRepo = featuresRepository(trx);
@@ -116,10 +153,17 @@ export async function reapOne(
       expectedVersion: outcome.expectedStateVersion,
       state: outcome.next,
       round: feature.round + outcome.counters.round,
-      currentStageIndex:
-        feature.current_stage_index + outcome.counters.currentStageIndex,
+      currentStageIndex: nextCurrentStageIndex,
       updatedAt: now,
     });
+
+    // D-11: increment in the same transaction as the state write, so a
+    // manager that dies between the two cannot double-count this crash.
+    await trx
+      .updateTable('features')
+      .set({ crash_count: feature.crash_count + 1 })
+      .where('id', '=', feature.id)
+      .execute();
 
     const [effect] = outcome.effects;
     if (effect !== undefined) {
@@ -143,7 +187,31 @@ export async function reapOne(
     }
   });
 
-  return { featureId: feature.id, fromState: outcome.from };
+  return {
+    featureId: feature.id,
+    fromState: outcome.from,
+    decision: decision.kind === 'recover' ? 'recovered' : 'escalated',
+  };
+}
+
+/**
+ * D-11's other half: reset `crash_count` to zero wherever a round completes
+ * successfully. No caller exists yet in this phase — the gate pipeline this
+ * would fire from is Phase 4+ — so this is exercised directly by a unit test
+ * today (`test/recovery/crash-recovery.test.ts`) and wired at the real
+ * round-completion write site once that pipeline lands, in the same
+ * transaction as the round outcome, for the same "increment and decision
+ * happen together" reason the crash counter's own increment does.
+ */
+export async function resetCrashCountOnSuccess(
+  db: Kysely<Database>,
+  featureId: string,
+): Promise<void> {
+  await db
+    .updateTable('features')
+    .set({ crash_count: 0 })
+    .where('id', '=', featureId)
+    .execute();
 }
 
 /**

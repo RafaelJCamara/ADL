@@ -8,6 +8,7 @@ import {
   type Database,
 } from '@adl/db';
 import type { Kysely } from 'kysely';
+import { processIsAlive } from '@adl/workspace';
 import {
   createFastPathRecovery,
   createSupervisor,
@@ -255,6 +256,7 @@ describe('the child-exit fast path', () => {
 
         await waitUntil(() => supervisor.get(featureId) !== undefined);
         const active = supervisor.get(featureId)!;
+        const killedPid = active.worker.pid;
 
         const startedAt = Date.now();
         active.worker.child.kill('SIGKILL');
@@ -269,6 +271,9 @@ describe('the child-exit fast path', () => {
 
         const row = await featuresRepository(db).findById(featureId);
         expect(row?.lease_token).toBeNull();
+
+        // No orphaned child process survives the SIGKILL.
+        await waitUntil(() => !processIsAlive(killedPid));
       } finally {
         delete process.env.ADL_TEST_STAGE_DELAY_MS;
       }

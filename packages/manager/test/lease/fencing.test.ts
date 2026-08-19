@@ -21,7 +21,9 @@ import {
   createSupervisor,
   dispatchOnce,
   reapExpiredLeases,
+  type ActiveWorker,
   type FeatureView,
+  type SpawnCall,
 } from '../../src/index.js';
 import {
   MIGRATIONS_DIR,
@@ -250,6 +252,8 @@ describe('the D-31 zombie scenario', () => {
         currentToken: string | null;
       }[] = [];
 
+      const spawnedChildren: ActiveWorker['worker']['child'][] = [];
+
       const supervisor = createSupervisor({
         entryPath: zombie.entryPath,
         cwd: zombie.cwd,
@@ -265,84 +269,115 @@ describe('the D-31 zombie scenario', () => {
         onStaleMessage: (message) => staleMessages.push(message),
       });
 
-      // First dispatch: leases the feature to the zombie.
-      const first = await dispatchOnce({
-        db,
-        leaseTtlMs,
-        heartbeatIntervalMs: 50,
-        daemonConfig: DAEMON_CONFIG,
-        resolveAdlYml: () => ADL_YML_FIXTURE,
-        spawnWorker: (call) =>
-          supervisor.spawn(call.feature, call.leaseToken, call.assign),
-      });
-      expect(first.dispatched).toBe(true);
-      const oldToken = first.leaseToken!;
+      function spawnAndTrack(call: SpawnCall): void {
+        const entry = supervisor.spawn(
+          call.feature,
+          call.leaseToken,
+          call.assign,
+        );
+        spawnedChildren.push(entry.worker.child);
+      }
 
-      // Force the zombie's lease expired *now*, deterministically, rather
-      // than waiting on the real clock — the D-31 scenario's substance is
-      // the fence, not the reaper's own timing (already covered by
-      // `test/scheduler/reaper.test.ts`). One direct `reapExpiredLeases`
-      // call stands in for "the reaper has meanwhile reaped".
-      await db
-        .updateTable('features')
-        .set({ lease_expires_at: new Date(Date.now() - 1000).toISOString() })
-        .where('id', '=', featureId)
-        .execute();
-      await reapExpiredLeases({ db, logger }, nowIso());
+      try {
+        // First dispatch: leases the feature to the zombie.
+        const first = await dispatchOnce({
+          db,
+          leaseTtlMs,
+          heartbeatIntervalMs: 50,
+          daemonConfig: DAEMON_CONFIG,
+          resolveAdlYml: () => ADL_YML_FIXTURE,
+          spawnWorker: spawnAndTrack,
+        });
+        expect(first.dispatched).toBe(true);
+        const oldToken = first.leaseToken!;
 
-      const reapedRow = await featuresRepository(db).findById(featureId);
-      expect(reapedRow?.state).toBe('queued');
+        // Force the zombie's lease expired *now*, deterministically, rather
+        // than waiting on the real clock — the D-31 scenario's substance is
+        // the fence, not the reaper's own timing (already covered by
+        // `test/scheduler/reaper.test.ts`). One direct `reapExpiredLeases`
+        // call stands in for "the reaper has meanwhile reaped".
+        await db
+          .updateTable('features')
+          .set({
+            lease_expires_at: new Date(Date.now() - 1000).toISOString(),
+          })
+          .where('id', '=', featureId)
+          .execute();
+        await reapExpiredLeases({ db, logger }, nowIso());
 
-      // A fresh dispatch re-leases the same (only queued) feature to a new
-      // token, through the same supervisor — "the dispatcher re-leases the
-      // feature with a fresh token" (D-31).
-      const second = await dispatchOnce({
-        db,
-        leaseTtlMs,
-        heartbeatIntervalMs: 50,
-        daemonConfig: DAEMON_CONFIG,
-        resolveAdlYml: () => ADL_YML_FIXTURE,
-        spawnWorker: (call) =>
-          supervisor.spawn(call.feature, call.leaseToken, call.assign),
-      });
-      expect(second.dispatched).toBe(true);
-      const newToken = second.leaseToken!;
-      expect(newToken).not.toBe(oldToken);
+        const reapedRow = await featuresRepository(db).findById(featureId);
+        expect(reapedRow?.state).toBe('queued');
 
-      const legitimateRow = await featuresRepository(db).findById(featureId);
-      const legitimateStateVersion = legitimateRow?.state_version;
-      const legitimateState = legitimateRow?.state;
-      const eventsBefore = await featuresRepository(db).listEvents(featureId);
+        // A fresh dispatch re-leases the same (only queued) feature to a new
+        // token, through the same supervisor — "the dispatcher re-leases the
+        // feature with a fresh token" (D-31).
+        const second = await dispatchOnce({
+          db,
+          leaseTtlMs,
+          heartbeatIntervalMs: 50,
+          daemonConfig: DAEMON_CONFIG,
+          resolveAdlYml: () => ADL_YML_FIXTURE,
+          spawnWorker: spawnAndTrack,
+        });
+        expect(second.dispatched).toBe(true);
+        const newToken = second.leaseToken!;
+        expect(newToken).not.toBe(oldToken);
 
-      // The original zombie wakes up (after its fixed internal pause) and
-      // reports with its now-stale token.
-      await waitUntil(() => staleRejectionCounter.forFeature(featureId) >= 1, {
-        timeoutMs: 5000,
-      });
+        const legitimateRow = await featuresRepository(db).findById(featureId);
+        const legitimateStateVersion = legitimateRow?.state_version;
+        const legitimateState = legitimateRow?.state;
+        const eventsBefore = await featuresRepository(db).listEvents(featureId);
 
-      expect(
-        staleMessages.some(
-          (message) =>
-            message.presentedToken === oldToken &&
-            message.currentToken === newToken,
-        ),
-      ).toBe(true);
+        // The original zombie wakes up (after its fixed internal pause) and
+        // reports with its now-stale token.
+        await waitUntil(
+          () => staleRejectionCounter.forFeature(featureId) >= 1,
+          { timeoutMs: 5000 },
+        );
 
-      const warnLine = logs.find(
-        (log: CapturedLog) =>
-          log.level === 40 && // pino 'warn'
-          log.presentedToken === oldToken &&
-          log.currentToken === newToken,
-      );
-      expect(warnLine).toBeDefined();
+        expect(
+          staleMessages.some(
+            (message) =>
+              message.presentedToken === oldToken &&
+              message.currentToken === newToken,
+          ),
+        ).toBe(true);
 
-      const afterRow = await featuresRepository(db).findById(featureId);
-      expect(afterRow?.state_version).toBe(legitimateStateVersion);
-      expect(afterRow?.state).toBe(legitimateState);
-      expect(afterRow?.lease_token).toBe(newToken);
+        const warnLine = logs.find(
+          (log: CapturedLog) =>
+            log.level === 40 && // pino 'warn'
+            log.presentedToken === oldToken &&
+            log.currentToken === newToken,
+        );
+        expect(warnLine).toBeDefined();
 
-      const eventsAfter = await featuresRepository(db).listEvents(featureId);
-      expect(eventsAfter).toHaveLength(eventsBefore.length);
+        const afterRow = await featuresRepository(db).findById(featureId);
+        expect(afterRow?.state_version).toBe(legitimateStateVersion);
+        expect(afterRow?.state).toBe(legitimateState);
+        expect(afterRow?.lease_token).toBe(newToken);
+
+        const eventsAfter = await featuresRepository(db).listEvents(featureId);
+        expect(eventsAfter).toHaveLength(eventsBefore.length);
+      } finally {
+        // The second zombie (spawned by the re-lease dispatch) is still
+        // paused and would otherwise report — and call `getCurrentLeaseToken`
+        // against this test's `db` — well after `withTempDb`'s own teardown
+        // has destroyed the connection. Kill every forked child before that
+        // teardown runs.
+        await Promise.all(
+          spawnedChildren.map(
+            (child) =>
+              new Promise<void>((resolve) => {
+                if (child.exitCode !== null || child.signalCode !== null) {
+                  resolve();
+                  return;
+                }
+                child.once('exit', () => resolve());
+                child.kill('SIGKILL');
+              }),
+          ),
+        );
+      }
     });
   }, 15_000);
 });

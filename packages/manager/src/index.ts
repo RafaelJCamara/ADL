@@ -67,6 +67,7 @@ export {
   createFastPathRecovery,
   reapExpiredLeases,
   reapOne,
+  resetCrashCountOnSuccess,
   startReaper,
   type ReapedFeature,
   type ReaperDeps,
@@ -74,6 +75,18 @@ export {
   type ReapOutcome,
   type StartReaperDeps,
 } from './scheduler/reaper.js';
+
+// The crash-recovery policy (D-10, D-11) — a pure decision, published so a
+// test (or a later plan's stage-completion write site) can drive it
+// directly without going through the reaper.
+export {
+  MAX_CONSECUTIVE_CRASHES,
+  planRecovery,
+  type EscalateDecision,
+  type RecoverDecision,
+  type RecoveryDecision,
+  type RecoveryInput,
+} from './recovery/policy.js';
 
 // The manager<->worker IPC contract (D-01, D-06). Published because the
 // worker entry, the supervisor, and any out-of-tree test double all need the
