@@ -136,7 +136,41 @@ Plans:
   4. Feature state, rounds, spend, and transcripts are all present and consistent after a daemon restart.
   5. Maintainer can pause work and kill one feature, everything in one repository, or everything; concurrency is configurable and defaults to one feature in flight.
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Package legitimacy gate, the two new packages, and the windows-latest CI leg
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Lease-scoped repository methods, the repos/meta surfaces, and the SQLite pragmas
+- [ ] 03-03-PLAN.md — `forkWorker`: the manager→worker seam as a named `@adl/workspace` export
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-04-PLAN.md — Tracer: a queued feature is leased by a real forked worker, heartbeats over IPC, and appears in `adl status`
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 03-05-PLAN.md — Lease expiry, the fence against zombie writes, and crash recovery
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 03-06-PLAN.md — Daemon config, the schema-version gate, repo reconciliation, boot orphan kill, graceful shutdown
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 03-07-PLAN.md — Concurrency caps and the pause/kill control plane
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 03-08-PLAN.md — The `adl` verb set and the GC schedule
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 03-09-PLAN.md — The concurrency-3 crash-and-restart scenario, on both platforms
 
 **Notes**: The manager owns detection, queue, state, config, credentials, and accounting; the worker is a separate OS process holding one lease. Forge *reads* belong to the manager too. Recovery semantics tested with zero AI in the loop is the cheapest this will ever be. Run CI at concurrency 3 even though the default ships as 1 — a crashed worker plus a restarted daemon is concurrency 2 in practice.
 
@@ -415,7 +449,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
-| 3. Manager Skeleton | 0/TBD | Not started | - |
+| 3. Manager Skeleton | 0/9 | Not started | - |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
