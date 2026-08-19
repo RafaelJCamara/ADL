@@ -1,0 +1,1 @@
+{"content":"commander 15: exitCode/code configurable via error handling; a subcommand killed by signal reports exit code 0 by default (known issue) -- worth guarding for adl's own subcommand exit-code contract if any subprocess-spawning verb is added.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:38.789Z","ttl":86400000,"kind":"docs"}

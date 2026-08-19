@@ -1,0 +1,1 @@
+{"content":"Vitest 4 defaults to pool:'forks' -- each test file runs in its own OS child process, giving free per-file isolation; useful default for tests that themselves fork() a real worker process.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:39.086Z","ttl":86400000,"kind":"docs"}

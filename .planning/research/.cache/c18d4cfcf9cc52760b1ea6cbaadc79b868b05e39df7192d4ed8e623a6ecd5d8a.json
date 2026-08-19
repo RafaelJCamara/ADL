@@ -1,0 +1,1 @@
+{"content":"fork() IPC channel event order: disconnect -> exit -> close. disconnect() closes IPC; exit fires on process termination; close fires when stdio streams close (may lag exit for shared streams).","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:36.749Z","ttl":86400000,"kind":"docs"}

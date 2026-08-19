@@ -1,0 +1,1 @@
+{"content":"Hono: bearerAuth() middleware applied via app.use(path, bearerAuth({token})); zValidator('json', schema) added per-route (not app.use) so validated type infers correctly at c.req.valid().","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:38.215Z","ttl":86400000,"kind":"docs"}

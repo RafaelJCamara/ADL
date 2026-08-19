@@ -1,0 +1,1 @@
+{"content":"execa: forceKillAfterDelay is a documented no-op on Windows; SIGTERM/SIGKILL both terminate immediately there. cancelSignal applies across kill/timeout/maxBuffer/cleanup/forceKillAfterDelay uniformly.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:37.044Z","ttl":86400000,"kind":"docs"}

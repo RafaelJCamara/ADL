@@ -1,0 +1,1 @@
+{"content":"Read /proc/PID/stat field 22 (0-indexed 21) via fs.readFileSync for Linux process start time in clock ticks since boot; used for PID-reuse safe orphan kill. No native deps needed.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:36.467Z","ttl":86400000,"kind":"web"}

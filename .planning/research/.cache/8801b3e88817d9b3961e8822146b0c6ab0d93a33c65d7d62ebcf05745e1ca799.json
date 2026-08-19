@@ -1,0 +1,1 @@
+{"content":"croner has an over-run 'protect' option blocking a job's own re-entry while a prior run is in flight; it does not serialize two distinct scheduled jobs against each other.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-08-19T11:52:37.930Z","ttl":86400000,"kind":"docs"}

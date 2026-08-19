@@ -1,0 +1,1 @@
+{"content":"Windows has no POSIX signals; Node emulates SIGTERM/SIGKILL/SIGINT/SIGQUIT via forceful unconditional termination (TerminateProcess) -- the target process gets no chance to run a handler. Confirmed via Node docs and nodejs/node#12378.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-08-19T11:52:39.375Z","ttl":86400000,"kind":"web"}
