@@ -85,7 +85,10 @@ describe('the hand-written Database interface matches the live schema', () => {
 
       const drift: string[] = [];
 
-      for (const [table, declared] of Object.entries(TABLE_COLUMNS)) {
+      for (const [table, declared] of Object.entries(TABLE_COLUMNS) as [
+        string,
+        readonly string[],
+      ][]) {
         const live = await liveColumns(db, table);
 
         for (const column of live) {

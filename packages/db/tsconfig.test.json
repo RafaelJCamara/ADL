@@ -1,0 +1,22 @@
+// The program `packages/db/test/lease.test.ts`'s type-level proof is checked
+// under.
+//
+// `tsconfig.json` deliberately includes only `src/**/*.ts` and
+// `migrations/**/*.ts`: it is the build program, it emits to `dist/`, and
+// pulling `test/` into it would ship the suite (and a `vitest` type
+// dependency) to consumers. But D-08's guarantee — that omitting `leaseToken`
+// from a lease-scoped call is a compile error — is asserted with a
+// `@ts-expect-error` comment inside `test/lease.test.ts`, and an assertion
+// that is never compiled asserts nothing. This program is what makes
+// `pnpm --filter @adl/db typecheck` actually check it, mirroring
+// `packages/core/tsconfig.test.json`'s rationale.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "migrations/**/*.ts", "test/**/*.ts"]
+}

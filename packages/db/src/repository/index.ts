@@ -14,6 +14,10 @@ export {
   type NewFeature,
   type NewFeatureEvent,
   type NewRound,
+  type AcquireLeaseInput,
+  type RenewLeaseInput,
+  type ExpireLeaseInput,
+  type ReleaseLeaseInput,
 } from './features.js';
 
 export {
@@ -33,3 +37,16 @@ export {
   type NewUsageEvent,
   type SpendByCategory,
 } from './usage.js';
+
+export {
+  reposRepository,
+  type ReposRepository,
+  type NewRepo,
+} from './repos.js';
+
+export {
+  metaRepository,
+  type MetaRepository,
+  type SchemaVersionResult,
+  SCHEMA_VERSION_KEY,
+} from './meta.js';
