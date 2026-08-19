@@ -23,9 +23,9 @@ describe('createDb: connection pragmas', () => {
 
   it('reports the configured busy_timeout', async () => {
     await withTempDb(async ({ db }) => {
-      const result = await sql<{ timeout: number }>`pragma busy_timeout`.execute(
-        db,
-      );
+      const result = await sql<{
+        timeout: number;
+      }>`pragma busy_timeout`.execute(db);
       expect(result.rows[0]?.timeout).toBe(DEFAULT_PRAGMAS.busy_timeout);
     });
   });
@@ -73,19 +73,13 @@ describe('createDb: connection pragmas', () => {
 
         // Without WAL this read would block behind the open writer (and, if
         // it ever timed out, throw SQLITE_BUSY) rather than returning.
-        const duringWrite = await db2
-          .selectFrom('repos')
-          .selectAll()
-          .execute();
+        const duringWrite = await db2.selectFrom('repos').selectAll().execute();
         expect(duringWrite).toEqual([]);
 
         releaseWrite();
         await writeTxn;
 
-        const afterCommit = await db2
-          .selectFrom('repos')
-          .selectAll()
-          .execute();
+        const afterCommit = await db2.selectFrom('repos').selectAll().execute();
         expect(afterCommit).toHaveLength(1);
       } finally {
         // Close before withTempDb's own teardown removes the directory — the

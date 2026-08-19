@@ -738,10 +738,9 @@ describe('exactly the sanctioned modules in this package can launch a process', 
     );
 
     expect(source).toMatch(/from ['"]node:child_process['"]/);
-    expect(
-      source,
-      'the fork seam imports the launcher and calls it',
-    ).toMatch(/\bfork\s*\(/);
+    expect(source, 'the fork seam imports the launcher and calls it').toMatch(
+      /\bfork\s*\(/,
+    );
   });
 
   it('finds no IMPORT of a launcher outside the exemption, this guard included', async () => {
