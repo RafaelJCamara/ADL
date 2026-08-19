@@ -12,6 +12,7 @@ import pino, { type Logger } from 'pino';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
+import { createFastPathRecovery, startReaper } from './scheduler/reaper.js';
 import {
   createSupervisor,
   type WorkerReady,
@@ -78,6 +79,19 @@ export async function startDaemon(
     leaseTtlMs: options.leaseTtlMs,
     renewLease: (params) => featuresRepository(db).renewLease(params),
     onReady: options.onWorkerReady,
+    // D-04's fast path: a forked worker exited without an accepted result.
+    // `createFastPathRecovery` re-reads the row (it may have moved since the
+    // fork started) and hands it to `reapOne` — the same function the
+    // reaper's own tick calls — whose `expectedLeaseToken` guard makes this a
+    // safe no-op if the lease was already reassigned by the time this exit
+    // is observed.
+    onUnexpectedExit: createFastPathRecovery({ db, logger }),
+  });
+
+  const reaper = startReaper({
+    db,
+    logger,
+    intervalMs: options.heartbeatIntervalMs,
   });
 
   async function listFeatureViews(): Promise<readonly FeatureView[]> {
@@ -155,21 +169,24 @@ export async function startDaemon(
 
   async function stop(): Promise<void> {
     clearInterval(dispatchTimer);
+    reaper.stop();
 
     const workers = supervisor.list();
     await Promise.all(
-      workers.map(
-        (entry) =>
-          new Promise<void>((resolve) => {
-            const child = entry.worker.child;
-            if (child.exitCode !== null || child.signalCode !== null) {
-              resolve();
-              return;
-            }
-            child.once('exit', () => resolve());
-            child.kill('SIGKILL');
-          }),
-      ),
+      workers.map((entry) => {
+        // Deliberate shutdown: this exit is manager-requested, so the fast
+        // path must not race `db.destroy()` below with its own write.
+        supervisor.markExpectedExit(entry.featureId);
+        return new Promise<void>((resolve) => {
+          const child = entry.worker.child;
+          if (child.exitCode !== null || child.signalCode !== null) {
+            resolve();
+            return;
+          }
+          child.once('exit', () => resolve());
+          child.kill('SIGKILL');
+        });
+      }),
     );
 
     await new Promise<void>((resolve, reject) => {

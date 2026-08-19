@@ -45,6 +45,22 @@ export {
   type SpawnCall,
 } from './scheduler/dispatcher.js';
 
+// The lease-expiry backstop and the child-exit fast path's shared
+// implementation (D-03, D-04). Exported so a test can drive `reapOne` and
+// `reapExpiredLeases` directly against a temp database, the same way
+// `dispatchOnce` already is.
+export {
+  createFastPathRecovery,
+  reapExpiredLeases,
+  reapOne,
+  startReaper,
+  type ReapedFeature,
+  type ReaperDeps,
+  type ReaperHandle,
+  type ReapOutcome,
+  type StartReaperDeps,
+} from './scheduler/reaper.js';
+
 // The manager<->worker IPC contract (D-01, D-06). Published because the
 // worker entry, the supervisor, and any out-of-tree test double all need the
 // same message shapes — the schemas are the one definition, not three.
