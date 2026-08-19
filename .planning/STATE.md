@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02
-current_phase_name: workspace-the-exec-boundary
+current_phase: 03
+current_phase_name: manager-skeleton-state-leases-api-cli
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-08-19T12:39:05.088Z"
-last_activity: 2026-08-18
-last_activity_desc: Phase 02 execution started
+last_updated: "2026-08-19T12:45:21.723Z"
+last_activity: 2026-08-19
+last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 3
   completed_phases: 2
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-17)
 
 **Core value:** A feature folder goes in, and a green, human-approvable PR comes out — with the whole loop's reasoning visible in the PR — without a human orchestrating any of the handoffs.
-**Current focus:** Phase 02 — workspace-the-exec-boundary
+**Current focus:** Phase 03 — manager-skeleton-state-leases-api-cli
 
 ## Current Position
 
-Phase: 02 (workspace-the-exec-boundary) — EXECUTING
-Plan: 1 of 8
-Status: Phase 02 EXECUTED — deliberately not marked complete (see below)
-Last activity: 2026-08-18 — Phase 02 execution started
+Phase: 03 (manager-skeleton-state-leases-api-cli) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 03
+Last activity: 2026-08-19 — Phase 03 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
