@@ -196,3 +196,7 @@ None - no external service configuration required.
 ---
 *Phase: 03-manager-skeleton-state-leases-api-cli*
 *Completed: 2026-08-19*
+
+## Self-Check: PASSED
+
+All created files (packages/workspace/src/exec/fork.ts, packages/workspace/test/exec/fork.test.ts, packages/workspace/test/fixtures/echo-worker.js, test/lint/fixtures/manager-fork-direct.ts, this SUMMARY.md) verified present on disk. All task commit hashes (ba32698, 937ceba, 9d9404f) verified present in git log.
