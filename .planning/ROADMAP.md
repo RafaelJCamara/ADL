@@ -136,7 +136,7 @@ Plans:
   4. Feature state, rounds, spend, and transcripts are all present and consistent after a daemon restart.
   5. Maintainer can pause work and kill one feature, everything in one repository, or everything; concurrency is configurable and defaults to one feature in flight.
 
-**Plans**: 1/9 plans executed
+**Plans**: 3/9 plans executed
 
 Plans:
 **Wave 1**
@@ -145,8 +145,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Lease-scoped repository methods, the repos/meta surfaces, and the SQLite pragmas
-- [ ] 03-03-PLAN.md — `forkWorker`: the manager→worker seam as a named `@adl/workspace` export
+- [x] 03-02-PLAN.md — Lease-scoped repository methods, the repos/meta surfaces, and the SQLite pragmas
+- [x] 03-03-PLAN.md — `forkWorker`: the manager→worker seam as a named `@adl/workspace` export
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -449,7 +449,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
-| 3. Manager Skeleton | 1/9 | In Progress|  |
+| 3. Manager Skeleton | 3/9 | In Progress|  |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
