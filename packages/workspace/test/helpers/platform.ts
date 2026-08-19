@@ -90,3 +90,43 @@ export function linuxOnly(
 
   return { kind: 'run', workerUser, workerGroup };
 }
+
+/**
+ * The decision for a case that needs POSIX permission bits and nothing else.
+ */
+export type PosixOnlyGate =
+  { readonly kind: 'run' } | { readonly kind: 'skip'; readonly reason: string };
+
+/**
+ * Gate a POSIX-permission assertion, just as loudly — and deliberately NOT
+ * through {@link linuxOnly}.
+ *
+ * The two gates answer different questions and conflating them would break both
+ * of D-21's mechanisms at once:
+ *
+ * - {@link linuxOnly} guards assertions about the *privilege drop*, so a Linux
+ *   runner with no worker user provisioned is a FAILURE there — the evidence was
+ *   expected and was not produced.
+ * - This one guards assertions about *mode bits* (`0700` on a directory ADL
+ *   created, say). They need no worker user, no `sudo`, and no provisioning;
+ *   they simply have no meaning on Windows, where `fs.Stats.mode` reports the
+ *   read-only attribute rather than permissions. Failing a Linux developer's run
+ *   because `ADL_WORKER_USER` is unset would be a gate going red for a reason
+ *   that has nothing to do with what it measures — and a gate that cries wolf is
+ *   a gate that gets deleted.
+ *
+ * What the two share is the part that matters: a skip WRITES ITS REASON, with a
+ * requirement id, to standard error.
+ */
+export function posixOnly(
+  reason: string,
+  requirementId = 'WORK-05',
+  platform: NodeJS.Platform = process.platform,
+): PosixOnlyGate {
+  if (platform === 'win32') {
+    const stated = `${SKIP_PREFIX}[${requirementId}] ${reason} (platform: ${platform})`;
+    process.stderr.write(`${stated}\n`);
+    return { kind: 'skip', reason: stated };
+  }
+  return { kind: 'run' };
+}

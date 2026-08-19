@@ -30,7 +30,7 @@ export { assertWithinRoot, isWithinRoot, resolveWithinRoot } from './paths.js';
 // caller; publishing it would invite a second one, and a second place where a
 // child environment is assembled is a second door into the boundary this
 // package exists to be.
-export { run } from './exec/run.js';
+export { run, type ExecOwner } from './exec/run.js';
 //
 // The privilege drop (WORK-05, D-05, D-18). Exported because the absence of the
 // drop is an operator-facing fact, not an internal detail: a manager building a
@@ -63,6 +63,8 @@ export {
   type WorkerAccessConfig,
   type WorkerAccessReport,
   type WorkerIdentity,
+  privilegeModeMismatch,
+  reportPrivilegeModeMismatch,
 } from './exec/privilege.js';
 //
 // `ScratchHomeTeardown` joins its producer on the barrel: `destroyScratchHome`
@@ -75,6 +77,10 @@ export {
   destroyScratchHome,
   type ScratchHome,
   type ScratchHomeTeardown,
+  listScratchHomes,
+  scratchHomeRoot,
+  type ScratchHomeEntry,
+  type ScratchHomeOwner,
 } from './exec/scratch-home.js';
 
 // The git worktree lifecycle — one worktree and one adl/<featureId> branch per
@@ -85,6 +91,7 @@ export {
   destroyWorktree,
   featureIdFromBranch,
   type CreatedWorktree,
+  type WorktreeTeardown,
 } from './worktree/lifecycle.js';
 
 // The disk inventory (D-20). Deliberately the MECHANISM only: it reports which
@@ -107,6 +114,12 @@ export {
   type FeatureStateLookup,
   type GcDeps,
   type SweepFailure,
+  // Phase 3's manager owns the schedule that must call this beside
+  // `sweepOrphans`; it cannot reach it until it is on the barrel (WR-06).
+  sweepScratchHomes,
+  processIsAlive,
+  type ScratchHomeGcDeps,
+  type ScratchHomeSweepFailure,
 } from './worktree/gc.js';
 
 // The named backend registry (D-04) — how a `Workspace` is obtained.
@@ -135,6 +148,59 @@ export {
   type WorktreeWorkspaceOptions,
 } from './worktree/backend.js';
 export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
+//
+// ADL's own workspace (D-17). Registered as `'host-git'`, and the reason it is a
+// backend rather than a second `adl/no-direct-spawn` exemption is written out at
+// the top of `git/host-backend.ts`.
+export {
+  hostGitWorkspace,
+  type HostGitWorkspaceOptions,
+} from './git/host-backend.js';
+//
+// `defaultHostGitHome` is exported because an operator-facing status view has to
+// be able to say where ADL's git home is without constructing a workspace to
+// ask. It lives beside `adlGit` — the chokepoint every ADL-side git invocation
+// in `src/` goes through (02-REVIEW.md CR-01, CR-02) — rather than beside the
+// host-git backend, because the worktree modules need the same home and may not
+// import a backend module by rule.
+//
+// What is deliberately NOT exported is `adlGit` itself, for the reason
+// `managerGitClient`'s private argv builder is not exported: publishing it would
+// publish a git invocation an out-of-tree caller could point anywhere, and the
+// package's promise is that there is one.
+export { defaultHostGitHome } from './git/adl-git.js';
+
+// The manager-owned git client (D-12) and the neutralisation every one of its
+// invocations carries (D-19, WORK-07).
+//
+// `NEUTRALISED_CONFIG` and `NEUTRALISE_ARGS` are exported for two audiences and
+// neither of them is "a caller who wants to build their own git argv": the
+// poisoned-config suite iterates the list so that trimming it makes the proof
+// smaller rather than making it fail, and an operator-facing view has to be able
+// to state what ADL overrides. T-2-42 — "the neutralisation disables something
+// an operator legitimately relies on" — is *accepted* rather than mitigated, and
+// an accepted risk is only acceptable while it is discoverable, which is why
+// README.md § What ADL's own git overrides lists every entry and why
+// `test/git/manager-git.test.ts` fails when the two drift apart.
+//
+// What is deliberately NOT exported is the argv builder inside
+// `managerGitClient`. It is the reason there is no reachable path to a git
+// invocation without the overrides, and publishing it would be publishing the
+// bypass.
+//
+// `NEUTRALISATION_RESIDUAL_RISK` travels with them for the same reason and is
+// the half that was missing: a status view that lists what ADL overrides and
+// stays silent about what it does not lets a reader infer a completeness the
+// list does not have (02-REVIEW.md WR-12).
+export {
+  managerGitClient,
+  NEUTRALISATION_RESIDUAL_RISK,
+  NEUTRALISE_ARGS,
+  NEUTRALISED_CONFIG,
+  type GitStatusEntry,
+  type ManagerGitClient,
+  type ManagerGitClientOptions,
+} from './git/manager-git.js';
 
 // The teardown-report sink's mapping helpers. `WorkspaceSpec.onTeardown` is
 // declared in `@adl/core/stage`; these turn this package's own teardown results

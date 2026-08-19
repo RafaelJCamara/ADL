@@ -1,18 +1,28 @@
-import { readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExecSpec, LogChunk, Workspace } from '@adl/core/stage';
 import {
   applyWorkerAccess,
   createPrivilegeWarner,
+  parseGroupEntries,
   privilegeLauncher,
+  privilegeModeMismatch,
   privilegeWarning,
+  reportPrivilegeModeMismatch,
   readGroupEntries,
+  resolveGroupId,
   resolveUserIds,
   type PrivilegeMode,
 } from '../../src/exec/privilege.js';
+import {
+  createScratchHome,
+  destroyScratchHome,
+  scratchHomeRoot,
+} from '../../src/exec/scratch-home.js';
 import { worktreeWorkspace } from '../../src/worktree/backend.js';
-import { linuxOnly } from '../helpers/platform.js';
+import { linuxOnly, posixOnly } from '../helpers/platform.js';
 import { withTempRepo } from '../helpers/temp-repo.js';
 
 /**
@@ -194,6 +204,330 @@ describe('privilege: the launcher gate and the honest degraded mode', () => {
       }
     });
   }, 120_000);
+});
+
+/**
+ * WR-05: the identity database is parsed, not coerced.
+ *
+ * These cases run on every platform — they read fixture files, never
+ * `/etc/group` — because the defect they cover is arithmetic rather than
+ * OS-specific. What is Linux-only is the *consequence* (an actual `chown` to
+ * group root), and that is exactly why the assertions are placed here, one level
+ * before it, where the Windows development machine can still see them.
+ */
+describe('privilege: the identity database, parsed strictly', () => {
+  /** Every field shape `Number()` accepts and the file format does not. */
+  const COERCIBLE_BUT_INVALID: readonly (readonly [string, string])[] = [
+    ['', 'an empty gid field — Number("") is 0, which is the ROOT group'],
+    [' 12 ', 'a padded field — Number(" 12 ") is 12'],
+    ['0x10', 'a hex field — Number("0x10") is 16'],
+    ['1e3', 'exponent notation — Number("1e3") is 1000'],
+    ['-1', 'a negative id'],
+    ['12abc', 'trailing junk'],
+  ];
+
+  it('never resolves a malformed group line to gid 0, or to anything at all', () => {
+    for (const [field, why] of COERCIBLE_BUT_INVALID) {
+      const entries = parseGroupEntries(`adl-worker:x:${field}:adl\n`);
+
+      // Two assertions, because they fail differently and both matter. The
+      // first says the entry was rejected; the second says that whatever else
+      // this parser does, it does not hand `chown` the root group (WR-05).
+      expect(
+        entries.find((entry) => entry.name === 'adl-worker'),
+        `gid field ${JSON.stringify(field)} (${why}) was accepted as an entry`,
+      ).toBeUndefined();
+      expect(
+        entries.map((entry) => entry.gid),
+        `gid field ${JSON.stringify(field)} (${why}) resolved to a numeric id`,
+      ).toEqual([]);
+    }
+  });
+
+  it('still parses a well-formed line, including one written with CRLF', () => {
+    // The positive control. A parser that rejected everything would satisfy the
+    // case above and be useless, and `resolveGroupId` returning undefined for a
+    // real group degrades every run on a correctly provisioned host.
+    const unix = parseGroupEntries('adl-worker:x:987:adl,runner\n');
+    expect(unix).toEqual([
+      { name: 'adl-worker', gid: 987, members: ['adl', 'runner'] },
+    ]);
+
+    // CRLF leaves `\r` on the LAST member, so membership silently stops
+    // matching — which would make privilege.test.ts's own "the assertion would
+    // be vacuous" guard mis-fire rather than fail.
+    const crlf = parseGroupEntries('adl-worker:x:987:adl,runner\r\n');
+    expect(crlf[0]?.members).toEqual(['adl', 'runner']);
+    expect(crlf[0]?.gid).toBe(987);
+  });
+
+  it('reads a malformed database from disk as unresolvable rather than as root', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'adl-idfixture-'));
+
+    const groupFile = join(dir, 'group');
+    await writeFile(
+      groupFile,
+      // A truncated line of exactly the kind a half-written /etc/group has.
+      'root:x:0:\nadl-worker:x::adl\n',
+      'utf8',
+    );
+    expect(await resolveGroupId('adl-worker', groupFile)).toBeUndefined();
+    // The sibling that IS well-formed still resolves, so the file was read.
+    expect(await resolveGroupId('root', groupFile)).toBe(0);
+
+    const passwdFile = join(dir, 'passwd');
+    await writeFile(
+      passwdFile,
+      'root:x:0:0:root:/root:/bin/sh\nadl-worker:x:::,,,:/nonexistent:/usr/sbin/nologin\n',
+      'utf8',
+    );
+    // Before the fix this returned `{ uid: 0, gid: 0 }` — the identity the
+    // privilege test compares a dropped child against.
+    expect(await resolveUserIds('adl-worker', passwdFile)).toBeUndefined();
+    expect(await resolveUserIds('root', passwdFile)).toEqual({
+      uid: 0,
+      gid: 0,
+    });
+  });
+
+  it('degrades instead of chowning to group root when the group line is malformed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'adl-idfixture-'));
+    const groupFile = join(dir, 'group');
+    await writeFile(groupFile, 'adl-worker:x::adl\n', 'utf8');
+
+    const target = await mkdtemp(join(tmpdir(), 'adl-idtarget-'));
+    const before = await stat(target);
+
+    const report = await applyWorkerAccess([target], {
+      // `dropped` on purpose: this is the ONE mode in which the helper acts,
+      // so a not-applicable early return would make the case vacuous.
+      mode: 'dropped',
+      group: 'adl-worker',
+      groupFile,
+    });
+
+    expect(report.outcome).toBe('degraded');
+    if (report.outcome === 'degraded') {
+      expect(report.reason).toContain('could not be resolved to a gid');
+    }
+
+    // And nothing moved. Before the fix this directory was chowned to gid 0
+    // and reported `applied` — a grant to the root group, announced as success.
+    const after = await stat(target);
+    expect(after.gid).toBe(before.gid);
+    expect(after.mode).toBe(before.mode);
+  });
+});
+
+/**
+ * WR-10: the two privilege decisions, compared.
+ *
+ * The mode is resolved twice against two different PATHs — at workspace creation
+ * against the daemon's, and per exec against `ExecSpec.path` — and nothing
+ * reconciled the two. These cases cover the detector; the wiring at the two call
+ * sites is carried forward in deferred-items D-2-R-2, and this suite is what
+ * will hold it honest when it lands.
+ */
+describe('privilege: a creation/run-time mode disagreement', () => {
+  /** A decision, without going through the resolver. */
+  const decision = (mode: PrivilegeMode, path: string) =>
+    ({ mode, prefix: [], path }) as const;
+
+  it('says nothing when the two decisions agree', () => {
+    for (const mode of [...NON_DROPPED_MODES, 'dropped'] as const) {
+      // Same mode, DIFFERENT paths: a differing PATH is not itself a problem,
+      // and a detector that fired on it would cry wolf on every deployment
+      // whose daemon and children have different environments — which is all
+      // of them, by construction (D-10).
+      expect(
+        privilegeModeMismatch(
+          decision(mode, '/daemon/bin'),
+          decision(mode, '/child/bin'),
+        ),
+      ).toBeUndefined();
+    }
+  });
+
+  it('names both PATHs and the consequence when the drop was granted but not applied', () => {
+    const text = privilegeModeMismatch(
+      decision('dropped', '/usr/bin:/daemon/bin'),
+      decision('launcher-missing', '/child/only'),
+    );
+
+    expect(text).toBeDefined();
+    // The direction matters: this one left the worktree, the admin directory
+    // and the scratch HOME group-writable for a child that then ran as the
+    // daemon — access with no beneficiary.
+    expect(text).toMatch(/no beneficiary/);
+    expect(text).toContain('/usr/bin:/daemon/bin');
+    expect(text).toContain('/child/only');
+    expect(text).toContain('[ADL][WORK-05]');
+  });
+
+  it('names the opposite direction differently', () => {
+    const text = privilegeModeMismatch(
+      decision('launcher-missing', '/daemon/only'),
+      decision('dropped', '/usr/bin'),
+    );
+
+    // A prefix with no grant behind it fails every write to the agent's own
+    // worktree, and reads like an agent bug — the opposite failure, and a
+    // banner that described it as "exposure" would send the operator the wrong
+    // way entirely.
+    expect(text).toMatch(/no access grant behind it/);
+    expect(text).not.toMatch(/no beneficiary/);
+  });
+
+  it('reports through an injected sink, and every time rather than once', () => {
+    const messages: string[] = [];
+    const sink = (message: string): void => void messages.push(message);
+
+    reportPrivilegeModeMismatch(
+      decision('dropped', '/a'),
+      decision('worker-user-unset', '/b'),
+      sink,
+    );
+    reportPrivilegeModeMismatch(
+      decision('dropped', '/a'),
+      decision('worker-user-unset', '/b'),
+      sink,
+    );
+    // Unlike WORK-05's banner: a mismatch is a fact about ONE workspace's exec,
+    // so suppressing repeats would hide the second broken feature behind the
+    // first.
+    expect(messages).toHaveLength(2);
+
+    reportPrivilegeModeMismatch(
+      decision('dropped', '/a'),
+      decision('dropped', '/b'),
+      sink,
+    );
+    expect(messages).toHaveLength(2);
+  });
+
+  it('carries the PATH it was decided against out of privilegeLauncher', async () => {
+    // The detector is useless if the caller has to remember which PATH produced
+    // which decision, so the decision carries it.
+    const dropped = await privilegeLauncher({
+      platform: 'linux',
+      worker: { user: 'adl-worker', group: 'adl-worker' },
+      path: '/usr/bin',
+      resolveLauncher: () => Promise.resolve('/usr/bin/sudo'),
+    });
+    expect(dropped.path).toBe('/usr/bin');
+
+    const missing = await privilegeLauncher({
+      platform: 'linux',
+      worker: { user: 'adl-worker', group: 'adl-worker' },
+      path: '/nowhere',
+      resolveLauncher: () => Promise.resolve(undefined),
+    });
+    expect(missing.path).toBe('/nowhere');
+
+    // Including the early return that never consults anything else.
+    const offPlatform = await privilegeLauncher({
+      platform: 'win32',
+      worker: { user: 'adl-worker', group: 'adl-worker' },
+      path: 'C:\\Windows',
+      resolveLauncher: () => Promise.resolve('/usr/bin/sudo'),
+    });
+    expect(offPlatform.path).toBe('C:\\Windows');
+  });
+});
+
+/**
+ * CR-03, the part of it that is closable with mode bits.
+ *
+ * The worker identity is per deployment, so nothing here separates one feature
+ * from another — that gap is stated in `WorkerIdentity`'s docblock, in
+ * README § Permission model, and in deferred-items D-2-R-1. What these cases
+ * cover is the *third* consequence the review names: that every scratch `HOME`
+ * sat directly under a world-readable `/tmp`, so an attacker did not have to
+ * guess a `mkdtemp` name — it could read the listing.
+ */
+describe('privilege: the scratch-home root is traversable, never listable', () => {
+  /**
+   * A group file naming a gid this process can actually chown to.
+   *
+   * Fabricating one would make every case here degrade with `EPERM` on Linux
+   * and pass vacuously — the shape D-21 exists to prevent. The process's own
+   * gid is one it is by definition a member of.
+   */
+  const ownGroupFile = async (dir: string): Promise<string> => {
+    const file = join(dir, 'group');
+    await writeFile(file, `adl-test-own:x:${process.getgid?.() ?? 0}:\n`);
+    return file;
+  };
+
+  it('includes the root in the grant, with traverse and nothing else', async (ctx) => {
+    const fixtures = await mkdtemp(join(tmpdir(), 'adl-grantfixture-'));
+    const groupFile = await ownGroupFile(fixtures);
+    const home = await createScratchHome();
+
+    try {
+      const report = await applyWorkerAccess([home.path], {
+        mode: 'dropped',
+        group: 'adl-test-own',
+        groupFile,
+      });
+
+      expect(
+        report.outcome,
+        report.outcome === 'degraded' ? report.reason : '',
+      ).toBe('applied');
+      if (report.outcome !== 'applied') return;
+
+      // The root is granted even though no caller passed it: without it the
+      // worker cannot reach its own HOME through a 0700 parent.
+      expect(report.paths).toContain(scratchHomeRoot());
+      expect(report.paths).toContain(home.path);
+
+      const gate = posixOnly(
+        'the traverse-vs-list distinction is POSIX mode bits, and fs.Stats.mode on Windows reports the read-only attribute rather than permissions',
+        'CR-03',
+      );
+      if (gate.kind === 'skip') {
+        ctx.skip(gate.reason);
+        return;
+      }
+
+      const mode = (await stat(scratchHomeRoot())).mode & 0o777;
+      // `--x`: pass through to a name you already have.
+      expect(mode & 0o010, 'group traverse on the scratch-home root').toBe(
+        0o010,
+      );
+      // Not `r`: the listing is the whole thing being withheld. With it, one
+      // feature's agent enumerates every other live feature's HOME and
+      // mkdtemp's unpredictability stops being a control.
+      expect(mode & 0o040, 'group READ on the scratch-home root').toBe(0);
+      // Not `w`: the owner markers the GC sweep trusts live in this directory,
+      // and a worker that could rewrite one could ask the sweep to delete a
+      // running feature's HOME.
+      expect(mode & 0o020, 'group WRITE on the scratch-home root').toBe(0);
+      expect(mode & 0o007, 'world bits on the scratch-home root').toBe(0);
+    } finally {
+      await destroyScratchHome(home.path);
+    }
+  });
+
+  it('does not touch the root when the granted path is not a home', async () => {
+    const fixtures = await mkdtemp(join(tmpdir(), 'adl-grantfixture-'));
+    const groupFile = await ownGroupFile(fixtures);
+    // Stands in for a worktree: somewhere else entirely. Widening ITS parent
+    // would mean chmod-ing the operator's scratch root, or `/tmp`, or `/`.
+    const elsewhere = await mkdtemp(join(tmpdir(), 'adl-notahome-'));
+
+    const report = await applyWorkerAccess([elsewhere], {
+      mode: 'dropped',
+      group: 'adl-test-own',
+      groupFile,
+    });
+
+    expect(report.outcome).toBe('applied');
+    if (report.outcome !== 'applied') return;
+    expect(report.paths).toEqual([elsewhere]);
+    expect(report.paths).not.toContain(scratchHomeRoot());
+  });
 });
 
 describe('privilege: the drop, as a child process reports it', () => {

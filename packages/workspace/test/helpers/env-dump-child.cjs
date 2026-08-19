@@ -13,6 +13,11 @@
  * no participation in the package's TypeScript build, so nothing about the
  * build configuration can change what this observes.
  *
+ * **Do not hand this path to a workspace child directly.** Under WORK-05 the
+ * child is a different OS user which cannot read ADL's own checkout — by
+ * design. `test/exec/credentials.test.ts` copies this file into the workspace's
+ * scratch `HOME` first; see `stageEnvDumpChild` there for the full reasoning.
+ *
  * One JSON object on one line. Values may contain anything an agent's
  * environment can contain, including newlines, and `LogChunk`s arrive
  * line-split — so a key=value-per-line format would silently split a

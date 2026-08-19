@@ -38,6 +38,7 @@
  * its feature's state is.
  */
 import { TERMINAL_STATES } from '@adl/core/state';
+import { destroyScratchHome, listScratchHomes } from '../exec/scratch-home.js';
 import {
   branchNameFor,
   destroyWorktree,
@@ -134,6 +135,169 @@ export async function sweepOrphans(deps: GcDeps): Promise<readonly string[]> {
       removed.push(featureId);
     } catch (error) {
       deps.onFailure?.({ featureId, worktreePath: entry.path, error });
+    }
+  }
+
+  return removed;
+}
+
+// ===========================================================================
+// The second half of the backstop: scratch HOMEs (WR-06)
+// ===========================================================================
+
+/** One scratch home the sweep looked at and did not collect. */
+export interface ScratchHomeSweepFailure {
+  readonly path: string;
+  /** Why, in an operator's words. Never a value from a child's environment. */
+  readonly reason: string;
+  /** Present when a thrown error was the cause. */
+  readonly error?: unknown;
+}
+
+/**
+ * Everything {@link sweepScratchHomes} needs. Note what is absent, again: a
+ * clock.
+ */
+export interface ScratchHomeGcDeps {
+  /**
+   * Whether the process that created a home is still running.
+   *
+   * Injectable because the alternative — a test that forks a real process and
+   * kills it — measures the operating system rather than this policy, and
+   * because a pid probe is the one thing here that cannot be staged
+   * deterministically. The default is
+   * {@link processIsAlive}.
+   */
+  readonly isProcessAlive?: (pid: number) => boolean;
+  /**
+   * Called once per home the sweep did not collect, for a reason worth saying.
+   *
+   * The same contract `GcDeps.onFailure` has and for the same reason: a sweep
+   * that throws is a sweep that stops, and a sweep that swallows is a leak
+   * nobody can see. A skipped-because-live home is NOT reported here — that is
+   * the sweep working, not failing.
+   */
+  readonly onFailure?: (failure: ScratchHomeSweepFailure) => void;
+}
+
+/**
+ * Is there a process with this pid?
+ *
+ * `process.kill(pid, 0)` performs the permission and existence checks and
+ * delivers nothing. Three outcomes, and the mapping of the third is the
+ * load-bearing one:
+ *
+ * - it returns          → the process exists and is ours   → **alive**
+ * - `ESRCH`             → no such process                  → **dead**
+ * - `EPERM`             → it exists, and belongs to someone else → **alive**
+ *
+ * Treating `EPERM` as alive is the fail-safe direction, and so is the residual
+ * risk of pid reuse: a recycled pid makes a genuinely orphaned home look live,
+ * which leaks a directory. The opposite error — a live home judged dead — would
+ * delete a running agent's `HOME` mid-round, and it cannot happen, because a
+ * live process's pid is never absent from the process table.
+ */
+export function processIsAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code: unknown }).code)
+        : undefined;
+    return code !== 'ESRCH';
+  }
+}
+
+/**
+ * Collect every scratch `HOME` whose creating process is gone.
+ *
+ * Returns the paths actually removed.
+ *
+ * **Why this exists at all.** `Workspace.destroy()` was the only thing that ever
+ * removed a scratch `HOME`, so a worker that died between `createScratchHome()`
+ * and `destroy()` — the precise crash D-15 says the backstop exists for — leaked
+ * one permanently. `sweepOrphans` could not help: it iterates
+ * `listManagedWorktrees`, and a scratch home has no worktree entry to iterate.
+ * On a long-running daemon that accumulates without bound, and on Linux each
+ * leaked directory is group-owned by the shared worker group, so its contents —
+ * a `.gitconfig` credential helper, an `.npmrc` token, an agent CLI's session
+ * file — outlive the run that wrote them, which is the one thing D-07 promises
+ * cannot happen.
+ *
+ * **Why the signal is process liveness and not age.** Same shape as D-16: a
+ * clock cannot tell a slow feature from an abandoned one, and a wrong collection
+ * here deletes the `HOME` of a *running* agent mid-round. "The process that
+ * created this is no longer in the process table" is not an approximation of
+ * that question, it is the question. See {@link processIsAlive} for which way
+ * each ambiguous answer is resolved.
+ *
+ * **A home with no owner marker is left alone**, and is reported. It was created
+ * by an older ADL, or by a failed marker write, or by something that is not ADL;
+ * "I do not know who owns this" is not grounds for deleting it. That is the
+ * opposite of `sweepOrphans`' treatment of an unknown *feature*, deliberately:
+ * there, the absence of a database row proves nothing is coming back for the
+ * worktree; here, absence proves nothing at all.
+ *
+ * **Failures are reported, never thrown**, and the pass continues past them —
+ * `GcDeps.onFailure`'s contract, for `GcDeps.onFailure`'s reason (T-2-13).
+ */
+export async function sweepScratchHomes(
+  deps: ScratchHomeGcDeps = {},
+): Promise<readonly string[]> {
+  const alive = deps.isProcessAlive ?? processIsAlive;
+  const removed: string[] = [];
+
+  let inventory;
+  try {
+    inventory = await listScratchHomes();
+  } catch (error) {
+    // The inventory itself failing is one event, not one per home, and it must
+    // not throw out of a scheduled backstop.
+    deps.onFailure?.({
+      path: 'the scratch-home root',
+      reason: 'the scratch-home inventory could not be read',
+      error,
+    });
+    return removed;
+  }
+
+  for (const entry of inventory) {
+    try {
+      if (entry.owner === undefined) {
+        deps.onFailure?.({
+          path: entry.path,
+          reason:
+            'no readable owner marker beside this home, so there is nothing to prove it is collectable; left alone deliberately',
+        });
+        continue;
+      }
+
+      // Live — leave it completely alone. This is the branch that spares every
+      // running feature, including this process's own homes.
+      if (alive(entry.owner.pid)) continue;
+
+      // destroyScratchHome, not a local `rm`: the retry loop, the
+      // already-absent semantics and the never-throws contract are properties
+      // of that function, and a second implementation is how one of them gets
+      // forgotten.
+      const teardown = await destroyScratchHome(entry.path);
+      if (teardown.outcome === 'not-removed') {
+        deps.onFailure?.({ path: entry.path, reason: teardown.reason });
+        continue;
+      }
+      // `already-absent` counts as collected: a concurrent sweep or a late
+      // `destroy()` got there first, and reporting that as a failure would make
+      // overlapping passes look broken.
+      removed.push(entry.path);
+    } catch (error) {
+      deps.onFailure?.({
+        path: entry.path,
+        reason: 'the sweep could not decide or collect this home',
+        error,
+      });
     }
   }
 

@@ -8,7 +8,7 @@
  * spec loaders take file *contents* rather than a path (`eslint.config.js`
  * line 45).
  */
-import { simpleGit } from 'simple-git';
+import { adlGit } from '../git/adl-git.js';
 import { featureIdFromBranch } from './lifecycle.js';
 
 /**
@@ -112,11 +112,16 @@ export function parseWorktreeList(
  * not sorted, not deduplicated, not reordered to put `prunable` entries first.
  * The sweep iterates this list, and a caller comparing two inventories to see
  * what changed needs the comparison to be stable rather than incidentally so.
+ *
+ * The invocation goes through {@link adlGit} rather than a `simpleGit` handle,
+ * and that is 02-REVIEW.md CR-01 being closed rather than a refactor: this
+ * command reads `<mainRepo>/.git/config`, which is the file an agent inside a
+ * linked worktree is able to write, and the sweep runs it on a schedule.
  */
 export async function listManagedWorktrees(
   mainRepo: string,
 ): Promise<readonly WorktreeEntry[]> {
-  const porcelainZ = await simpleGit(mainRepo).raw([
+  const porcelainZ = await adlGit(mainRepo).rawOk([
     'worktree',
     'list',
     '--porcelain',

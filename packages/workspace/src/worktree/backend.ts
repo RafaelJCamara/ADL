@@ -21,8 +21,8 @@ import type {
   Workspace,
   WorkspaceSpec,
 } from '@adl/core/stage';
-import { simpleGit } from 'simple-git';
 import { WorkspaceError } from '../errors.js';
+import { adlGit } from '../git/adl-git.js';
 import {
   applyWorkerAccess,
   privilegeLauncher,
@@ -32,7 +32,7 @@ import {
 } from '../exec/privilege.js';
 import { run } from '../exec/run.js';
 import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
-import { assertWithinRoot } from '../paths.js';
+import { assertCwdWithinRoot, assertWithinRoot } from '../paths.js';
 import { report, reportScratchHomeTeardown } from '../teardown.js';
 import { createWorktree, destroyWorktree } from './lifecycle.js';
 
@@ -58,6 +58,27 @@ function codeOf(error: unknown): string | undefined {
  * `adl/<featureId>` branches to both the GC sweep and a human.
  */
 const SNAPSHOT_REF_PREFIX = 'refs/adl-snapshots/';
+
+/**
+ * Makes each anchoring ref unique per **capture** rather than per **content**
+ * (WR-09).
+ *
+ * The ref used to be `refs/adl-snapshots/<featureId>/<sha>`, and two snapshots
+ * of an unchanged worktree produce the same sha — a clean tree twice, or two
+ * `stash create`s over the same tree and parent. The two handles then shared one
+ * ref: `release()` on the first deleted it while the second still believed it
+ * was anchored, and that second handle's `released` flag was `false`, so
+ * `restore()` would go looking for an object that was now unreachable and one
+ * `git gc` away from gone. {@link SNAPSHOT_REF_PREFIX}'s own docblock says the
+ * anchoring is the whole point.
+ *
+ * A process-local counter rather than a timestamp, and rather than `ulid` which
+ * this package does not depend on: two captures within the same millisecond are
+ * exactly the case that has to be distinguished, so a clock is the one source
+ * that cannot be used. The sha stays the handle's `id` for the audit trail — it
+ * is what a human recognises — and only the ref carries the counter.
+ */
+let nextSnapshotSeq = 0;
 
 /** What a daemon may configure about this backend beyond the spec. */
 export interface WorktreeWorkspaceOptions {
@@ -147,10 +168,17 @@ export async function worktreeWorkspace(
     root: worktreePath,
     scratchHome: scratchHome.path,
 
-    exec(
+    async exec(
       execSpec: ExecSpec,
       log: (chunk: LogChunk) => void,
     ): Promise<ExecResult> {
+      // The same D-02 rule `read` and `write` are held to, applied to the one
+      // interface method that did not have it (WR-01). It runs FIRST and
+      // unconditionally: a refused cwd must not reach the process table, and a
+      // guard that ran after the spawn would be describing a child that already
+      // exists.
+      await assertCwdWithinRoot(worktreePath, execSpec.cwd);
+
       // The instance's scratch home, always, as the second argument. The backend
       // never assembles an environment itself — the runner owns that, and is the
       // only caller of the builder, so the boundary has exactly one door.
@@ -233,9 +261,15 @@ export async function worktreeWorkspace(
      *   primitive this backend deliberately does not hold.
      */
     async snapshot(): Promise<RestoreHandle> {
-      const git = simpleGit(worktreePath);
+      // Through the ADL git chokepoint, never a bare `simpleGit` handle. This
+      // one ran INSIDE the agent's own worktree with no configuration
+      // neutralisation and the daemon's whole environment, which is
+      // 02-REVIEW.md CR-01's first bullet and CR-02's payload: a poisoned
+      // `core.fsmonitor` fires on every index refresh, and `status`,
+      // `stash create` and `checkout` all refresh the index.
+      const git = adlGit(worktreePath);
 
-      const untracked = (await git.raw(['status', '--porcelain']))
+      const untracked = (await git.rawOk(['status', '--porcelain']))
         .split('\n')
         .filter((line) => line.startsWith('??'))
         .map((line) => line.slice(3).trim());
@@ -247,16 +281,26 @@ export async function worktreeWorkspace(
         );
       }
 
-      const created = (await git.raw(['stash', 'create'])).trim();
+      const created = (await git.rawOk(['stash', 'create'])).trim();
       const sha =
         created === ''
-          ? (await git.raw(['rev-parse', 'HEAD'])).trim()
+          ? (
+              await git.rawOk([
+                'rev-parse',
+                '--verify',
+                '--end-of-options',
+                'HEAD',
+              ])
+            ).trim()
           : created;
 
       // Anchor the object before handing out the handle. See
-      // SNAPSHOT_REF_PREFIX for why a dangling commit is not good enough.
-      const ref = `${SNAPSHOT_REF_PREFIX}${spec.featureId}/${sha}`;
-      await git.raw(['update-ref', ref, sha]);
+      // SNAPSHOT_REF_PREFIX for why a dangling commit is not good enough, and
+      // `nextSnapshotSeq` for why the ref is unique per capture rather than per
+      // content (WR-09).
+      nextSnapshotSeq += 1;
+      const ref = `${SNAPSHOT_REF_PREFIX}${spec.featureId}/${sha}-${String(nextSnapshotSeq)}`;
+      await git.rawOk(['update-ref', ref, sha]);
 
       let released = false;
 
@@ -275,7 +319,7 @@ export async function worktreeWorkspace(
           // precisely the situation a restore exists for. Checking the tree out
           // by path overwrites unconditionally, which is what "return to the
           // captured state" means.
-          await git.raw(['checkout', sha, '--', '.']);
+          await git.rawOk(['checkout', sha, '--', '.']);
         },
 
         async release(): Promise<void> {
@@ -283,7 +327,7 @@ export async function worktreeWorkspace(
           // again on a cleanup path is doing nothing wrong.
           if (released) return;
           released = true;
-          await git.raw(['update-ref', '-d', ref]);
+          await git.rawOk(['update-ref', '-d', ref]);
         },
       };
     },
@@ -311,18 +355,29 @@ export async function worktreeWorkspace(
      * receives one entry per resource. Plan `02-05` left this open: teardown
      * knew whether the scratch home survived and nothing carried the answer out,
      * so a leaked directory was invisible to the operator paying for it.
+     *
+     * **And what was reported is true of the resource it names.** This method
+     * reported `reclaimed` unconditionally until WR-04, because
+     * `destroyWorktree` returned `void` and swallowed both of its "already
+     * gone" paths — so a second `destroy()`, which `workspace.ts` documents as
+     * "what an idempotent second teardown looks like", told the operator it had
+     * just reclaimed a worktree that had not existed since the first call.
      */
     async destroy(): Promise<void> {
       // Worktree first, then the scratch home: the worktree teardown is the step
       // that can fail loudly and is worth surfacing, and leaving a temp
       // directory behind is the cheaper of the two leaks.
-      await destroyWorktree(spec.mainRepo, worktreePath, branch);
-      // Only reachable when the two-step teardown did not throw, so `reclaimed`
+      const worktree = await destroyWorktree(
+        spec.mainRepo,
+        worktreePath,
+        branch,
+      );
+      // Only reachable when the two-step teardown did not throw, so the outcome
       // is a statement about both the worktree and its branch.
       report(spec.onTeardown, {
         workspaceId: spec.featureId,
         resource: 'worktree',
-        outcome: 'reclaimed',
+        outcome: worktree === 'removed' ? 'reclaimed' : 'already-absent',
       });
 
       reportScratchHomeTeardown(
