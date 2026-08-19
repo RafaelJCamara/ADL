@@ -140,33 +140,49 @@ function importStatements(source: string): readonly string[] {
 }
 
 /**
- * Every extension a TypeScript module under `src/` may carry.
+ * Every extension a module under `src/` may carry.
  *
  * This walker filtered on `entry.name.endsWith('.ts')` and therefore could not
  * see a `.mts`, `.cts` or `.tsx` module — the same blind spot 02-VERIFICATION.md
  * demonstrated in `eslint.config.js`'s `files: ['**\/*.ts']`, arriving in the
- * belt-and-braces guard that exists BECAUSE the lint rule can be edited. Both
- * source-tree assertions below run off this function: the registry's
- * sole-construction-site rule and the `simple-git` scan added for CR-01. A
- * single `.mts` under `src/` would have been invisible to the lint rule and to
- * its backstop simultaneously, which is the one combination that leaves no
- * evidence at all.
+ * belt-and-braces guard that exists BECAUSE the lint rule can be edited. All
+ * three source-tree assertions below run off this function: the registry's
+ * sole-construction-site rule, the `simple-git` scan added for CR-01, and the
+ * `assertCwdWithinRoot` call-site pin added for WR-01. A single `.mts` under
+ * `src/` would have been invisible to the lint rule and to its backstop
+ * simultaneously, which is the one combination that leaves no evidence at all.
+ *
+ * ── Why `.js`, `.mjs` and `.cjs` are here too ─────────────────────────────
+ *
+ * That sentence is the whole argument, and it does not stop at TypeScript. Once
+ * `eslint.config.js`'s `MODULE_SOURCE_EXTENSIONS` reached the JavaScript
+ * spellings, a walker that did not would have recreated the identical hole one
+ * layer down: the lint rule catches a `.mjs` under `src/` naming `simpleGit`,
+ * but the guard whose entire purpose is to survive an EDIT to that lint rule
+ * would not. "Somebody widens a glob wrongly" plus "a `.mjs` exists" is exactly
+ * the combination this backstop is for, and a TypeScript-only walker is blind to
+ * precisely that pair.
+ *
+ * The cost is bounded and worth naming: `src/` contains only `.ts` today, so the
+ * widening changes nothing about what is scanned right now. It changes what
+ * happens the first time it would matter, which is the only moment a backstop
+ * is ever worth anything.
  *
  * `.d.ts` matches too, via the `ts` alternative. That is correct rather than
  * incidental: a declaration file naming a backend factory is still a second
  * construction site as far as an importing module is concerned.
  */
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/;
+const MODULE_SOURCE = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
 
-async function typescriptSources(dir: string): Promise<readonly string[]> {
+async function moduleSources(dir: string): Promise<readonly string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
 
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      found.push(...(await typescriptSources(full)));
-    } else if (TYPESCRIPT_SOURCE.test(entry.name)) {
+      found.push(...(await moduleSources(full)));
+    } else if (MODULE_SOURCE.test(entry.name)) {
       found.push(full);
     }
   }
@@ -174,19 +190,21 @@ async function typescriptSources(dir: string): Promise<readonly string[]> {
   return found;
 }
 
-describe('the source walker sees every spelling of a TypeScript module', () => {
-  it('finds .ts, .tsx, .mts and .cts, and nothing else', async () => {
+describe('the source walker sees every spelling of a module', () => {
+  it('finds .ts, .tsx, .mts, .cts, .js, .mjs and .cjs, and nothing else', async () => {
     // Exercised against a fixture directory rather than against `src/`, because
     // `src/` contains only `.ts` today — which is exactly why the blind spot
     // survived review. A guard over the real tree would be green whether the
-    // walker looked at four extensions or one, and would go on being green
+    // walker looked at seven extensions or one, and would go on being green
     // right up until the first `.mts` landed and slipped past both this file's
     // assertions at once.
     //
-    // The negative half matters as much as the positive: `notes.md` and
-    // `stale.tsx.bak` must NOT be read, or the `simple-git` scan below would
-    // start reporting on documentation and backup files and a contributor would
-    // learn to ignore it.
+    // The negative half matters as much as the positive: `notes.md`,
+    // `stale.tsx.bak` and `stale.mjs.bak` must NOT be read, or the `simple-git`
+    // scan below would start reporting on documentation and backup files and a
+    // contributor would learn to ignore it. Note `script.js` moved from the
+    // negative set to the positive one when the walker widened — deliberately,
+    // and it is the single line in this test that records the Warning B change.
     const dir = await mkdtemp(join(tmpdir(), 'adl-walker-'));
     try {
       const planted = [
@@ -196,26 +214,34 @@ describe('the source walker sees every spelling of a TypeScript module', () => {
         'cjs.cts',
         'types.d.ts',
         'script.js',
+        'esm.mjs',
+        'commonjs.cjs',
         'notes.md',
         'stale.tsx.bak',
+        'stale.mjs.bak',
       ];
       for (const name of planted) {
         await writeFile(join(dir, name), '', 'utf8');
       }
       await mkdir(join(dir, 'nested'));
       await writeFile(join(dir, 'nested', 'deep.mts'), '', 'utf8');
+      await writeFile(join(dir, 'nested', 'deep.cjs'), '', 'utf8');
 
-      const found = (await typescriptSources(dir))
+      const found = (await moduleSources(dir))
         .map((file) => relative(dir, file).replaceAll('\\', '/'))
         .sort();
 
       expect(found).toEqual(
         [
           'cjs.cts',
+          'commonjs.cjs',
           'component.tsx',
+          'esm.mjs',
           'esm.mts',
           'module.ts',
+          'nested/deep.cjs',
           'nested/deep.mts',
+          'script.js',
           'types.d.ts',
         ].sort(),
       );
@@ -227,7 +253,7 @@ describe('the source walker sees every spelling of a TypeScript module', () => {
 
 describe('the registry is the only place a backend is named', () => {
   it('finds no module outside registry.ts importing a backend factory', async () => {
-    const files = await typescriptSources(SRC_ROOT);
+    const files = await moduleSources(SRC_ROOT);
     expect(files.length).toBeGreaterThan(5);
 
     const offenders: string[] = [];
@@ -303,7 +329,7 @@ const SOLE_GIT_CHOKEPOINT = 'git/adl-git.ts';
 
 describe('no module under src/ reaches git through simple-git', () => {
   it('finds no source file naming simple-git or simpleGit', async () => {
-    const files = await typescriptSources(SRC_ROOT);
+    const files = await moduleSources(SRC_ROOT);
     expect(files.length).toBeGreaterThan(5);
 
     const offenders: string[] = [];
@@ -357,7 +383,7 @@ describe('no module under src/ reaches git through simple-git', () => {
     // one. It is the same shape as the `adlGit` call-site pin above and exists
     // for the same reason: the three unguarded `simpleGit` handles CR-01 removed
     // came to exist unnoticed, one call site at a time.
-    const files = await typescriptSources(SRC_ROOT);
+    const files = await moduleSources(SRC_ROOT);
     const callers: string[] = [];
 
     for (const file of files) {
@@ -408,7 +434,7 @@ describe('no module under src/ reaches git through simple-git', () => {
   });
 
   it('names every module that runs git for ADL, so a new one is a visible diff', async () => {
-    const files = await typescriptSources(SRC_ROOT);
+    const files = await moduleSources(SRC_ROOT);
     const reaching: string[] = [];
 
     for (const file of files) {

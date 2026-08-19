@@ -110,19 +110,62 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-syntax',
     mentions: 'execa',
   },
+  // ── And the three rows below watch the OTHER half of the glob ─────────────
+  //
+  // Closing `.mts`/`.cts`/`.tsx` left an exactly analogous gap behind, which
+  // 02-VERIFICATION.md recorded as a warning rather than a failure:
+  // `packages/db/src/probe.mjs` importing `execa` reported ZERO architecture
+  // errors at `84d1d16`. The reasoning for not scoring it was sound (nothing
+  // compiles a `.mjs`, and the scope was at least NAMED this time) but it rests
+  // on which files happen to exist, and the constant's own docblock says a
+  // build property that holds by file-naming coincidence is a review property
+  // wearing the rule's clothes. One fixture per JavaScript extension and one
+  // per import form, so a fix that widened the static-import layer and forgot
+  // the syntax layer is still red.
+  {
+    file: 'test/lint/fixtures/spawn-esm-javascript.mjs',
+    ruleId: 'no-restricted-imports',
+    mentions: 'execa',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-cjs-javascript.cjs',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'node:child_process',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-dynamic-javascript.js',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'execa',
+  },
 ];
 
 /**
- * Every extension a TypeScript module here may carry, restated as a literal.
+ * Every extension a module here may carry, restated as a literal.
  *
- * Deliberately NOT imported from `eslint.config.js`'s `TS_SOURCE_EXTENSIONS`,
- * for the reason {@link anchoredPattern} already gives below: these assertions
- * have to be able to DISAGREE with the config. Driving them off the config's own
- * tuple would mean that deleting `mts` from it deleted the assertion that would
- * have caught the deletion — which is the exact shape of the defect being fixed,
- * a guard that is green because it stopped looking.
+ * Deliberately NOT imported from `eslint.config.js`'s
+ * `MODULE_SOURCE_EXTENSIONS`, for the reason {@link anchoredPattern} already
+ * gives below: these assertions have to be able to DISAGREE with the config.
+ * Driving them off the config's own tuple would mean that deleting `mts` from it
+ * deleted the assertion that would have caught the deletion — which is the exact
+ * shape of the defect being fixed, a guard that is green because it stopped
+ * looking.
+ *
+ * The four TypeScript spellings come first and the three JavaScript ones after,
+ * matching the two halves the config names separately. They are one list here
+ * because the property under test is identical for all seven: a process reaching
+ * the OS process table is not made safer by the extension of the file that
+ * started it, so a boundary that reaches six of these and not the seventh is a
+ * boundary a file rename walks through.
  */
-const TYPESCRIPT_EXTENSIONS = ['ts', 'tsx', 'mts', 'cts'] as const;
+const MODULE_EXTENSIONS = [
+  'ts',
+  'tsx',
+  'mts',
+  'cts',
+  'js',
+  'mjs',
+  'cjs',
+] as const;
 
 /**
  * `ignore: false` is what lets these runs see the fixtures at all.
@@ -232,8 +275,44 @@ const NON_EXEMPT_SOURCE = 'packages/db/src/index.ts';
 const EXEMPT_SOURCE = 'packages/workspace/src/exec/run.ts';
 /** Inside the exemption's one carve-out — workspace SOURCE, not workspace tests. */
 const WORKSPACE_SRC_SOURCE = 'packages/workspace/src/worktree/lifecycle.ts';
-/** Inside the exemption and outside the carve-out. The control's own home. */
+
+/**
+ * Inside the exemption and outside the carve-out — and therefore the ONLY path
+ * at which the exemption is observable in a resolved config.
+ *
+ * ── Why the exemption cannot be measured under `src/` ─────────────────────
+ *
+ * `adl/no-simple-git-in-workspace-src` is registered AFTER `adl/no-direct-spawn`
+ * and configures the same two rule ids for `packages/workspace/src/**`. Flat
+ * config REPLACES rather than merges (02-RESEARCH.md § Pitfall 1), so every path
+ * under `src/` resolves the carve-out's options — `paths: [simple-git]` — no
+ * matter what the entry above it decided. Removing the exemption entirely does
+ * not change one byte of the resolved config for `src/exec/run.ts`: the ban is
+ * applied and then immediately overwritten.
+ *
+ * 02-VERIFICATION.md § Mutation Testing found this the way it has to be found —
+ * by breaking the config and watching nothing happen. Narrowing
+ * `WORKSPACE_EXEMPTION` back to `['packages/workspace/**\/*.ts']` while leaving
+ * the ban wide left the whole root suite at 40 passed, because the two
+ * assertions that claimed to watch the exemption both measured at
+ * `src/exec/run.{ext}`. Probing under that same mutation showed where the real
+ * breakage lands: `packages/workspace/src/exec/probe-run.mts` came back CLEAN
+ * (masked by the carve-out) while `packages/workspace/test/tmpprobe/probe.mts`
+ * picked up the full ban — a lint error on a file the exemption is supposed to
+ * cover.
+ *
+ * So the measurement lives here. The `src/` assertions are kept below because
+ * they state something true and worth stating, but each one now carries a note
+ * saying it cannot fail alone, and is paired with an assertion from this path
+ * that can. An assertion whose green is unconditional is worse than no
+ * assertion: it occupies the slot a real guard would have taken.
+ */
 const WORKSPACE_TEST_SOURCE = 'packages/workspace/test/helpers/temp-repo.ts';
+
+/** The same path, in an arbitrary spelling, for the per-extension cases. */
+function exemptionMeasurementPoint(extension: string): string {
+  return `packages/workspace/test/helpers/temp-repo.${extension}`;
+}
 /** Matched by BOTH the core entry and the verdict entry — the merge target. */
 const DOUBLY_MATCHED_SOURCE = 'packages/core/src/verdict/verdict.ts';
 
@@ -444,10 +523,29 @@ describe('the spawn boundary (WORK-02)', () => {
     const exempt = await realConfigLinter().calculateConfigForFile(
       absolute(EXEMPT_SOURCE),
     );
+    // TRUE, but it CANNOT FAIL on its own — see WORKSPACE_TEST_SOURCE's docblock.
+    // The src carve-out overwrites this rule for every path under src/, so this
+    // line reads the carve-out's options whether the exemption exists or not.
+    // Kept because it states the property the exemption is FOR; the assertion
+    // immediately below is the one that goes red when the exemption is narrowed.
     expect(
       restrictedPathNames(exempt.rules ?? {}),
       `${EXEMPT_SOURCE} is inside the one exemption and must be free to launch processes`,
     ).not.toContain('execa');
+
+    const observable = await realConfigLinter().calculateConfigForFile(
+      absolute(WORKSPACE_TEST_SOURCE),
+    );
+    expect(
+      restrictedPathNames(observable.rules ?? {}),
+      `${WORKSPACE_TEST_SOURCE} is inside the one exemption and outside the src carve-out, so the spawn ban must not reach it — this is the only path at which narrowing WORKSPACE_EXEMPTION is visible at all`,
+    ).not.toContain('execa');
+    expect(
+      syntaxSelectors(observable.rules ?? {}).filter((selector) =>
+        selector.includes(anchoredPattern('execa')),
+      ),
+      `${WORKSPACE_TEST_SOURCE} resolves a require()/import() selector for execa, so the exemption covers the static-import layer but not the syntax layer — the package's own suite could not exercise the exec path through a dynamic import`,
+    ).toHaveLength(0);
 
     const governed = await realConfigLinter().calculateConfigForFile(
       absolute(NON_EXEMPT_SOURCE),
@@ -458,10 +556,11 @@ describe('the spawn boundary (WORK-02)', () => {
     ).toContain('execa');
   });
 
-  it.each(TYPESCRIPT_EXTENSIONS)(
-    'reaches .%s files, so the ban is not scoped to one spelling of TypeScript',
+  it.each(MODULE_EXTENSIONS)(
+    'reaches .%s files, so the ban is not scoped to one spelling of a module',
     async (extension) => {
-      // 02-VERIFICATION.md's one gap, as a resolved-config assertion.
+      // 02-VERIFICATION.md's one gap and its follow-on warning, as one
+      // resolved-config assertion per extension.
       //
       // `files: ['**/*.ts']` matches the extension EXACTLY — `.mts`, `.cts` and
       // `.tsx` are outside it — so the repository's headline enforcement
@@ -470,6 +569,12 @@ describe('the spawn boundary (WORK-02)', () => {
       // contains only `.ts` today. That is what made it worth fixing rather than
       // noting: the control was green for a reason that does not generalise, and
       // the first `.mts` anybody adds would have left the boundary silently.
+      //
+      // The same sentence held for `.js`/`.mjs`/`.cjs` after that fix, which is
+      // why they are in this list too. The re-verification pass demonstrated
+      // `packages/db/src/probe.mjs` importing `execa` reporting zero
+      // architecture errors, and declined to score it only because the scope was
+      // by then explicit. Explicit and wrong is still wrong.
       //
       // Asserted from BOTH sides for each extension, because "the ban reaches
       // .mts" and "the exemption reaches .mts" are independent and a fix that
@@ -498,16 +603,45 @@ describe('the spawn boundary (WORK-02)', () => {
         `packages/db/src/index.${extension} resolves no require()/import() selector for execa, so the ban is bypassable on this extension by changing the import form (02-RESEARCH.md § Pitfall 2)`,
       ).not.toHaveLength(0);
 
+      // ── The exemption half, measured where it is observable ───────────────
+      //
+      // NOT at `packages/workspace/src/exec/run.${extension}`, which is where
+      // this assertion used to live and where it could not fail: the src
+      // carve-out replaces `no-restricted-imports` for every path under `src/`,
+      // so the resolved options are the carve-out's whether the exemption
+      // reaches this extension or not. 02-VERIFICATION.md proved it — narrowing
+      // WORKSPACE_EXEMPTION to `.ts` alone left the suite at 40 passed.
+      // See WORKSPACE_TEST_SOURCE's docblock for the full mechanism.
+      const exemptionPoint = exemptionMeasurementPoint(extension);
+      const exemptElsewhere = await realConfigLinter().calculateConfigForFile(
+        absolute(exemptionPoint),
+      );
+      expect(
+        restrictedPathNames(exemptElsewhere.rules ?? {}),
+        `the one exemption must cover .${extension} too — a ban wider than its exemption makes ${exemptionPoint} a lint error for importing the one exec primitive the package exists to own`,
+      ).not.toContain('execa');
+      expect(
+        syntaxSelectors(exemptElsewhere.rules ?? {}).filter((selector) =>
+          selector.includes(anchoredPattern('execa')),
+        ),
+        `the exemption reaches ${exemptionPoint} for static imports but not for require()/import() — the two layers are separate rules and a half-widened exemption bans the exec path in one import form only`,
+      ).toHaveLength(0);
+
       const exempt = await realConfigLinter().calculateConfigForFile(
         absolute(`packages/workspace/src/exec/run.${extension}`),
       );
+      // Retained, and true, but structurally unfailable for the reason above —
+      // it is a statement of intent about the exec primitive, not a guard. The
+      // guard is the pair of expectations directly above this one.
       expect(
         restrictedPathNames(exempt.rules ?? {}),
         `the one exemption must cover .${extension} too — a ban wider than its exemption makes the one exec primitive unwritable in that spelling`,
       ).not.toContain('execa');
 
       // And the carve-out INSIDE the exemption, which is the half a widened
-      // exemption would quietly reopen (CR-01/CR-02).
+      // exemption would quietly reopen (CR-01/CR-02). This one CAN fail: the
+      // carve-out is the entry that wins under `src/`, so narrowing its glob
+      // leaves nothing configuring `no-restricted-imports` here at all.
       expect(
         restrictedPathNames(exempt.rules ?? {}),
         `packages/workspace/src must not be free to import simple-git in a .${extension} file — the exemption exists for execa and the one exec primitive, not for a second git spawner`,
