@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: workspace-the-exec-boundary
 status: executing
-stopped_at: Phase 2 executed; one UAT item deferred to a Linux host
-last_updated: "2026-08-18T05:22:00.414Z"
+stopped_at: Phase 3 context gathered
+last_updated: "2026-08-19T11:35:59.185Z"
 last_activity: 2026-08-18
 last_activity_desc: Phase 02 execution started
 progress:
-  total_phases: 2
-  completed_phases: 1
+  total_phases: 3
+  completed_phases: 2
   total_plans: 18
-  completed_plans: 10
+  completed_plans: 18
 ---
 
 # Project State
@@ -90,9 +90,9 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-17T19:53:34.968Z
-Stopped at: Phase 2 executed; one UAT item deferred to a Linux host
-Resume file: .planning/phases/02-workspace-the-exec-boundary/02-UAT.md
+Last session: 2026-08-19T11:35:59.168Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-manager-skeleton-state-leases-api-cli/03-CONTEXT.md
 
 ## Phase 02 — why it is EXECUTED and not COMPLETE
 
@@ -119,10 +119,13 @@ manager-owned lease state makes the real fix (a uid pool) buildable, so both
 can be closed together.
 
 **Open, tracked, and deliberately not auto-closable** (no `resolves_phase:`):
+
 - `revisit-cross-feature-isolation.md` — one trust domain per daemon, accepted
   for v1 with four named revisit triggers
+
 - `reproduce-d-2-r-1-on-linux.md` — until this runs, that acceptance rests on
   argued rather than demonstrated severity
+
 - `phase-15-needs-config-neutralisation-criterion.md` — Phase 15's criteria say
   nothing about config neutralisation, so D-2-R-4 would land with no acceptance
   point
