@@ -1,7 +1,7 @@
 ---
 phase: 02-workspace-the-exec-boundary
 verified: 2026-08-18T23:15:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
@@ -11,6 +11,7 @@ re_verification:
   previous_sha: 8ccbd9a
   verified_against: 84d1d16
   gaps_closed:
+
     - >-
       SC2 enforcement (WR-11) — the spawn ban, its one exemption, the CR-01
       `simple-git` carve-out and both source-tree guards now reach
@@ -19,25 +20,30 @@ re_verification:
   gaps_remaining: []
   regressions: []
   also_closed:
+
     - >-
       WR-01 — `ExecSpec.cwd` is enforced against the workspace root in all three
       backends, with a contract case that runs once per backend and a structural
       guard that names any new `run()` caller lacking it. Mutation-proven.
+
     - >-
       WR-02 — `buildChildEnv` refuses the git-configuration / git-invoked-program
       family by case-folded PREFIX, with a positive control that goes red if the
       ban is widened to the whole `GIT_` namespace. Both halves mutation-proven.
+
     - >-
       Audit trail — WR-07, the WR-12 residual, WR-13, WR-14 and IN-01..IN-05 now
       have one entry each in `deferred-items.md` as `D-2-R-3`..`D-2-R-11`, each
       with a reproduction (or an explicit non-reproduction) and an owning phase.
       The prior pass's fourth `human_verification` item is therefore CLOSED.
   new_findings:
+
     - >-
       WARNING — the ban covers TypeScript spellings only. A `.mjs` outside
       `packages/workspace` importing `execa` still lints CLEAN (demonstrated at
       HEAD). Narrower and far more visible than the gap it replaced, but the same
       shape. Routed to human for fix-or-accept, not scored as a failure.
+
     - >-
       WARNING — the "the exemption reaches `.{ext}`" half of the new lint
       assertion cannot fail from narrowing the exemption alone:
@@ -45,6 +51,7 @@ re_verification:
       every path under `packages/workspace/src`, masking the measurement.
       Demonstrated by mutation.
 closed_gaps:
+
   - truth: "No code path anywhere launches a process except through the workspace exec path, enforced by a lint rule that fails the build on a direct spawn outside the workspace module. (ROADMAP SC2; 02-02-PLAN must_have: 'A static import of node:child_process, child_process, execa, or simple-git anywhere outside packages/workspace fails pnpm lint at severity 2')"
     status: closed
     reason: >-
@@ -57,11 +64,14 @@ closed_gaps:
       silenced the two source-tree guards in `test/contract/workspace-contract.test.ts`,
       whose `typescriptSources()` walker filtered on `entry.name.endsWith('.ts')`.
     artifacts:
+
       - path: "eslint.config.js"
         issue: "`adl/no-direct-spawn` and `adl/no-simple-git-in-workspace-src` were registered with `files: ['**/*.ts']` / `['packages/workspace/src/**/*.ts']`."
+
       - path: "packages/workspace/test/contract/workspace-contract.test.ts"
         issue: "`typescriptSources()` filtered on `.ts` only."
     missing:
+
       - "Extend the spawn-ban globs to `**/*.{ts,tsx,mts,cts}` (and the workspace-src carve-out to `packages/workspace/src/**/*.{ts,tsx,mts,cts}`). — DONE"
       - "Extend `typescriptSources()` in the contract suite to the same extension set. — DONE"
       - "Add a `.mts` deliberate-violation fixture beside the four existing `test/lint/fixtures/spawn-*.ts` fixtures. — DONE, three fixtures, one per extension and one per import form"
@@ -78,6 +88,7 @@ closed_gaps:
         is clean of architecture rules. Mutation: narrowing `adl/no-direct-spawn`
         back to `files: ['**/*.ts']` turns 3 root tests red; reverted, 40/40 restored.
 deferred:
+
   - truth: "An agent can run git inside its own worktree on a provisioned Linux deployment"
     addressed_in: "Phase 4"
     evidence: >-
@@ -87,6 +98,7 @@ deferred:
       fails no WORK-01..07 wording: WORK-01 promises the feature *gets* a worktree
       (it does, created by the daemon), not that the dropped worker can run git in it.
 human_verification:
+
   - test: >-
       Run D-2-R-1's cross-feature reproduction on the Linux CI runner: provision two
       worktrees under the scratch root for features `feat-a` and `feat-b`, then as the
@@ -102,6 +114,7 @@ human_verification:
       whole finding currently rests on code reading, which is exactly the "control
       assessed for the wrong reason" shape this phase keeps producing.
     carried_forward_from: "initial verification (unchanged)"
+
   - test: >-
       Decide whether D-2-R-1 (one worker identity for every concurrent feature, so
       feature A's agent can read and rewrite feature B's worktree and scratch HOME) is
@@ -119,6 +132,7 @@ human_verification:
       exposure and is the natural owner, but nothing in Phase 3's success criteria
       names per-feature worker identities, so it is not automatically covered.
     carried_forward_from: "initial verification (unchanged)"
+
   - test: >-
       ACCEPT OR REJECT the WR-12 residual (D-2-R-4): a committed `.gitattributes`
       selecting an attacker-named `filter.<driver>.clean` executes an arbitrary program
@@ -140,6 +154,7 @@ human_verification:
       by a PASSING test that asserts it is open, with a `git check-attr` control so it
       cannot pass vacuously.
     carried_forward_from: "initial verification (owner resolved; acceptance still open)"
+
   - test: >-
       NEW — decide whether the spawn ban should reach `.js`/`.mjs`/`.cjs`, or accept the
       TypeScript-only scope explicitly. Reproduction: write
@@ -163,6 +178,7 @@ human_verification:
       `TS_SOURCE_EXTENSIONS`' own docblock argues that "a build property that holds
       because of a file-naming coincidence is a review property wearing the rule's
       clothes" — which applies verbatim to `.mjs`.
+
   - test: >-
       NEW — decide whether to strengthen the "the one exemption must cover `.{ext}` too"
       assertion in `test/lint/no-restricted-imports.test.ts:501-507`. Reproduction:
