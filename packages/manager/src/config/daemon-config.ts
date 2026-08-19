@@ -1,7 +1,23 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DaemonConfigSchema, type DaemonConfig } from '@adl/core/config';
+
+/**
+ * Owner-only permissions for the config file and its containing directory —
+ * this file holds `api.token`, a bearer credential authenticating every
+ * control-plane route except `GET /health` (D-19). `writeFile`'s `mode`
+ * option only takes effect when the file is *created*, and is masked by the
+ * process umask either way, so the write below is followed by an explicit
+ * `chmod` — correctness here matters more than brevity, and the result must
+ * not depend on the ambient umask. Windows does not honour POSIX mode bits;
+ * `chmod`/`mkdir({mode})` are silent no-ops there rather than errors, so
+ * this is deliberately not gated by platform — the call is safe to make
+ * unconditionally, it simply has no effect on Windows (see
+ * `test/config/daemon-config.test.ts` for the platform-gated assertion).
+ */
+const OWNER_ONLY_DIR_MODE = 0o700;
+const OWNER_ONLY_FILE_MODE = 0o600;
 
 /**
  * File I/O around the extended `DaemonConfigSchema` — nothing more. The
@@ -164,8 +180,15 @@ export async function ensureDaemonConfig(
   if (first.kind !== 'not-found') return first;
 
   const seed = { api: { token: mintApiToken() } };
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(seed, null, 2)}\n`, 'utf8');
+  await mkdir(dirname(path), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+  await writeFile(path, `${JSON.stringify(seed, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: OWNER_ONLY_FILE_MODE,
+  });
+  // `mode` above only applies at file-creation time and is masked by the
+  // process umask — an explicit chmod makes the permission the actual
+  // result rather than a best-effort request (T-3-04).
+  await chmod(path, OWNER_ONLY_FILE_MODE);
 
   const second = await loadDaemonConfig(path);
   if (second.kind === 'loaded') return second;

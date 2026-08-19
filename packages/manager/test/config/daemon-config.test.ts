@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DaemonConfigSchema } from '@adl/core/config';
@@ -13,6 +13,7 @@ import {
   mintApiToken,
   resolveDaemonConfigPath,
 } from '../../src/config/daemon-config.js';
+import { posixOnly } from '../helpers/platform.js';
 
 describe('resolveDaemonConfigPath / DEFAULT_DAEMON_CONFIG_PATH', () => {
   it('defaults to .adl/daemon.json', () => {
@@ -138,6 +139,24 @@ describe('ensureDaemonConfig — zero-config first run', () => {
       second.kind === 'loaded' ? second.config.api.token : undefined;
 
     expect(secondToken).toBe(firstToken);
+  });
+
+  it('writes the config file owner-only (0o600) — it holds a bearer credential (T-3-04)', async () => {
+    const gate = posixOnly(
+      'POSIX file-mode bits have no Windows equivalent; the owner-only permission ' +
+        'guarantee is verified on POSIX only',
+      'T-3-04',
+    );
+    if (gate.kind === 'skip') return;
+
+    const path = join(dir, '.adl', 'daemon.json');
+    await ensureDaemonConfig(path);
+
+    const fileStat = await stat(path);
+    expect(fileStat.mode & 0o777).toBe(0o600);
+
+    const dirStat = await stat(join(dir, '.adl'));
+    expect(dirStat.mode & 0o777).toBe(0o700);
   });
 });
 
