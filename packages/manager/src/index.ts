@@ -119,6 +119,23 @@ export {
   type WorkerToManagerMessage,
 } from './ipc/protocol.js';
 
+// The daemon config loader (D-19, D-36 as amended by 03-04's checkpoint) —
+// file I/O around the extended `DaemonConfigSchema`, published so a CLI
+// entry point (a later plan) can call it directly.
+export {
+  DaemonConfigError,
+  DaemonConfigSchema,
+  DEFAULT_DAEMON_CONFIG_PATH,
+  ensureDaemonConfig,
+  loadDaemonConfig,
+  mintApiToken,
+  resolveDaemonConfigPath,
+  type DaemonConfigInvalid,
+  type DaemonConfigLoaded,
+  type DaemonConfigLoadResult,
+  type DaemonConfigNotFound,
+} from './config/daemon-config.js';
+
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
 // unexported from `@adl/workspace`'s barrel: it is an implementation detail
