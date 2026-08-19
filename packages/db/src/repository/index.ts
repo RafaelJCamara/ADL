@@ -37,3 +37,16 @@ export {
   type NewUsageEvent,
   type SpendByCategory,
 } from './usage.js';
+
+export {
+  reposRepository,
+  type ReposRepository,
+  type NewRepo,
+} from './repos.js';
+
+export {
+  metaRepository,
+  type MetaRepository,
+  type SchemaVersionResult,
+  SCHEMA_VERSION_KEY,
+} from './meta.js';
