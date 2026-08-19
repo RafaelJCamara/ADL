@@ -152,6 +152,18 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-imports',
     mentions: 'node:child_process',
   },
+  // ── The worker entry cannot reach the database (03-04, D-01) ──────────────
+  //
+  // The structural guarantee ("the worker's dependency graph never gets
+  // @adl/db") that used to hold by pnpm's strict node_modules alone stops
+  // holding once the worker entry lives inside @adl/manager, which depends on
+  // @adl/db for real. This fixture is the deliberate violation the new
+  // `adl/worker-entry-no-db` rule set exists to catch.
+  {
+    file: 'test/lint/fixtures/worker-entry-imports-db.ts',
+    ruleId: 'no-restricted-imports',
+    mentions: '@adl/db',
+  },
 ];
 
 /**
@@ -809,7 +821,10 @@ describe('the fork() seam does not need — and did not receive — a second exe
 
   it('exactly one flat-config entry clears the spawn rules for packages/workspace, and its glob names it', () => {
     const workspaceGlob = WORKSPACE_EXEMPTION[0];
-    expect(workspaceGlob, 'WORKSPACE_EXEMPTION must not be empty').toBeDefined();
+    expect(
+      workspaceGlob,
+      'WORKSPACE_EXEMPTION must not be empty',
+    ).toBeDefined();
     expect(workspaceGlob).toContain('packages/workspace');
 
     // Every architectureConfigs entry whose OWN `ignores` array carves
@@ -840,5 +855,43 @@ describe('the fork() seam does not need — and did not receive — a second exe
       ignores,
       'the one clearing entry must carve out WORKSPACE_EXEMPTION itself, not a differently-spelled glob that happens to also match packages/workspace',
     ).toContain(workspaceGlob);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The worker entry cannot reach the database (03-04, D-01) — scoped to
+ * worker-entry, not the whole @adl/manager package
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('the worker-entry @adl/db ban is scoped to worker-entry, not the whole package (03-04)', () => {
+  it('packages/manager/src/api/app.ts — which legitimately reaches the database layer — lints clean under the new rule', async () => {
+    const [result] = await realConfigLinter().lintFiles([
+      absolute('packages/manager/src/api/app.ts'),
+    ]);
+
+    expect(result).toBeDefined();
+    const dbMessages = (result!.messages ?? []).filter((message) =>
+      message.message.includes('@adl/db'),
+    );
+    expect(
+      dbMessages,
+      'packages/manager/src/api/app.ts must be free to import @adl/db — the D-01 ban is scoped to the worker entry, not the whole @adl/manager package',
+    ).toEqual([]);
+  });
+
+  it('the ban still resolves for a worker-entry path even though adl/no-direct-spawn also matches it (Pitfall 1)', async () => {
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute('packages/manager/src/worker-entry/index.ts'),
+    );
+    const paths = restrictedPathNames(resolved.rules ?? {});
+
+    expect(
+      paths,
+      'the worker-entry glob must resolve the @adl/db ban',
+    ).toContain('@adl/db');
+    expect(
+      paths,
+      'merging @adl/db into the worker-entry rule set must not silently drop the spawn ban it overlaps with (02-RESEARCH.md § Pitfall 1)',
+    ).toContain('execa');
   });
 });
