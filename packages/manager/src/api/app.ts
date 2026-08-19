@@ -1,0 +1,80 @@
+import { timingSafeEqual } from 'node:crypto';
+import { Hono } from 'hono';
+import { registerFeaturesRoute, type FeatureView } from './routes/features.js';
+import { registerHealthRoute } from './routes/health.js';
+
+/**
+ * The Hono app: bearer middleware per Task 1's checkpoint decision
+ * (option-b — daemon-generated token in the config file, `GET /health`
+ * unauthenticated), then `GET /health` and `GET /features` only. The rest of
+ * D-20's surface (`/features/:id`, `POST .../pause|kill`, `/control/*`)
+ * arrives in a later plan.
+ *
+ * Token comparison is `crypto.timingSafeEqual`, never `===` — ASVS V2, and
+ * not left to Task 1's decision; it applies to every option that was on the
+ * table.
+ */
+
+/**
+ * Every path this API accepts without the bearer token.
+ *
+ * Exactly one entry, and a test asserts that count directly: one exception
+ * in the auth rule is one thing a future contributor can widen, per Task 1's
+ * option-b trade-off.
+ */
+export const UNAUTHENTICATED_PATHS: readonly string[] = Object.freeze([
+  '/health',
+]);
+
+const BEARER_PREFIX = 'Bearer ';
+
+/**
+ * Constant-time comparison of the presented token against the configured
+ * one. Buffers of unequal length are compared against a same-length decoy
+ * first, so the branch a mismatched length takes is not itself a timing
+ * signal about how close the length was.
+ */
+function timingSafeTokenEqual(presented: string, expected: string): boolean {
+  const presentedBuf = Buffer.from(presented);
+  const expectedBuf = Buffer.from(expected);
+  if (presentedBuf.length !== expectedBuf.length) {
+    timingSafeEqual(presentedBuf, presentedBuf);
+    return false;
+  }
+  return timingSafeEqual(presentedBuf, expectedBuf);
+}
+
+export interface ApiDeps {
+  readonly apiToken: string;
+  readonly schemaVersion: number;
+  readonly listFeatureViews: () => Promise<readonly FeatureView[]>;
+}
+
+export function createApi(deps: ApiDeps): Hono {
+  const app = new Hono();
+
+  app.use('*', async (c, next) => {
+    if (UNAUTHENTICATED_PATHS.includes(c.req.path)) {
+      await next();
+      return;
+    }
+    const header = c.req.header('Authorization');
+    const presented = header?.startsWith(BEARER_PREFIX)
+      ? header.slice(BEARER_PREFIX.length)
+      : undefined;
+    if (
+      presented === undefined ||
+      !timingSafeTokenEqual(presented, deps.apiToken)
+    ) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    await next();
+  });
+
+  registerHealthRoute(app, { schemaVersion: deps.schemaVersion });
+  registerFeaturesRoute(app, { listFeatureViews: deps.listFeatureViews });
+
+  return app;
+}
+
+export type { FeatureView };
