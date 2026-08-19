@@ -42,6 +42,13 @@ export async function withTempDb<T>(
   } finally {
     // Destroy before removing: on Windows an open handle makes the unlink fail,
     // which would turn a passing test into a confusing teardown error.
+    //
+    // `createDb` opens every connection in WAL mode (`migrator.ts`), which
+    // leaves `-wal` and `-shm` sidecar files beside the database file while a
+    // connection is open. That does not change this ordering: `db.destroy()`
+    // closes the connection first (checkpointing and removing the sidecars in
+    // the common case), and the directory removal below deletes the whole
+    // temp directory recursively regardless of which files remain in it.
     await db.destroy();
     await rm(dir, { recursive: true, force: true });
   }

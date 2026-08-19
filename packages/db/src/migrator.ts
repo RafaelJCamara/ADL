@@ -21,6 +21,30 @@ import {
 import type { Database } from './schema.js';
 
 /**
+ * The connection pragmas every `createDb` handle opens with.
+ *
+ * The manager is the only *logical* writer, but the write lock is held for
+ * the duration of a transaction, and a reaper tick, the dispatcher, and an
+ * API-triggered read can all interleave inside that one process. `WAL`
+ * journal mode lets readers proceed against the last-committed snapshot
+ * without blocking on an open writer transaction; `busy_timeout` is headroom
+ * for the residual case where two writers really do collide — intra-process
+ * transaction interleaving, not a multi-process contention fix. Phases 1 and
+ * 2 never ran this access pattern, which is why the pragmas arrive now rather
+ * than earlier.
+ *
+ * `journal_mode` is a persistent, file-level setting — one connection setting
+ * it is enough for the file. `busy_timeout` and `synchronous` are
+ * per-connection, so every `createDb` call sets all three regardless of
+ * whether an earlier connection already has.
+ */
+export const DEFAULT_PRAGMAS = {
+  journal_mode: 'WAL',
+  busy_timeout: 2000,
+  synchronous: 'NORMAL',
+} as const;
+
+/**
  * Open a Kysely instance over a SQLite file.
  *
  * `better-sqlite3` is CJS, so it is imported as a **default** import under
@@ -34,9 +58,17 @@ import type { Database } from './schema.js';
  *   behaviour is what adopters actually get.
  */
 export function createDb(filePath: string): Kysely<Database> {
+  const database = new SqliteDatabase(filePath);
+  // Applied on the raw better-sqlite3 handle, before the Kysely instance
+  // wraps it — pragmas are connection setup, not a query the query builder
+  // should ever be asked to express.
+  database.pragma(`journal_mode = ${DEFAULT_PRAGMAS.journal_mode}`);
+  database.pragma(`busy_timeout = ${DEFAULT_PRAGMAS.busy_timeout}`);
+  database.pragma(`synchronous = ${DEFAULT_PRAGMAS.synchronous}`);
+
   return new Kysely<Database>({
     dialect: new SqliteDialect({
-      database: new SqliteDatabase(filePath),
+      database,
     }),
   });
 }

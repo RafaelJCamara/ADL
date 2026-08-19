@@ -1,4 +1,9 @@
-export { createDb, migrateToLatest, type MigrateResult } from './migrator.js';
+export {
+  createDb,
+  migrateToLatest,
+  DEFAULT_PRAGMAS,
+  type MigrateResult,
+} from './migrator.js';
 
 export { nowIso, assertIsoTimestamp, ISO_TIMESTAMP_PATTERN } from './time.js';
 
