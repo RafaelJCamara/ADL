@@ -370,6 +370,25 @@ describe('the operator-facing record of what is overridden', () => {
     // while it is discoverable, and the README table is where it is discovered.
     // Without this assertion the table drifts silently, and the acceptance
     // quietly loses the thing that justified it.
+    //
+    // ── DO NOT DELETE: this assertion is also the whole of T-2-37 ───────────
+    //
+    // It reads like a documentation-drift check and it is load-bearing for a
+    // second, HIGH threat that names no README at all. T-2-37 is "a future
+    // contributor trims the neutralisation list because seven of the eight keys
+    // look unused", and its declared mechanism is the per-key loop above —
+    // which does not work. The loop is GENERATED from `NEUTRALISED_CONFIG`, so
+    // deleting an entry deletes that entry's own assertion: the suite shrinks
+    // and stays green. Watched during 02-08 — removing `core.fsmonitor=false`
+    // took the per-key cases from 23 to 22, all passing, and turned THIS
+    // assertion red naming the missing key (02-08-SUMMARY.md).
+    //
+    // So T-2-37's mechanism is present but unfalsifiable, and the equality
+    // below is the only thing standing between a trimmed list and a green
+    // build. Deleting it as redundant reopens a high-severity threat silently,
+    // which is the failure mode the whole threat register exists to prevent.
+    // If the README section ever moves, this assertion moves with it; it does
+    // not get dropped.
     const readme = await readFile(README, 'utf8');
     const section = readme.slice(
       readme.indexOf("## What ADL's own git overrides"),

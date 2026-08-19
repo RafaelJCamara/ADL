@@ -174,14 +174,45 @@ function importStatements(source: string): readonly string[] {
  */
 const MODULE_SOURCE = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
 
-async function moduleSources(dir: string): Promise<readonly string[]> {
+/**
+ * Directory names the walker must not descend into, for the one caller that
+ * starts at the PACKAGE root rather than at `src/`.
+ *
+ * `src/` and `test/` contain nothing but hand-written source, so the three
+ * assertions that walk them pass no skip set at all and are unaffected by this.
+ * The T-2-40 scan at the bottom of this file has to start one directory higher,
+ * and `packages/workspace/node_modules/execa/` is right there — a scan that
+ * descended into it would report the exec library's own source as an offender
+ * on every machine that has run `pnpm install`, which is a guard that gets
+ * switched off within a day.
+ *
+ * Deliberately a name set rather than a path prefix: a `node_modules` nested
+ * under a future sub-package inside this one is skipped for the same reason the
+ * top-level one is, and neither has to be enumerated.
+ */
+const GENERATED_DIRECTORIES: ReadonlySet<string> = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.turbo',
+]);
+
+/** The empty default, so the three existing callers keep walking everything. */
+const DESCEND_EVERYWHERE: ReadonlySet<string> = new Set<string>();
+
+async function moduleSources(
+  dir: string,
+  skipDirectories: ReadonlySet<string> = DESCEND_EVERYWHERE,
+): Promise<readonly string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
 
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      found.push(...(await moduleSources(full)));
+      if (skipDirectories.has(entry.name)) continue;
+      found.push(...(await moduleSources(full, skipDirectories)));
     } else if (MODULE_SOURCE.test(entry.name)) {
       found.push(full);
     }
@@ -245,6 +276,39 @@ describe('the source walker sees every spelling of a module', () => {
           'types.d.ts',
         ].sort(),
       );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('descends into a generated directory unless told not to', async () => {
+    // Both halves matter, and the SECOND is the one that keeps the skip set
+    // honest. If the walker did not find `node_modules/execa/index.js` without
+    // the skip, then passing the skip would be proving nothing — and the
+    // T-2-40 scan below, which is the only caller that passes one, would be
+    // narrowing a walk that was already narrow. The first half is what makes
+    // that scan runnable at all on a machine that has installed dependencies.
+    const dir = await mkdtemp(join(tmpdir(), 'adl-walker-skip-'));
+    try {
+      await writeFile(join(dir, 'real.ts'), '', 'utf8');
+      await mkdir(join(dir, 'node_modules', 'execa'), { recursive: true });
+      await writeFile(
+        join(dir, 'node_modules', 'execa', 'index.js'),
+        '',
+        'utf8',
+      );
+
+      const names = async (skip?: ReadonlySet<string>) =>
+        (
+          await (skip === undefined
+            ? moduleSources(dir)
+            : moduleSources(dir, skip))
+        )
+          .map((file) => relative(dir, file).replaceAll('\\', '/'))
+          .sort();
+
+      expect(await names()).toEqual(['node_modules/execa/index.js', 'real.ts']);
+      expect(await names(GENERATED_DIRECTORIES)).toEqual(['real.ts']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -454,5 +518,217 @@ describe('no module under src/ reaches git through simple-git', () => {
       'worktree/lifecycle.ts',
       'worktree/list.ts',
     ]);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * And the fourth: exactly one module in this PACKAGE can launch a process
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * T-2-40, which until now had a mitigation nobody had written.
+ *
+ * The threat is "a second exec primitive is introduced, bypassing every control
+ * while every lint check passes because the bypass lives inside the exempted
+ * directory". The register's mitigation promised an assertion that the
+ * repository still has exactly one file importing the process-launch library.
+ * `02-08-SUMMARY.md` then recorded T-2-40 as mitigated on the strength of an
+ * OBSERVATION — "one file in `packages/workspace/src` imports execa" — which
+ * was true, is still true, and enforces nothing. A true sentence about today's
+ * tree is not a control over tomorrow's; the whole content of T-2-40 is that
+ * the second primitive arrives LATER and invisibly, which is exactly what
+ * already happened once as 02-REVIEW.md CR-01.
+ *
+ * ── Why none of the four existing guards catches it ────────────────────────
+ *
+ * A new `src/git/fast-git.ts` doing `import { execa } from 'execa'` passes all
+ * of them, and it is worth being precise about why, because three of the four
+ * look like they cover this:
+ *
+ * - **`adl/no-direct-spawn`** ignores `packages/workspace/**` outright. The ban
+ *   never applies inside this package, by design — this package is the
+ *   exemption.
+ * - **`adl/no-simple-git-in-workspace-src`**, the carve-out inside that
+ *   exemption, re-bans `simple-git` and NOTHING ELSE.
+ *   `test/lint/no-restricted-imports.test.ts` asserts it must not name `execa`,
+ *   and that assertion is correct: `src/exec/run.ts` lives under `src/`, so
+ *   banning the specifier there would make the one legitimate process launch a
+ *   lint error.
+ * - **The `simple-git` source scan above** matches `simple-git|simpleGit`. A
+ *   module that reaches the OS process table directly names neither.
+ * - **The `exec/run.js` importer pin above** reads like coverage of "who
+ *   reaches the exec primitive" and is not. It enumerates who imports the
+ *   sanctioned WRAPPER, and a bypass by construction does not import it. That
+ *   confusion — a contract assertion satisfied by a neighbouring resource — is
+ *   this phase's recurring defect and is the reason this block exists.
+ *
+ * ── Why this is a source scan and not a fifth lint entry ───────────────────
+ *
+ * Considered and rejected, on three grounds rather than on effort.
+ *
+ * `no-restricted-imports` cannot express "everybody in this package except
+ * `src/exec/run.ts`" in one config entry. Saying it needs a SECOND entry
+ * overlapping `packages/workspace/src/**`, and flat config REPLACES rather than
+ * merges — so that entry would silently delete the `simple-git` carve-out from
+ * every other source file while `pnpm lint` stayed green. That is not a
+ * hypothetical: `eslint.config.js`'s own `adl/no-direct-spawn` docblock records
+ * dropping a carve-out and watching the `node:fs` purity ban vanish from the
+ * verdict sources with a green build. Buying a lint layer for T-2-40 at the
+ * price of reopening CR-01 is a bad trade.
+ *
+ * Second, a lint entry scoped to `src/` would leave `test/` uncovered, and the
+ * exemption is package-WIDE — a second primitive under `test/` is exempt from
+ * every rule in the repository.
+ *
+ * Third, and the reason the trade is not close: `no-restricted-imports` sees
+ * three import forms, and this scan is a bare-identifier match over
+ * comment-stripped source. A handle built through `createRequire`, a re-export,
+ * or a computed specifier evades the rule and not the scan. So the source scan
+ * is a strict superset of what the lint entry would have caught, and it costs
+ * no config composition. `test/lint/no-restricted-imports.test.ts:695` stays
+ * exactly as it is.
+ */
+
+/** One directory up from `src/`: the exemption is package-wide, so this is too. */
+const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+
+/** The one module in this package that may hold a process-launch primitive. */
+const SOLE_EXEC_PRIMITIVE = 'src/exec/run.ts';
+
+/**
+ * This file, exempt from the bare-identifier scan only.
+ *
+ * A textual guard has to name what it forbids, so the constants below put the
+ * string in this file's CODE rather than in its prose, where `withoutComments`
+ * would have removed it. The exemption is bounded rather than a hole: the
+ * import-form assertion at the end of this block covers this file with no
+ * exemption at all, so a `workspace-contract.test.ts` that grew an actual
+ * import of a launcher is still red.
+ */
+const THIS_GUARD = 'test/contract/workspace-contract.test.ts';
+
+/**
+ * Every way this package could reach the OS process table.
+ *
+ * `execa` and both spellings of the builtin, which is
+ * `FORBIDDEN_SPAWN_SPECIFIERS` minus `simple-git` — that one already has the
+ * scan above, with a different exemption. The builtin is on this list and not
+ * only `execa` because `import { spawn } from 'node:child_process'` is the more
+ * obvious way to write a second exec primitive, and a guard covering the
+ * library while leaving the builtin open would reproduce T-2-40 one specifier
+ * over.
+ *
+ * Deliberately NOT imported from `eslint.config.js`, even though the tuple is
+ * exported there. This assertion exists because that file can be edited; a
+ * version of it that derived its subject matter from the file it is backstopping
+ * would go quiet in precisely the edit it is here to survive.
+ */
+const EXEC_PRIMITIVES = [
+  {
+    specifier: 'execa',
+    // No trailing `\b`, so `execaNode`, `execaSync` and `execaCommand` match
+    // too — the boundary that matters is the one at the START of the word.
+    mention: /\bexeca/,
+    soleNamer: SOLE_EXEC_PRIMITIVE,
+  },
+  {
+    specifier: 'child_process',
+    // Matches the `node:`-prefixed spelling as well: banning one and not the
+    // other leaves the guard bypassable by deleting five characters, which is
+    // the reasoning `FORBIDDEN_CORE_BUILTINS` already carries.
+    mention: /\bchild_process\b/,
+    // Nothing in this package may name it. `run()` uses the library.
+    soleNamer: undefined as string | undefined,
+  },
+] as const;
+
+describe('exactly one module in this package can launch a process', () => {
+  it('scans the whole package — src/, test/ and the root — not only src/', async () => {
+    // Anti-vacuity for the two assertions below, and it is the half that would
+    // have caught the original defect. A scan rooted at `src/` finds nothing
+    // under `test/`, and `test/` is inside the exemption too; a scan that
+    // silently walked an empty tree would report zero offenders forever.
+    const names = (
+      await moduleSources(PACKAGE_ROOT, GENERATED_DIRECTORIES)
+    ).map((file) => relative(PACKAGE_ROOT, file).replaceAll('\\', '/'));
+
+    expect(names.length).toBeGreaterThan(25);
+    // Root-level, so the walk demonstrably starts at the package and not at src/.
+    expect(names).toContain('vitest.config.ts');
+    expect(names).toContain(SOLE_EXEC_PRIMITIVE);
+    expect(names).toContain(THIS_GUARD);
+    // And the skip set did its job, or every install would be an offender.
+    expect(names.filter((name) => name.startsWith('node_modules/'))).toEqual(
+      [],
+    );
+  });
+
+  for (const primitive of EXEC_PRIMITIVES) {
+    it(`finds no module naming ${primitive.specifier} outside its one exemption`, async () => {
+      const files = await moduleSources(PACKAGE_ROOT, GENERATED_DIRECTORIES);
+      expect(files.length).toBeGreaterThan(25);
+
+      const offenders: string[] = [];
+
+      for (const file of files) {
+        const name = relative(PACKAGE_ROOT, file).replaceAll('\\', '/');
+        if (name === primitive.soleNamer) continue;
+        if (name === THIS_GUARD) continue;
+
+        if (
+          primitive.mention.test(withoutComments(await readFile(file, 'utf8')))
+        ) {
+          offenders.push(
+            `${name} — a second process-launch primitive inside packages/workspace (T-2-40). Every lint check in this repository passes for it: adl/no-direct-spawn ignores this package wholesale, and adl/no-simple-git-in-workspace-src re-bans simple-git ONLY. A child started here inherits none of run()'s controls — not the zero-inherit environment, not the scratch HOME, not the privilege drop, not the git-config neutralisation — and none of those bypasses is visible in a diff. Route it through run() in ${SOLE_EXEC_PRIMITIVE}.`,
+          );
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    });
+  }
+
+  it('confirms the one exemption really is still the process launch', async () => {
+    // Without this, deleting `execa` from `run.ts` — or replacing the launch
+    // with a re-export of somebody else's — would leave the assertion above
+    // green over a package that no longer has the primitive it is pinning. The
+    // same vacuity the `adlGit` and registry pairs above are each half of.
+    const source = withoutComments(
+      await readFile(join(PACKAGE_ROOT, SOLE_EXEC_PRIMITIVE), 'utf8'),
+    );
+
+    expect(source).toContain("from 'execa'");
+    expect(source, 'the exemption imports the launcher and calls it').toMatch(
+      /\bexeca\s*\(/,
+    );
+  });
+
+  it('finds no IMPORT of a launcher outside the exemption, this guard included', async () => {
+    // The narrower measurement, run with no exemption for this file. The scan
+    // above has to skip `workspace-contract.test.ts` because the constants it
+    // matches on are written here; nothing forces this file to contain an
+    // import STATEMENT naming a launcher, so nothing here is exempt from that.
+    const files = await moduleSources(PACKAGE_ROOT, GENERATED_DIRECTORIES);
+    const offenders: string[] = [];
+
+    for (const file of files) {
+      const name = relative(PACKAGE_ROOT, file).replaceAll('\\', '/');
+
+      for (const statement of importStatements(await readFile(file, 'utf8'))) {
+        for (const primitive of EXEC_PRIMITIVES) {
+          if (name === primitive.soleNamer) continue;
+          const specifier = new RegExp(
+            `['"](?:node:)?${primitive.specifier}['"]`,
+          );
+          if (specifier.test(statement)) {
+            offenders.push(
+              `${name}: ${statement.replace(/\s+/g, ' ')} — only ${SOLE_EXEC_PRIMITIVE} may import a process launcher (T-2-40)`,
+            );
+          }
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 });

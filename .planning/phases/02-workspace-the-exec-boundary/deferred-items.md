@@ -195,8 +195,26 @@ documentary: `02-07-SUMMARY.md`'s addendum tells the checkpoint reader that this
 banner is expected and that the drop evidence is `privilege.test.ts` passing 8/8
 with zero `[ADL][SKIPPED]` lines.
 
-**Status:** open. Not blocking — it is a log-clarity and evidence-attribution
-problem, not a containment one. No production deployment runs the stub backend.
+**It is also the residual of T-2-27, which is a second and heavier reason to
+own it** (added by the 02-SECURITY audit). The framing above — a log-clarity and
+evidence-attribution problem — is right for the *banner*, and it is not the
+whole of what the undropped run is. T-2-27 accepts the risk that "the stub
+backend is selected in a real deployment through a configuration mistake", and
+its original acceptance argued that the stub "is not a weaker security posture
+— only a weaker durability one". This entry is the counter-example to that
+sentence: in T-2-27's scenario the stub is running an agent's children with the
+daemon's own OS identity, against a repository whose `.git/config` the agent can
+then write. So the two items are one item seen from two directions, and the
+paragraph below must not be read as disposing of the containment half.
+
+**Status:** open. Not blocking **in v1**, and the reason is narrower than "no
+production deployment runs the stub backend" — that sentence assumes away
+exactly T-2-27's premise and should not be relied on. The accurate reason is
+that no v1 code path selects a backend at all: `workspaceRegistry().resolve()`
+has no production caller, so there is nothing yet for a configuration mistake to
+act through. That stops being true in the plan that wires daemon configuration
+to the registry, which is the same plan named above — so the fix is owed
+*before* selection exists, not after it is observed misfiring.
 
 ## D-2-08-1: under the privilege drop, the agent cannot run `git` in its own worktree
 
