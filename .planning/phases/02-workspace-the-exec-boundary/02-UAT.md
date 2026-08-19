@@ -3,7 +3,7 @@ status: testing
 phase: 02-workspace-the-exec-boundary
 source: [02-VERIFICATION.md]
 started: 2026-08-18T22:40:00Z
-updated: 2026-08-18T22:40:00Z
+updated: 2026-08-19T06:30:00Z
 ---
 
 ## Current Test
@@ -87,7 +87,19 @@ expected: |
   Not a blocker — the undetected direction is a lint FALSE POSITIVE (a loud red
   build), and the silent direction is covered. But it is this phase's signature
   defect: a control that passes for the wrong reason.
-result: [pending]
+result: [passed]
+note: |
+  FIXED in `81d2f19`. The exemption is now measured at
+  `packages/workspace/test/helpers/temp-repo.{ext}` — inside the exemption,
+  outside the `src/` carve-out, and the only path where narrowing
+  `WORKSPACE_EXEMPTION` is observable at all — for both the static-import and
+  the require()/import() layer. The identical masked measurement in
+  `exempts packages/workspace, and nothing else` was repaired the same way; both
+  `src/` assertions are KEPT, each annotated as unfailable-alone and paired with
+  one that can fail. Mutation (narrow `WORKSPACE_EXEMPTION` to `.ts`, ban left
+  wide): 40 passed before -> 3 failed after -> 40 passed on revert. Second
+  mutation (exemption emptied entirely) exposed the defect as worse than
+  reported: 1 failure before, from an unrelated control, and 6 after.
 
 ### 5. Disposition Warning B — `.mjs` still lints clean
 expected: |
@@ -104,14 +116,28 @@ expected: |
   — and that applies verbatim to `.mjs`.
 
   Decide: extend the ban to JS extensions, or record `.mjs` as accepted scope.
-result: [pending]
+result: [passed]
+note: |
+  EXTENDED in `49ff874`, per the counter-argument. `TS_SOURCE_EXTENSIONS` keeps
+  its name and docblock; a new `JS_SOURCE_EXTENSIONS` and a derived
+  `MODULE_SOURCE_EXTENSIONS` union now build every `adl/*` glob — ban,
+  exemption, CR-01 carve-out, core-purity, verdict-schema, all fixture entries,
+  and the contract walker (the per-rule reasoning is recorded on the union
+  constant; `.jsx` deliberately excluded). Three permanent fixtures added, one
+  per JS extension and one per import form. `packages/db/src/probe.mjs` — the
+  verifier's exact CLEAN reproduction — now reports at severity 2; probed in
+  both directions, `packages/workspace/src/probe.mjs` still permits `execa` and
+  still refuses `simple-git`. Mutations: ban narrowed to TS-only -> 3 failed;
+  exemption narrowed to TS-only -> 3 failed; walker narrowed with a
+  `src/leak.mjs` planted -> walker case red while the simple-git scan went green
+  over a file naming `simpleGit`.
 
 ## Summary
 
 total: 5
-passed: 0
+passed: 2
 issues: 0
-pending: 5
+pending: 3
 skipped: 0
 blocked: 0
 
@@ -119,4 +145,10 @@ blocked: 0
 
 None. All 5 must-haves verified at `84d1d16`; CI run 32184817674 green on both
 matrix legs with workspace 205 passed / 0 skipped and zero `[ADL][SKIPPED]`
-lines. Every item above is a human decision, not a missing implementation.
+lines.
+
+Items 4 and 5 were the two verifier WARNINGS. Both were routed here as
+fix-or-accept and both were FIXED rather than accepted — `81d2f19` and
+`49ff874`, each mutation-proven to fail when its property is broken. Items 1, 2
+and 3 remain human decisions (a Linux reproduction and two risk acceptances),
+not missing implementations.
