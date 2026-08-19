@@ -5,7 +5,7 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: workspace-the-exec-boundary
 status: executing
-stopped_at: Phase 2 context gathered
+stopped_at: Phase 2 executed; one UAT item deferred to a Linux host
 last_updated: "2026-08-18T05:22:00.414Z"
 last_activity: 2026-08-18
 last_activity_desc: Phase 02 execution started
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-08-17)
 
 Phase: 02 (workspace-the-exec-boundary) — EXECUTING
 Plan: 1 of 8
-Status: Executing Phase 02
+Status: Phase 02 EXECUTED — deliberately not marked complete (see below)
 Last activity: 2026-08-18 — Phase 02 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -91,5 +91,43 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-08-17T19:53:34.968Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-workspace-the-exec-boundary/02-CONTEXT.md
+Stopped at: Phase 2 executed; one UAT item deferred to a Linux host
+Resume file: .planning/phases/02-workspace-the-exec-boundary/02-UAT.md
+
+## Phase 02 — why it is EXECUTED and not COMPLETE
+
+Maintainer decision, 2026-08-19. This is a deliberate hold, not unfinished work.
+
+**Everything is done and shipped.** 8/8 plans with summaries; 5/5 must-haves
+verified; `02-VERIFICATION.md` status `passed`; `02-SECURITY.md` `threats_open: 0`
+(45/45 threats resolved); `02-UAT.md` status `complete` — 4 passed, 0 issues.
+All code is merged to `main` and CI-green on both matrix legs.
+
+**The one thing outstanding:** `02-UAT.md` test 2 — running D-2-R-1's
+cross-feature isolation reproduction on a Linux host — is SKIPPED, because it
+cannot run from the maintainer's Windows machine. GSD's phase-transition
+predicate counts a skipped UAT item as unverified, which is the correct
+conservatism: "we decided not to check" is not "we checked".
+
+Rather than force the checkbox, the phase stays `executed`. Nothing depends on
+the flag; the work is on `main`.
+
+**To close it:** run the reproduction per
+`.planning/todos/pending/reproduce-d-2-r-1-on-linux.md`, mark test 2, then
+re-run `/gsd-verify-work 2`. Phase 3 is the natural moment — it is where
+manager-owned lease state makes the real fix (a uid pool) buildable, so both
+can be closed together.
+
+**Open, tracked, and deliberately not auto-closable** (no `resolves_phase:`):
+- `revisit-cross-feature-isolation.md` — one trust domain per daemon, accepted
+  for v1 with four named revisit triggers
+- `reproduce-d-2-r-1-on-linux.md` — until this runs, that acceptance rests on
+  argued rather than demonstrated severity
+- `phase-15-needs-config-neutralisation-criterion.md` — Phase 15's criteria say
+  nothing about config neutralisation, so D-2-R-4 would land with no acceptance
+  point
+
+**Carry into Phase 3/4:** `D-2-08-1` — on a provisioned Linux deployment the
+agent cannot run git inside its own worktree (`safe.directory`, exit 128). It
+blocks nothing in WORK-01..07 but lands squarely on Phase 4's "makes a real
+commit through the workspace".
