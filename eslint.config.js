@@ -315,7 +315,15 @@ const SPAWN_SYNTAX = FORBIDDEN_SPAWN_SPECIFIERS.flatMap((specifier) => {
  * `test/lint/no-restricted-imports.test.ts` measures it. See that file's
  * `WORKSPACE_TEST_SOURCE` docblock.
  */
-const WORKSPACE_EXEMPTION = [mod('packages/workspace/**/*')];
+/**
+ * Exported (03-03) so `test/lint/no-restricted-imports.test.ts` can count the
+ * flat-config entries that clear the spawn rules by VALUE rather than by a
+ * hand-copied glob string that could silently drift from this one. ESLint
+ * itself loads only the default export at the bottom of this file, so this
+ * changes nothing about resolution — the same reasoning
+ * `FORBIDDEN_SPAWN_SPECIFIERS`'s own export comment already gives.
+ */
+export const WORKSPACE_EXEMPTION = [mod('packages/workspace/**/*')];
 
 /**
  * The exemption's one carve-out: `simple-git` is banned again inside the

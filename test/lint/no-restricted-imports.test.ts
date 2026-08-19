@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHITECTURE_RULE_IDS,
   FORBIDDEN_SPAWN_SPECIFIERS,
+  WORKSPACE_EXEMPTION,
   architectureConfigs,
   baseConfigs,
 } from '../../eslint.config.js';
@@ -136,6 +137,20 @@ const FIXTURES: readonly FixtureCase[] = [
     file: 'test/lint/fixtures/spawn-dynamic-javascript.js',
     ruleId: 'no-restricted-syntax',
     mentions: 'execa',
+  },
+  // ── The manager→worker fork() seam (03-03) ─────────────────────────────
+  //
+  // This fixture is not one of the "watch the glob" rows above — it exists to
+  // show the spawn ban applies to a `fork`-shaped import specifically, the
+  // exact form a manager author would reach for if they bypassed
+  // `forkWorker` (`@adl/workspace`) and imported `node:child_process`
+  // directly instead. See the "the fork() seam..." describe block below for
+  // the other half of this proof: the real `fork.ts` source lints clean, and
+  // the exemption that lets it stays at exactly one entry.
+  {
+    file: 'test/lint/fixtures/manager-fork-direct.ts',
+    ruleId: 'no-restricted-imports',
+    mentions: 'node:child_process',
   },
 ];
 
