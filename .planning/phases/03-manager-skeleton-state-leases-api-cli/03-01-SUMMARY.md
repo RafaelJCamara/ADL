@@ -189,3 +189,7 @@ None - no external service configuration required.
 ---
 *Phase: 03-manager-skeleton-state-leases-api-cli*
 *Completed: 2026-08-19*
+
+## Self-Check: PASSED
+
+All created files and commit hashes verified present on disk / in git log.
