@@ -1,0 +1,42 @@
+{
+  "name": "@adl/manager",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The manager daemon — lease queue, worker supervision, HTTP API. Depends on @adl/core, @adl/db, @adl/workspace; the only package that writes to the database.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "pretypecheck": "tsc -b ../core",
+    "typecheck": "tsc --noEmit",
+    "pretest": "tsc -b ../core ../db ../workspace",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@adl/core": "workspace:*",
+    "@adl/db": "workspace:*",
+    "@adl/workspace": "workspace:*",
+    "@hono/node-server": "2.1.1",
+    "croner": "10.0.1",
+    "hono": "4.13.2",
+    "pino": "10.3.1",
+    "ulid": "3.0.2",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

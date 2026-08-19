@@ -11,13 +11,21 @@ permissions:
 
 jobs:
   verify:
-    name: verify (node ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
+    name: verify (node ${{ matrix.node-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The existing `run:` blocks below are written in POSIX shell syntax.
+    # GitHub's windows-latest images ship bash, and this default is what keeps
+    # those blocks working unmodified on the new Windows leg (D-33) rather
+    # than forking every step into a Windows/PowerShell variant.
+    defaults:
+      run:
+        shell: bash
 
     strategy:
-      # Both legs always run. If only one end of the supported range breaks,
-      # cancelling the other leg destroys exactly the evidence needed to tell
-      # a Node-version problem from a general one.
+      # All legs always run. If only one end of the supported range or one
+      # platform breaks, cancelling the others destroys exactly the evidence
+      # needed to tell a Node-version problem from a platform problem from a
+      # general one.
       fail-fast: false
       matrix:
         # 22 is the `engines` floor promised to adopters (>=22.12.0); 24 is the
@@ -27,6 +35,17 @@ jobs:
         # 01-VALIDATION.md records this matrix as the phase's only manual-only
         # verification: a human reads the first green run.
         node-version: [22, 24]
+        # windows-latest mirrors the maintainer's actual development machine
+        # (Windows, Node 22.23.2 — D-33), so it is the platform local
+        # iteration already runs against. ubuntu-latest remains the deployment
+        # target's proxy (Phase 2 D-05 names Linux as the deployment target).
+        os: [ubuntu-latest, windows-latest]
+        exclude:
+          # Node 24 on Windows is a stated, accepted gap (D-33) -- it costs
+          # one matrix line to close later, not a blocker now. This leaves
+          # three legs: ubuntu/22, ubuntu/24, windows/22.
+          - os: windows-latest
+            node-version: 24
 
     steps:
       - name: Checkout
@@ -81,6 +100,12 @@ jobs:
         # only place they can actually execute. Without this step they would
         # skip here too, and the phase would be signed off on evidence that was
         # never produced (T-2-33).
+        #
+        # Linux-only (D-33, Phase 2 D-05): the privilege drop has no Windows
+        # subject, and every command below is a Linux/`sudo`/`getent` primitive
+        # that would simply fail on the Windows runner rather than degrade
+        # gracefully. Gated here rather than made cross-platform.
+        if: runner.os == 'Linux'
         #
         # Every command is idempotent: a re-run on a warm runner must not fail
         # on "group already exists".
@@ -148,7 +173,22 @@ jobs:
         # chown(2) refuses a group the caller is not in. `sg` re-establishes the
         # group list for this one command, which is what lets applyWorkerAccess
         # give the worker its scratch HOME instead of degrading with EPERM.
+        #
+        # Linux-only: `sg` and the `adl-worker` identity only exist on the leg
+        # that ran the provisioning step above.
+        if: runner.os == 'Linux'
         run: sg adl-worker -c "pnpm -r test"
+
+      - name: Test (non-Linux)
+        # `sg` does not exist on Windows, and the privilege-drop provisioning
+        # it re-establishes group membership for has no Windows subject
+        # (Phase 2 D-05) -- so this leg runs the same suite directly under the
+        # runner's own credentials. The privilege-drop assertions skip loudly
+        # here via packages/manager/test/helpers/platform.ts's `windowsOnly`
+        # (and packages/workspace's existing `linuxOnly`/`posixOnly`) rather
+        # than passing vacuously.
+        if: runner.os != 'Linux'
+        run: pnpm -r test
 
       - name: Test (workspace root suite)
         # `pnpm -r` iterates the workspace PACKAGES and deliberately excludes
