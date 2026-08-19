@@ -110,19 +110,62 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-syntax',
     mentions: 'execa',
   },
+  // ── And the three rows below watch the OTHER half of the glob ─────────────
+  //
+  // Closing `.mts`/`.cts`/`.tsx` left an exactly analogous gap behind, which
+  // 02-VERIFICATION.md recorded as a warning rather than a failure:
+  // `packages/db/src/probe.mjs` importing `execa` reported ZERO architecture
+  // errors at `84d1d16`. The reasoning for not scoring it was sound (nothing
+  // compiles a `.mjs`, and the scope was at least NAMED this time) but it rests
+  // on which files happen to exist, and the constant's own docblock says a
+  // build property that holds by file-naming coincidence is a review property
+  // wearing the rule's clothes. One fixture per JavaScript extension and one
+  // per import form, so a fix that widened the static-import layer and forgot
+  // the syntax layer is still red.
+  {
+    file: 'test/lint/fixtures/spawn-esm-javascript.mjs',
+    ruleId: 'no-restricted-imports',
+    mentions: 'execa',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-cjs-javascript.cjs',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'node:child_process',
+  },
+  {
+    file: 'test/lint/fixtures/spawn-dynamic-javascript.js',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'execa',
+  },
 ];
 
 /**
- * Every extension a TypeScript module here may carry, restated as a literal.
+ * Every extension a module here may carry, restated as a literal.
  *
- * Deliberately NOT imported from `eslint.config.js`'s `TS_SOURCE_EXTENSIONS`,
- * for the reason {@link anchoredPattern} already gives below: these assertions
- * have to be able to DISAGREE with the config. Driving them off the config's own
- * tuple would mean that deleting `mts` from it deleted the assertion that would
- * have caught the deletion — which is the exact shape of the defect being fixed,
- * a guard that is green because it stopped looking.
+ * Deliberately NOT imported from `eslint.config.js`'s
+ * `MODULE_SOURCE_EXTENSIONS`, for the reason {@link anchoredPattern} already
+ * gives below: these assertions have to be able to DISAGREE with the config.
+ * Driving them off the config's own tuple would mean that deleting `mts` from it
+ * deleted the assertion that would have caught the deletion — which is the exact
+ * shape of the defect being fixed, a guard that is green because it stopped
+ * looking.
+ *
+ * The four TypeScript spellings come first and the three JavaScript ones after,
+ * matching the two halves the config names separately. They are one list here
+ * because the property under test is identical for all seven: a process reaching
+ * the OS process table is not made safer by the extension of the file that
+ * started it, so a boundary that reaches six of these and not the seventh is a
+ * boundary a file rename walks through.
  */
-const TYPESCRIPT_EXTENSIONS = ['ts', 'tsx', 'mts', 'cts'] as const;
+const MODULE_EXTENSIONS = [
+  'ts',
+  'tsx',
+  'mts',
+  'cts',
+  'js',
+  'mjs',
+  'cjs',
+] as const;
 
 /**
  * `ignore: false` is what lets these runs see the fixtures at all.
@@ -513,10 +556,11 @@ describe('the spawn boundary (WORK-02)', () => {
     ).toContain('execa');
   });
 
-  it.each(TYPESCRIPT_EXTENSIONS)(
-    'reaches .%s files, so the ban is not scoped to one spelling of TypeScript',
+  it.each(MODULE_EXTENSIONS)(
+    'reaches .%s files, so the ban is not scoped to one spelling of a module',
     async (extension) => {
-      // 02-VERIFICATION.md's one gap, as a resolved-config assertion.
+      // 02-VERIFICATION.md's one gap and its follow-on warning, as one
+      // resolved-config assertion per extension.
       //
       // `files: ['**/*.ts']` matches the extension EXACTLY — `.mts`, `.cts` and
       // `.tsx` are outside it — so the repository's headline enforcement
@@ -525,6 +569,12 @@ describe('the spawn boundary (WORK-02)', () => {
       // contains only `.ts` today. That is what made it worth fixing rather than
       // noting: the control was green for a reason that does not generalise, and
       // the first `.mts` anybody adds would have left the boundary silently.
+      //
+      // The same sentence held for `.js`/`.mjs`/`.cjs` after that fix, which is
+      // why they are in this list too. The re-verification pass demonstrated
+      // `packages/db/src/probe.mjs` importing `execa` reporting zero
+      // architecture errors, and declined to score it only because the scope was
+      // by then explicit. Explicit and wrong is still wrong.
       //
       // Asserted from BOTH sides for each extension, because "the ban reaches
       // .mts" and "the exemption reaches .mts" are independent and a fix that
