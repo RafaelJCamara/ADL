@@ -40,9 +40,20 @@ export function formatAge(ms: number): string {
   return `${hours}h`;
 }
 
-/** A ULID is 26 characters — long enough to make every row wrap a narrow terminal. Truncated for the table; `--json` always carries the full id. */
+/**
+ * A ULID is 26 characters — long enough to make every row wrap a narrow
+ * terminal. Truncated for the table; `--json` always carries the full id.
+ *
+ * Keeps the LAST `length` characters, not the first: a ULID is a 10-char
+ * millisecond timestamp followed by 16 chars of randomness, so keeping the
+ * prefix keeps only the timestamp and throws away every bit that makes two
+ * IDs different — any two features created within the same millisecond (a
+ * common case: a batch detected in one sweep) would render with identical
+ * truncated IDs. The suffix falls entirely inside the random segment for
+ * any `length <= 16`, so distinct features stay visually distinct.
+ */
 export function truncateId(id: string, length = 10): string {
-  return id.length > length ? id.slice(0, length) : id;
+  return id.length > length ? id.slice(-length) : id;
 }
 
 /**
@@ -75,8 +86,29 @@ export function renderStatusTable(rows: readonly FeatureRow[]): string {
     row.stage.label,
     String(row.round),
     formatAge(row.ageMs),
-    row.worker ? String(row.worker.pid) : pc.dim('-'),
+    row.worker ? String(row.worker.pid) : '-',
   ]);
 
-  return [header, ...lines].map((cols) => cols.join('  ')).join('\n') + '\n';
+  // Pad every column to its widest cell (header included) so rows line up
+  // vertically instead of drifting with each cell's own length — computed
+  // on the plain (uncolored) text so ANSI codes never skew the padding.
+  const allRows = [header, ...lines];
+  const widths = header.map((_, col) =>
+    Math.max(...allRows.map((row) => row[col]?.length ?? 0)),
+  );
+  const workerCol = header.length - 1;
+
+  return allRows
+    .map((cols, rowIndex) =>
+      cols
+        .map((cell, col) => {
+          const padded = cell.padEnd(widths[col] ?? cell.length);
+          return rowIndex > 0 && col === workerCol && cell === '-'
+            ? pc.dim(padded)
+            : padded;
+        })
+        .join('  ')
+        .trimEnd(),
+    )
+    .join('\n') + '\n';
 }
