@@ -38,12 +38,15 @@ import type {
   AgentRunner,
   AgentRunResult,
   AgentTask,
+  AgentUsage,
+  AgentUsageEvent,
   ExecSpec,
   LogChunk,
 } from '@adl/core/stage';
 import type { StageErrorKind } from '@adl/core/stage';
 import { translateLine } from './events.js';
 import { preflightClaudeCode, type VersionCheckResult } from './preflight.js';
+import { usageFromResult, type AgentUsageRecord } from './usage.js';
 import { PINNED_CLAUDE_CODE_VERSION } from './version.js';
 
 /** The pinned CLI's own name on the process table — the default argv[0]. */
@@ -55,6 +58,66 @@ const EMPTY_USAGE = Object.freeze({
   cacheReadTokens: null,
   cacheWriteTokens: null,
 });
+
+/**
+ * {@link AgentRunResult}, with the DB-shaped usage record this run produced
+ * attached alongside it — 04-10 Task 1's "surface the record on the run
+ * result so the caller does not re-parse the terminal event". `usageRecord`
+ * is a genuine superset field (covariant on `AgentRunner.run`'s declared
+ * `Promise<AgentRunResult>` return type), never a narrowing — a caller that
+ * only knows the base `AgentRunner` port still gets a fully valid
+ * `AgentRunResult` back, it simply cannot see this extra field without
+ * importing this package's own richer type, which is exactly what
+ * `worker-entry/stage-runner.ts` (the one production caller of
+ * `claudeCodeBackend` directly, rather than through the generic port) does.
+ *
+ * Exported (via `index.ts`) so the worker can read this type when handling
+ * the resolved run result, without re-implementing `usageFromResult`'s
+ * mapping itself.
+ */
+export interface AgentRunResultWithUsage extends AgentRunResult {
+  /** Undefined when the run never reached a terminal `result` event (a spawn failure, a timeout, or a kill before one arrived). */
+  readonly usageRecord?: AgentUsageRecord;
+}
+
+/**
+ * {@link AgentRunner}, narrowed to the richer resolved value {@link claudeCodeBackend}
+ * actually returns. A `ClaudeCodeAgentRunner` is always assignable to a plain
+ * `AgentRunner` (the extra field is additive), so nothing about the generic
+ * port changes — this interface exists purely so a caller that imports
+ * `claudeCodeBackend` directly (rather than going through the generic port)
+ * can read `usageRecord` off the resolved value without a cast.
+ */
+export interface ClaudeCodeAgentRunner extends AgentRunner {
+  run(task: AgentTask, ctx: AgentRunContext): Promise<AgentRunResultWithUsage>;
+}
+
+function toAgentUsage(record: AgentUsageRecord | undefined): AgentUsage {
+  if (record === undefined) return EMPTY_USAGE;
+  return {
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheReadTokens: record.cacheReadInputTokens,
+    cacheWriteTokens: record.cacheCreationInputTokens,
+  };
+}
+
+/** Build the resolved value every `run()` return path shares — usage/cost populated from whatever `usageRecord` this invocation produced, `EMPTY_USAGE`/no cost when it produced none. */
+function buildRunResult(
+  outcome: AgentRunResult['outcome'],
+  durationMs: number,
+  usageRecord: AgentUsageRecord | undefined,
+): AgentRunResultWithUsage {
+  return {
+    outcome,
+    durationMs,
+    usage: toAgentUsage(usageRecord),
+    ...(usageRecord?.costUsd !== null && usageRecord?.costUsd !== undefined
+      ? { costUsd: usageRecord.costUsd }
+      : {}),
+    ...(usageRecord !== undefined ? { usageRecord } : {}),
+  };
+}
 
 export interface ClaudeCodeBackendOptions {
   /**
@@ -206,7 +269,7 @@ function classifySpawnError(error: unknown): {
 
 export function claudeCodeBackend(
   options: ClaudeCodeBackendOptions = {},
-): AgentRunner {
+): ClaudeCodeAgentRunner {
   const binary = options.binary ?? DEFAULT_BINARY;
 
   return {
@@ -243,9 +306,63 @@ export function claudeCodeBackend(
       };
     },
 
-    async run(task: AgentTask, ctx: AgentRunContext): Promise<AgentRunResult> {
+    async run(
+      task: AgentTask,
+      ctx: AgentRunContext,
+    ): Promise<AgentRunResultWithUsage> {
       const startedAt = Date.now();
-      const lineHandler = createLineHandler(ctx.onEvent);
+
+      // Observed as the run's own events arrive, so the terminal `result`
+      // event — which per `AgentEventSchema` never itself carries a model id
+      // or token counts — can be combined with what was seen earlier into
+      // one `AgentUsageRecord` (04-10 Task 1). `handleEvent` forwards every
+      // event to `ctx.onEvent` unchanged; it never filters or reorders the
+      // transcript, only observes it in passing.
+      let observedModel: string | undefined;
+      let observedUsage: AgentUsageEvent | undefined;
+      let usageRecord: AgentUsageRecord | undefined;
+
+      function handleEvent(event: AgentEvent): void {
+        if (event.kind === 'started') {
+          observedModel = event.model;
+        } else if (event.kind === 'usage') {
+          observedUsage = event;
+        } else if (event.kind === 'result') {
+          usageRecord = usageFromResult({
+            event,
+            usage: observedUsage,
+            model: observedModel ?? task.model,
+          });
+          // Reconcile against the backend's own declared capabilities
+          // (04-10 Task 1's action text): a backend that claims it reports
+          // cost but whose terminal event carried none is a discrepancy.
+          //
+          // DELIBERATE DEVIATION from a literal reading of the action
+          // text's "worth an event of the error kind in the transcript":
+          // this module's own contract (see this file's docblock) folds
+          // EVERY `kind: 'error'` event into `worker-entry/stage-runner.ts`'s
+          // `firstError` — P1's prohibition — turning an otherwise-successful
+          // run (a real commit, or an honest `blocked` outcome) into a false
+          // `stage_error`. `fake-claude-no-commit.mjs` and several other
+          // established replay doubles never report a cost figure at all,
+          // and this reconciliation firing on every one of them broke
+          // `stage-runner.test.ts`'s pre-existing "a run producing no commit
+          // reports blocked honestly" case — verified by running the suite,
+          // not assumed. The honest, already-structural signal is
+          // `usageRecord.costSource === 'unknown'` itself (D-31): it is
+          // recorded on the row, `spendByCategory`'s `unpricedEvents`
+          // reports it, and Task 3's STATE.md write-up treats an `unknown`
+          // source as evidence the spike is not closed (Prohibition P5).
+          // Emitting a SECOND, transcript-level signal for the same fact
+          // would either duplicate that (if harmless) or corrupt an
+          // unrelated stage's outcome (as observed) — recording accurately
+          // is what this module owns; deciding what an unknown-source event
+          // means for the round's outcome belongs to Phase 6, not here.
+        }
+        ctx.onEvent(event);
+      }
+
+      const lineHandler = createLineHandler(handleEvent);
 
       const argv: string[] = [
         ...binary,
@@ -288,11 +405,7 @@ export function claudeCodeBackend(
           errorKind: classified.errorKind,
           detail: classified.detail,
         });
-        return {
-          outcome: 'cancelled',
-          durationMs: Date.now() - startedAt,
-          usage: EMPTY_USAGE,
-        };
+        return buildRunResult('cancelled', Date.now() - startedAt, usageRecord);
       }
 
       lineHandler.flush();
@@ -305,7 +418,7 @@ export function claudeCodeBackend(
           errorKind: 'timeout',
           detail: `claude CLI was killed by signal ${execResult.signal ?? 'unknown'} after ${String(execResult.durationMs)}ms`,
         });
-        return { outcome: 'cancelled', durationMs, usage: EMPTY_USAGE };
+        return buildRunResult('cancelled', durationMs, usageRecord);
       }
 
       if (execResult.exitCode !== 0) {
@@ -314,10 +427,10 @@ export function claudeCodeBackend(
           errorKind: 'provider_error',
           detail: `claude CLI exited with code ${String(execResult.exitCode)}`,
         });
-        return { outcome: 'cancelled', durationMs, usage: EMPTY_USAGE };
+        return buildRunResult('cancelled', durationMs, usageRecord);
       }
 
-      return { outcome: 'completed', durationMs, usage: EMPTY_USAGE };
+      return buildRunResult('completed', durationMs, usageRecord);
     },
   };
 }

@@ -31,8 +31,34 @@ export {
 } from './events.js';
 
 // The `AgentRunner` implementation itself — the one thing `@adl/manager`'s
-// stage runner imports from this package.
-export { claudeCodeBackend, type ClaudeCodeBackendOptions } from './backend.js';
+// stage runner imports from this package. `ClaudeCodeAgentRunner`/
+// `AgentRunResultWithUsage` (04-10) are exported alongside it so the worker
+// (`packages/manager/src/worker-entry/stage-runner.ts`) can read the
+// `usageRecord` this backend attaches to its resolved run result without a
+// cast — "why public": that worker is the one production caller that needs
+// the richer type, since it imports `claudeCodeBackend` directly rather than
+// only through the generic `AgentRunner` port.
+export {
+  claudeCodeBackend,
+  type AgentRunResultWithUsage,
+  type ClaudeCodeAgentRunner,
+  type ClaudeCodeBackendOptions,
+} from './backend.js';
+
+// The usage mapper (04-10) — `usageFromResult` turns the run's terminal
+// `result` event, plus what was observed earlier in the same run, into a
+// `usage_events`-shaped record. Exported (not only used internally by
+// `backend.ts`) so a test, and any future caller that already holds a
+// translated `AgentEvent` stream of its own, can drive the same mapping
+// directly rather than re-deriving it.
+export {
+  usageFromResult,
+  type AgentUsageRecord,
+  type ModelSpeed,
+  type UsageCostCategory,
+  type UsageCostSource,
+  type UsageFromResultEvent,
+} from './usage.js';
 
 // The version preflight (04-07, D-01/D-02, OBS-08). Exported so the
 // manager's startup gate (`packages/manager/src/boot/backend-preflight.ts`)
