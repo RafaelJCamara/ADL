@@ -223,3 +223,28 @@ export async function findAttempt(
 
   return row;
 }
+
+/**
+ * Whether a stage attempt has reached a terminal state — read from its own
+ * recorded `ended_at`, never inferred from the transcript file having
+ * stopped growing (04-08, T-4-33). A quiet agent and a finished one look
+ * identical on disk; only the database knows which one is true, which is
+ * exactly what `closeAttempt` writes and this function reads back.
+ *
+ * An id that does not resolve reports `true` (ended) rather than throwing —
+ * every caller in this codebase resolves the id through {@link findAttempt}
+ * before it ever reaches this function, so an unresolvable id here means
+ * the row was deleted out from under a still-open follow loop; the safe
+ * response is to stop polling, not loop forever against nothing.
+ */
+export async function isAttemptEnded(
+  db: Kysely<Database>,
+  stageAttemptId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('stage_attempts')
+    .select('ended_at')
+    .where('id', '=', stageAttemptId)
+    .executeTakeFirst();
+  return row === undefined || row.ended_at !== null;
+}

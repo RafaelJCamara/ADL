@@ -35,11 +35,12 @@
  *
  * **What this module does NOT do.** No following, no watching, no timers —
  * this module answers "what is in the file from offset N" and nothing about
- * "tell me when there is more". `04-08` builds the follow loop on top of it;
- * keeping the two apart is what lets the offset semantics here be tested
- * exhaustively with no timer in the suite, and isolates the
- * platform-dependent watch behaviour `04-RESEARCH.md`'s Assumption A2 flags
- * into one place that is not this one.
+ * "tell me when there is more". `04-08`'s follow loop
+ * (`api/routes/logs.ts`) is built entirely on top of `readTranscriptFrom`,
+ * polling it at a named interval; keeping the two apart is what let the
+ * offset semantics here be tested exhaustively with no timer in this
+ * module's own suite, and isolates the platform-dependent watch behaviour
+ * `04-RESEARCH.md`'s Assumption A2 flags into the route, not this file.
  */
 import { mkdir, open, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
