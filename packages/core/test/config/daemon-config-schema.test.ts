@@ -45,7 +45,9 @@ describe('DaemonConfigSchema — Phase 3 fields, defaults', () => {
   });
 
   it('an unknown top-level key is rejected — the schema is a strictObject', () => {
-    const result = DaemonConfigSchema.safeParse({ totally_unknown_field: true });
+    const result = DaemonConfigSchema.safeParse({
+      totally_unknown_field: true,
+    });
     expect(result.success).toBe(false);
   });
 
@@ -64,7 +66,9 @@ describe('DaemonConfigSchema — D-02 lease-timing rule (lease_ttl_ms >= 3x hear
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      const message = result.error.issues.map((issue) => issue.message).join('; ');
+      const message = result.error.issues
+        .map((issue) => issue.message)
+        .join('; ');
       expect(message).toContain('lease_ttl_ms');
       expect(message).toContain('heartbeat_interval_ms');
     }

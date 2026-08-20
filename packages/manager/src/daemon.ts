@@ -3,6 +3,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import {
   createDb,
   featuresRepository,
+  nowIso,
   type Database,
   type FeaturesTable,
 } from '@adl/db';
@@ -11,9 +12,26 @@ import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
+import {
+  encodeLeaseOwner,
+  killBootOrphans,
+  readProcessStartTime,
+} from './boot/orphans.js';
+import { gracefulShutdown } from './boot/shutdown.js';
+import {
+  DAEMON_SCHEMA_VERSION,
+  reconcileRepos,
+  resolveMigrationsDir,
+  runStartupGate,
+  SchemaVersionRefusalError,
+} from './boot/startup.js';
 import { createStaleRejectionCounter } from './fencing.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
-import { createFastPathRecovery, startReaper } from './scheduler/reaper.js';
+import {
+  createFastPathRecovery,
+  reapOne,
+  startReaper,
+} from './scheduler/reaper.js';
 import {
   createSupervisor,
   type WorkerReady,
@@ -25,10 +43,12 @@ import {
  * supervisor, the dispatcher, and the Hono API together, and returns a
  * handle a caller (production `adl daemon start`, or a test) can stop.
  *
- * The startup schema-version gate, repo reconciliation, and boot orphan kill
- * (D-13, D-35, D-37) are **not** here yet — a later plan adds them. Keeping
- * the wiring in one function is what lets that plan extend a sequence rather
- * than restructure one.
+ * The startup order is fixed by D-37: schema gate, then copy-and-migrate
+ * (inside `runStartupGate`), then repository reconciliation (`reconcileRepos`,
+ * D-35), then lease expiry and the boot orphan kill (D-13, `./boot/orphans.js`),
+ * then dispatch. A refusal from the gate exits before the API server binds —
+ * `startDaemon` throws {@link SchemaVersionRefusalError} rather than returning
+ * a handle.
  */
 
 /** The compiled worker entry's default location, relative to this module. */
@@ -42,11 +62,18 @@ export interface StartDaemonOptions {
   /** `0` lets the OS assign a free port — read back from `DaemonHandle.port`. */
   readonly port: number;
   readonly apiToken: string;
-  readonly schemaVersion: number;
   readonly leaseTtlMs: number;
   readonly heartbeatIntervalMs: number;
   readonly daemonConfig: DaemonConfig;
   readonly resolveAdlYml: (feature: FeaturesTable) => AdlYml;
+  /**
+   * The migrations directory `runStartupGate` applies. Defaults to
+   * `@adl/db`'s own shipped `migrations/` (via `resolveMigrationsDir()`,
+   * matching `DAEMON_SCHEMA_VERSION`'s own derivation) — override only for a
+   * test that needs to control exactly which directory's bytes the
+   * checksum guard records against.
+   */
+  readonly migrationsDir?: string;
   /** Defaults to this package's own compiled worker entry. */
   readonly workerEntryPath?: string;
   readonly workerCwd?: string;
@@ -65,12 +92,90 @@ export interface DaemonHandle {
   stop(): Promise<void>;
 }
 
+/**
+ * D-13's other half: after {@link killBootOrphans} has had a chance to act
+ * on it, expire every held lease unconditionally (`reapOne`, the same
+ * function the reaper's own tick and the child-exit fast path both call) —
+ * not only ones past `lease_expires_at`. Boot is a deterministic clean
+ * slate: nothing from a previous daemon process is left holding a lease.
+ */
+async function expireAllLeasesAtBoot(
+  db: Kysely<Database>,
+  logger: Logger,
+): Promise<void> {
+  const leased = await featuresRepository(db).listLeased();
+  const now = nowIso();
+  for (const feature of leased) {
+    await reapOne({ db, logger }, feature, now);
+  }
+}
+
+/**
+ * Read the just-forked worker's real process start time and persist the
+ * D-14 encoded `{pid, startTime}` record into `lease_owner`, fenced by the
+ * lease token so a late-arriving `ready` from an already-superseded lease
+ * cannot overwrite a newer holder's record. Bound to the supervisor's
+ * `onReady` hook — the earliest point the manager knows the worker's real
+ * OS pid; the worker's own self-reported `startedAt` (wall-clock) is not
+ * used here because D-14's comparison is boot-relative clock ticks, a
+ * different value entirely, which only the manager itself can read.
+ */
+async function recordLeaseOwnerOnReady(
+  db: Kysely<Database>,
+  ready: WorkerReady,
+  logger: Logger,
+): Promise<void> {
+  const startTimeResult = readProcessStartTime(ready.pid);
+  const record = {
+    pid: ready.pid,
+    startTime:
+      startTimeResult.kind === 'available' ? startTimeResult.startTime : null,
+  };
+  try {
+    await db
+      .updateTable('features')
+      .set({ lease_owner: encodeLeaseOwner(record) })
+      .where('id', '=', ready.featureId)
+      .where('lease_token', '=', ready.leaseToken)
+      .execute();
+  } catch (error) {
+    logger.error(
+      { err: error, featureId: ready.featureId },
+      'failed to record lease_owner PID/start-time on worker ready',
+    );
+  }
+}
+
 export async function startDaemon(
   options: StartDaemonOptions,
 ): Promise<DaemonHandle> {
   const db: Kysely<Database> = createDb(options.dbFilePath);
   const logger = options.logger ?? pino({ level: 'info' });
   const host = options.host ?? '127.0.0.1';
+  const migrationsDir = options.migrationsDir ?? resolveMigrationsDir();
+
+  // D-37's fixed order: schema gate (refuse newer, copy-then-migrate an
+  // older or unseeded database) before any other database access beyond
+  // the gate's own.
+  const gateResult = await runStartupGate({
+    db,
+    dbFilePath: options.dbFilePath,
+    migrationsDir,
+    logger,
+  });
+  if (gateResult.kind === 'refused') {
+    await db.destroy();
+    throw new SchemaVersionRefusalError(gateResult.refusal);
+  }
+
+  // D-35: reconcile watched repositories next.
+  await reconcileRepos({ db, repos: options.daemonConfig.repos, logger });
+
+  // D-13: kill any still-running orphan from a previous daemon process
+  // *before* expiring leases — `killBootOrphans` needs `lease_owner`'s PID
+  // while it is still populated; expiring first would lose it.
+  await killBootOrphans({ db, logger });
+  await expireAllLeasesAtBoot(db, logger);
 
   const staleRejectionCounter = createStaleRejectionCounter();
 
@@ -86,7 +191,10 @@ export async function startDaemon(
       return row?.lease_token ?? null;
     },
     staleRejectionCounter,
-    onReady: options.onWorkerReady,
+    onReady: (ready) => {
+      void recordLeaseOwnerOnReady(db, ready, logger);
+      options.onWorkerReady?.(ready);
+    },
     // D-04's fast path: a forked worker exited without an accepted result.
     // `createFastPathRecovery` re-reads the row (it may have moved since the
     // fork started) and hands it to `reapOne` — the same function the
@@ -139,7 +247,7 @@ export async function startDaemon(
 
   const app = createApi({
     apiToken: options.apiToken,
-    schemaVersion: options.schemaVersion,
+    schemaVersion: DAEMON_SCHEMA_VERSION,
     listFeatureViews,
   });
 
@@ -177,31 +285,18 @@ export async function startDaemon(
   }, options.dispatchIntervalMs ?? 25);
 
   async function stop(): Promise<void> {
-    clearInterval(dispatchTimer);
-    reaper.stop();
-
-    const workers = supervisor.list();
-    await Promise.all(
-      workers.map((entry) => {
-        // Deliberate shutdown: this exit is manager-requested, so the fast
-        // path must not race `db.destroy()` below with its own write.
-        supervisor.markExpectedExit(entry.featureId);
-        return new Promise<void>((resolve) => {
-          const child = entry.worker.child;
-          if (child.exitCode !== null || child.signalCode !== null) {
-            resolve();
-            return;
-          }
-          child.once('exit', () => resolve());
-          child.kill('SIGKILL');
-        });
-      }),
-    );
-
-    await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()));
+    // D-37: stop dispatch, then every worker with a real grace window
+    // (soft_stop over IPC, SIGKILL after worker_stop_grace_ms — Pattern 2,
+    // never an OS SIGTERM), then close the server, then flush.
+    await gracefulShutdown({
+      supervisor,
+      reaper,
+      dispatchTimer,
+      server,
+      db,
+      workerStopGraceMs: options.daemonConfig.worker_stop_grace_ms,
+      logger,
     });
-    await db.destroy();
   }
 
   return { host, port: boundPort, supervisor, stop };

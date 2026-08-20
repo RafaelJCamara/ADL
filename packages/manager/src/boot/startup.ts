@@ -217,7 +217,10 @@ export async function runStartupGate(
     return { kind: 'refused', refusal };
   }
 
-  if (versionResult.kind === 'valid' && versionResult.version > DAEMON_SCHEMA_VERSION) {
+  if (
+    versionResult.kind === 'valid' &&
+    versionResult.version > DAEMON_SCHEMA_VERSION
+  ) {
     const refusal: SchemaVersionRefusal = {
       reason: 'newer-schema',
       storedVersion: versionResult.version,
@@ -232,7 +235,8 @@ export async function runStartupGate(
   }
 
   const isCurrent =
-    versionResult.kind === 'valid' && versionResult.version === DAEMON_SCHEMA_VERSION;
+    versionResult.kind === 'valid' &&
+    versionResult.version === DAEMON_SCHEMA_VERSION;
   if (isCurrent) {
     // Already current: a no-op that writes no new copy (re-running the gate
     // against an already-current database).

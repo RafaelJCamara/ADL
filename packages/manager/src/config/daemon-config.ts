@@ -72,13 +72,14 @@ export interface DaemonConfigInvalid {
   /** A human-readable message — the JSON parser's own message, or every offending field path. */
   readonly message: string;
   /** Present when validation (not parsing) failed — one entry per Zod issue. */
-  readonly issues?: readonly { readonly path: string; readonly message: string }[];
+  readonly issues?: readonly {
+    readonly path: string;
+    readonly message: string;
+  }[];
 }
 
 export type DaemonConfigLoadResult =
-  | DaemonConfigLoaded
-  | DaemonConfigNotFound
-  | DaemonConfigInvalid;
+  DaemonConfigLoaded | DaemonConfigNotFound | DaemonConfigInvalid;
 
 /** Thrown by a caller that wants `invalid`/`not-found` to be exceptional rather than a variant to switch on. */
 export class DaemonConfigError extends Error {
@@ -152,7 +153,9 @@ export async function loadDaemonConfig(
       kind: 'invalid',
       path,
       message: issues
-        .map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message))
+        .map((issue) =>
+          issue.path ? `${issue.path}: ${issue.message}` : issue.message,
+        )
         .join('; '),
       issues,
     };
@@ -201,7 +204,8 @@ export async function ensureDaemonConfig(
     : {
         kind: 'invalid',
         path,
-        message: 'the daemon config file disappeared immediately after being written',
+        message:
+          'the daemon config file disappeared immediately after being written',
       };
 }
 

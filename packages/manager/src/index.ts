@@ -136,6 +136,47 @@ export {
   type DaemonConfigNotFound,
 } from './config/daemon-config.js';
 
+// The startup gate (D-37) — schema-version refuse/copy-then-migrate, and
+// repository reconciliation (D-35). Published so a CLI entry point (a later
+// plan's `adl daemon start`) can inspect `DAEMON_SCHEMA_VERSION` directly
+// (e.g. for `adl --version`-style output) without going through the full
+// `startDaemon` sequence.
+export {
+  DAEMON_SCHEMA_VERSION,
+  reconcileRepos,
+  resolveMigrationsDir,
+  runStartupGate,
+  SchemaVersionRefusalError,
+  type ReconcileReposDeps,
+  type SchemaVersionRefusal,
+  type StartupGateDeps,
+  type StartupGateProceeded,
+  type StartupGateRefused,
+  type StartupGateResult,
+} from './boot/startup.js';
+
+// The boot-time orphan kill (D-13, D-14) — `lease_owner`'s PID+start-time
+// encoding, published so a test double or a future status view can decode
+// it without re-deriving the shape.
+export {
+  decodeLeaseOwner,
+  encodeLeaseOwner,
+  killBootOrphans,
+  readProcessStartTime,
+  type KillBootOrphansDeps,
+  type LeaseOwnerRecord,
+  type OrphanKillOutcome,
+  type ProcessStartTimeResult,
+} from './boot/orphans.js';
+
+// Graceful shutdown (D-37, D-28) — and the per-worker escalation helper a
+// later plan's `adl kill` (`03-07`) shares rather than re-deriving.
+export {
+  gracefulShutdown,
+  stopWorkerGracefully,
+  type ShutdownDeps,
+} from './boot/shutdown.js';
+
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
 // unexported from `@adl/workspace`'s barrel: it is an implementation detail

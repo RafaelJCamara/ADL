@@ -209,8 +209,14 @@ export type GcConfig = z.infer<typeof GcConfigSchema>;
  */
 export const WatchedRepoSchema = z
   .strictObject({
-    id: z.string().min(1).describe('The repository identifier, unique across watched repos.'),
-    remote_url: z.string().min(1).describe('The git remote URL to clone/fetch from.'),
+    id: z
+      .string()
+      .min(1)
+      .describe('The repository identifier, unique across watched repos.'),
+    remote_url: z
+      .string()
+      .min(1)
+      .describe('The git remote URL to clone/fetch from.'),
     default_branch: z
       .string()
       .min(1)

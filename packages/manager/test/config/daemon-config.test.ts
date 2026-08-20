@@ -64,7 +64,11 @@ describe('loadDaemonConfig', () => {
 
   it('against JSON that fails schema validation returns the invalid variant naming the field', async () => {
     const path = join(dir, 'bad-schema.json');
-    await writeFile(path, JSON.stringify({ concurrency: { global: 0 } }), 'utf8');
+    await writeFile(
+      path,
+      JSON.stringify({ concurrency: { global: 0 } }),
+      'utf8',
+    );
 
     const result = await loadDaemonConfig(path);
     expect(result.kind).toBe('invalid');
@@ -131,7 +135,8 @@ describe('ensureDaemonConfig — zero-config first run', () => {
 
     const first = await ensureDaemonConfig(path);
     expect(first.kind).toBe('loaded');
-    const firstToken = first.kind === 'loaded' ? first.config.api.token : undefined;
+    const firstToken =
+      first.kind === 'loaded' ? first.config.api.token : undefined;
 
     const second = await ensureDaemonConfig(path);
     expect(second.kind).toBe('loaded');

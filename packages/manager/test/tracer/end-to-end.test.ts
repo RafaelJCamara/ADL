@@ -460,7 +460,18 @@ describe('tracer: a queued feature is leased by a real forked worker and appears
         dbFilePath: filePath,
         port: 0,
         apiToken: API_TOKEN,
-        schemaVersion: 7,
+        // 03-06: startDaemon now derives its own reported schema version
+        // from DAEMON_SCHEMA_VERSION (the migrations directory), rather
+        // than accepting an arbitrary caller-supplied value — the whole
+        // point of Task 1's checkpoint is that this number cannot drift
+        // from the code. migrationsDir is pinned to this suite's own
+        // MIGRATIONS_DIR (the same directory `migrateToLatest` above just
+        // applied) so the gate's internal migration call records checksums
+        // against the identical bytes already on record for this database
+        // — a different directory (e.g. the default dist-compiled one)
+        // would trip the checksum guard on a database this test already
+        // migrated with the source .ts migrations.
+        migrationsDir: MIGRATIONS_DIR,
         leaseTtlMs: 5000,
         heartbeatIntervalMs: 50,
         daemonConfig: DAEMON_CONFIG,

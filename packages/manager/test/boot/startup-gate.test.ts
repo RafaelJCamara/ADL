@@ -13,10 +13,15 @@ import {
 import { createCapturingLogger } from '../helpers/capturing-logger.js';
 // Reused directly, per 03-CONTEXT.md's read_first list — the temp-SQLite
 // helper `@adl/db`'s own suite already relies on, not re-derived here.
-import { MIGRATIONS_DIR, withTempDb } from '../../../db/test/helpers/temp-db.js';
+import {
+  MIGRATIONS_DIR,
+  withTempDb,
+} from '../../../db/test/helpers/temp-db.js';
 
 async function digestFile(path: string): Promise<string> {
-  return createHash('sha256').update(await readFile(path)).digest('hex');
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex');
 }
 
 /**
@@ -123,7 +128,10 @@ describe('runStartupGate — copy before migrating', () => {
       }
 
       const version = await metaRepository(db).getSchemaVersion();
-      expect(version).toEqual({ kind: 'valid', version: DAEMON_SCHEMA_VERSION });
+      expect(version).toEqual({
+        kind: 'valid',
+        version: DAEMON_SCHEMA_VERSION,
+      });
     });
   });
 
