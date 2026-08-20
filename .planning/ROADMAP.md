@@ -191,15 +191,15 @@ Plans:
   3. The backend's CLI version is pinned and preflight-checked at startup, so an unexpected version is reported as a broken installation rather than discovered mid-run.
   4. Repository-level agent-CLI config auto-discovery is disabled and system prompts are set explicitly, so the same feature on the same commit receives the same prompt twice running.
 
-**Plans**: 10 plans
+**Plans**: 4/10 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Package legitimacy gate, the `@adl/agent-claude-code` package, and fixtures captured from the real pinned CLI
-- [ ] 04-02-PLAN.md — D-2-08-1: the agent can run git inside its own worktree
-- [ ] 04-03-PLAN.md — The `AgentRunner` port and the on-disk transcript record format
-- [ ] 04-04-PLAN.md — What a worker needs to stand a workspace up: `assign`'s workspace fields and the round/attempt rows
+- [x] 04-01-PLAN.md — Package legitimacy gate, the `@adl/agent-claude-code` package, and fixtures captured from the real pinned CLI
+- [x] 04-02-PLAN.md — D-2-08-1: the agent can run git inside its own worktree
+- [x] 04-03-PLAN.md — The `AgentRunner` port and the on-disk transcript record format
+- [x] 04-04-PLAN.md — What a worker needs to stand a workspace up: `assign`'s workspace fields and the round/attempt rows
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -480,7 +480,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
 | 3. Manager Skeleton | 10/10 | Complete    | 2026-08-20 |
-| 4. First Agent Backend & Live Transcripts | 0/10 | Planned | - |
+| 4. First Agent Backend & Live Transcripts | 4/10 | In Progress|  |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
 | 7. Code Reviewer on the Gate Plugin Interface | 0/TBD | Not started | - |
