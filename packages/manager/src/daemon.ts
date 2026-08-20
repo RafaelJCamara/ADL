@@ -22,6 +22,7 @@ import {
   DAEMON_SCHEMA_VERSION,
   reconcileRepos,
   resolveMigrationsDir,
+  restoreGlobalPause,
   runStartupGate,
   SchemaVersionRefusalError,
 } from './boot/startup.js';
@@ -182,9 +183,13 @@ export async function startDaemon(
 
   const staleRejectionCounter = createStaleRejectionCounter();
   // The dispatch brake (D-26, 03-07 Task 2) — one instance for this daemon
-  // process's lifetime, in memory only (see control/state.ts's own
-  // docblock: a restart resumes dispatch).
-  const controlState = createControlState();
+  // process's lifetime. The global flag is restored here (G-03-3,
+  // 03-10-PLAN.md), after the schema gate and repo reconciliation and
+  // before the supervisor is created, the API binds, or the first dispatch
+  // tick runs — a restore landing after the first tick would dispatch
+  // exactly the work the operator stopped.
+  const initialGlobalPause = await restoreGlobalPause({ db, logger });
+  const controlState = createControlState({ db, initialGlobalPause });
 
   const supervisor = createSupervisor({
     entryPath: options.workerEntryPath ?? DEFAULT_WORKER_ENTRY_PATH,

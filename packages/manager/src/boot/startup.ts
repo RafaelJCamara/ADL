@@ -335,3 +335,65 @@ export async function reconcileRepos(deps: ReconcileReposDeps): Promise<void> {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Global pause restore (G-03-3)
+// ---------------------------------------------------------------------------
+
+export interface RestoreGlobalPauseDeps {
+  readonly db: Kysely<Database>;
+  readonly logger: Logger;
+}
+
+/**
+ * Read the persisted `global_pause` flag and resolve it into the boolean
+ * `daemon.ts` seeds `createControlState`'s `initialGlobalPause` with.
+ * Placed after {@link reconcileRepos}, matching its deps and export shape —
+ * both run after the schema gate, so the `meta` table is guaranteed
+ * migrated, and both run before the API binds or the first dispatch tick.
+ *
+ * Reads only: this function never writes the row back (G-03-3 design
+ * decision 4). Writing on every boot would reset `updated_at` and destroy
+ * the only evidence of when the pause was actually set.
+ *
+ * - `absent` — every database written before this change — resolves to
+ *   `false` with no operator noise; nothing changes for an install that has
+ *   never paused.
+ * - `valid` resolves to its stored boolean, logged at `warn` when the
+ *   answer is `true`: a daemon that boots into a persisted pause and says
+ *   nothing is indistinguishable from a broken one.
+ * - `invalid` resolves to `true`, logged at `error` with the raw value
+ *   (G-03-3 design decision 2): a daemon does not dispatch against a value
+ *   it could not read. Wrongly resuming spends money against an operator's
+ *   explicit stop; wrongly staying paused only makes work wait until a
+ *   human looks — the two failure directions are not symmetric.
+ *
+ * Both the `warn` and the `error` line name the remedy (`adl resume`) so
+ * the operator reads a next action, not just a fact.
+ */
+export async function restoreGlobalPause(
+  deps: RestoreGlobalPauseDeps,
+): Promise<boolean> {
+  const meta = metaRepository(deps.db);
+  const result = await meta.getGlobalPause();
+
+  if (result.kind === 'absent') {
+    return false;
+  }
+
+  if (result.kind === 'invalid') {
+    deps.logger.error(
+      { rawValue: result.rawValue },
+      'startup: stored global_pause value is unreadable — booting paused rather than dispatching against a value that could not be read. Run `adl resume` once you have confirmed dispatch should proceed.',
+    );
+    return true;
+  }
+
+  if (result.paused) {
+    deps.logger.warn(
+      { paused: true },
+      'startup: restoring a persisted global pause set before the last restart — dispatch will not run until `adl resume`.',
+    );
+  }
+  return result.paused;
+}

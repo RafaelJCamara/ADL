@@ -132,7 +132,19 @@ In order, every time the daemon starts:
    signal the process holding it. This is what makes a restart a
    deterministic clean slate: no held lease survives a restart, ever.
 
-5. Dispatch, the reaper tick, and the GC schedule all start, and the HTTP
+5. **The global pause restore (G-03-3).** The daemon reads the persisted
+   `global_pause` flag and seeds the dispatch brake with it, before the API
+   binds and before the first dispatch tick runs. A database that has never
+   had a global pause set boots exactly as it always has — silently, with no
+   flag at all. A database that was paused before the last restart boots
+   paused again, and logs a `warn` line saying so. A stored flag the daemon
+   cannot read (a value other than the two it ever writes itself) also boots
+   the daemon paused — a daemon does not dispatch against a value it could
+   not parse — and logs an `error` line carrying the raw stored value.
+   **Either log line names `adl resume` as the remedy.** This restore never
+   writes the row back; it only reads.
+
+6. Dispatch, the reaper tick, and the GC schedule all start, and the HTTP
    server binds.
 
 ---
@@ -197,6 +209,23 @@ soft_stop-then-`SIGKILL` mechanism above, closes the HTTP server, and exits.
 `adl daemon start` reads `.adl/daemon.json`, boots the sequence described
 above, and serves the API in the foreground.
 
+**A global pause survives a restart; a repo-scoped pause does not.**
+`adl pause` (scope `all`) is written to the daemon's database as a `meta`
+row before the in-memory brake is flipped — a `200` from `POST
+/control/pause` is a durability claim, not a process-lifetime one — and is
+restored at the next boot (see step 5 of the startup sequence above). `adl
+pause --repo <id>` (scope `repo`) is **not** persisted: it lives only as
+long as the process that set it, and a restart clears it. This asymmetry is
+deliberate — G-03-3's ratified scope is the global flag only — and it is
+stated here so an operator learns it from this document rather than from
+behaviour, at the worst possible moment.
+
+If the daemon boots and finds the stored `global_pause` value unreadable
+(neither of the two values the daemon ever writes itself), it boots
+**paused** rather than guessing, and logs an `error` line naming the raw
+value it could not parse. One `adl resume` clears either case — a restored
+pause or an unreadable one — and lets dispatch proceed.
+
 See `packages/cli/README.md` for the full `adl` verb set, and
 `packages/workspace/README.md` for what ADL's own git overrides do and do
 not protect — this package adds nothing to that list.
@@ -213,10 +242,10 @@ corrupt work — two managers can never both hold a lease on the same feature,
 because `acquireLease` is a fenced, atomic compare-and-swap at the database
 layer.
 
-**What the lease fence does *not* prevent:** if two daemons are run against
+**What the lease fence does _not_ prevent:** if two daemons are run against
 the same database, both will reap, both will dispatch, and both will run the
 boot orphan kill. The second daemon's boot orphan kill has no way to tell
-"a worker forked by the *other live daemon*" apart from "an orphan from a
+"a worker forked by the _other live daemon_" apart from "an orphan from a
 dead daemon" — it will target and kill the first daemon's live workers. This
 is an operational hazard for the operator to avoid by not doing this, not a
 data-safety hazard the daemon protects you from.

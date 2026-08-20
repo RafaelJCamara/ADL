@@ -7,6 +7,7 @@ import {
 } from '@adl/core/config';
 import {
   featuresRepository,
+  metaRepository,
   migrateToLatest,
   nowIso,
   type Database,
@@ -163,7 +164,7 @@ describe('POST /control/pause and /control/resume', () => {
       const repoId = await seedRepo(db);
       await seedFeature(db, { repoId, state: 'queued' });
 
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -189,8 +190,8 @@ describe('POST /control/pause and /control/resume', () => {
       const repoId = await seedRepo(db);
       const featureId = await seedFeature(db, { repoId, state: 'paused' });
 
-      const controlState = createControlState();
-      controlState.setGlobalPause(true);
+      const controlState = createControlState({ db });
+      await controlState.setGlobalPause(true);
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -216,6 +217,51 @@ describe('POST /control/pause and /control/resume', () => {
     });
   });
 
+  it('persists the global_pause meta row on pause, and clears it on resume (G-03-3)', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedFeature(db, { repoId, state: 'queued' });
+
+      const controlState = createControlState({ db });
+      const app = apiFor(db, controlState);
+
+      await withEphemeralPort(app, async ({ port }) => {
+        const pauseResponse = await fetch(
+          `http://127.0.0.1:${port}/control/pause`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${API_TOKEN}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ scope: 'all' }),
+          },
+        );
+        expect(pauseResponse.status).toBe(200);
+
+        const pausedRow = await metaRepository(db).getGlobalPause();
+        expect(pausedRow).toEqual({ kind: 'valid', paused: true });
+
+        const resumeResponse = await fetch(
+          `http://127.0.0.1:${port}/control/resume`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${API_TOKEN}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ scope: 'all' }),
+          },
+        );
+        expect(resumeResponse.status).toBe(200);
+
+        const resumedRow = await metaRepository(db).getGlobalPause();
+        expect(resumedRow).toEqual({ kind: 'valid', paused: false });
+      });
+    });
+  });
+
   it('a repo-scoped pause leaves features in other repositories dispatchable', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
@@ -224,7 +270,7 @@ describe('POST /control/pause and /control/resume', () => {
       await seedFeature(db, { repoId: repoA, state: 'queued' });
       const bId = await seedFeature(db, { repoId: repoB, state: 'queued' });
 
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -258,7 +304,7 @@ describe('POST /features/:id/pause and /features/:id/resume', () => {
       });
       const otherId = await seedFeature(db, { repoId: repoB, state: 'queued' });
 
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -283,7 +329,7 @@ describe('POST /features/:id/pause and /features/:id/resume', () => {
   it('on an unknown id responds 404 and writes no feature_events row', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -307,7 +353,7 @@ describe('POST /features/:id/pause and /features/:id/resume', () => {
       await migrateToLatest(db, MIGRATIONS_DIR);
       const repoId = await seedRepo(db);
       const featureId = await seedFeature(db, { repoId, state: 'queued' });
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -329,7 +375,7 @@ describe('POST /features/:id/pause and /features/:id/resume', () => {
       await migrateToLatest(db, MIGRATIONS_DIR);
       const repoId = await seedRepo(db);
       const featureId = await seedFeature(db, { repoId, state: 'paused' });
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       const app = apiFor(db, controlState);
 
       await withEphemeralPort(app, async ({ port }) => {
@@ -360,7 +406,7 @@ describe('the round boundary (D-26): parking in-flight work', () => {
       const worker = withScriptedWorker();
       process.env.ADL_TEST_STAGE_DELAY_MS = '250';
       const { logger } = createCapturingLogger();
-      const controlState = createControlState();
+      const controlState = createControlState({ db });
       let unexpectedExitCalls = 0;
 
       const supervisor = createSupervisor({
@@ -410,7 +456,7 @@ describe('the round boundary (D-26): parking in-flight work', () => {
 
         // Pause arrives mid-round — well before the scripted stage's own delay
         // elapses.
-        controlState.setGlobalPause(true);
+        await controlState.setGlobalPause(true);
 
         const midRound = await featuresRepository(db).findById(featureId);
         expect(midRound?.state).toBe('developing');

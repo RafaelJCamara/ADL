@@ -9,7 +9,11 @@ import {
   type Database,
   type FeaturesTable,
 } from '@adl/db';
-import { applyControlEvent, type ControlState } from '../../control/state.js';
+import {
+  applyControlEvent,
+  GlobalPausePersistError,
+  type ControlState,
+} from '../../control/state.js';
 import { stopWorker } from '../../worker-supervisor/lifecycle.js';
 import type { WorkerSupervisor } from '../../worker-supervisor/supervisor.js';
 
@@ -100,7 +104,11 @@ async function pauseScope(
   if (scope === 'repo') {
     deps.controlState.setRepoPause(repoId!, true);
   } else {
-    deps.controlState.setGlobalPause(true);
+    // Persists before it flips the in-memory flag (`setGlobalPause`'s own
+    // contract). A `GlobalPausePersistError` here propagates to the route
+    // handler before the queued-feature parking loop below runs — a
+    // persistence failure means nothing else ran.
+    await deps.controlState.setGlobalPause(true);
   }
 
   // Only currently-*queued* rows are parked synchronously here — an
@@ -135,7 +143,7 @@ async function resumeScope(
   if (scope === 'repo') {
     deps.controlState.setRepoPause(repoId!, false);
   } else {
-    deps.controlState.setGlobalPause(false);
+    await deps.controlState.setGlobalPause(false);
   }
 
   const repo = featuresRepository(deps.db);
@@ -322,8 +330,20 @@ export function registerControlRoutes(
           400,
         );
       }
-      const affected = await pauseScope(deps, body.scope, body.repoId);
-      return c.json({ affected } satisfies ControlResult);
+      try {
+        const affected = await pauseScope(deps, body.scope, body.repoId);
+        return c.json({ affected } satisfies ControlResult);
+      } catch (error) {
+        if (error instanceof GlobalPausePersistError) {
+          return c.json(
+            {
+              error: 'the pause flag was not persisted — dispatch is unchanged',
+            },
+            500,
+          );
+        }
+        throw error;
+      }
     },
   );
 
@@ -341,8 +361,21 @@ export function registerControlRoutes(
           400,
         );
       }
-      const affected = await resumeScope(deps, body.scope, body.repoId);
-      return c.json({ affected } satisfies ControlResult);
+      try {
+        const affected = await resumeScope(deps, body.scope, body.repoId);
+        return c.json({ affected } satisfies ControlResult);
+      } catch (error) {
+        if (error instanceof GlobalPausePersistError) {
+          return c.json(
+            {
+              error:
+                'the resume flag was not persisted — dispatch is unchanged',
+            },
+            500,
+          );
+        }
+        throw error;
+      }
     },
   );
 }
