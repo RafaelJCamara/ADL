@@ -12,9 +12,10 @@ import { registerHealthRoute } from './routes/health.js';
 /**
  * The Hono app: bearer middleware per Task 1's checkpoint decision
  * (option-b — daemon-generated token in the config file, `GET /health`
- * unauthenticated), then `GET /health` and `GET /features` only. The rest of
- * D-20's surface (`/features/:id`, `POST .../pause|kill`, `/control/*`)
- * arrives in a later plan.
+ * unauthenticated), then `GET /health`, `GET /features`, and — when the
+ * caller supplies `db`/`controlState`/`supervisor` — the control surface
+ * (`POST /features/:id/pause|resume|kill`, `POST /control/pause|resume|kill`,
+ * D-20, D-26, D-27..29, 03-07).
  *
  * Token comparison is `crypto.timingSafeEqual`, never `===` — ASVS V2, and
  * not left to Task 1's decision; it applies to every option that was on the
@@ -92,7 +93,13 @@ export function createApi(deps: ApiDeps): Hono {
   });
 
   registerHealthRoute(app, { schemaVersion: deps.schemaVersion });
-  registerFeaturesRoute(app, { listFeatureViews: deps.listFeatureViews });
+  registerFeaturesRoute(app, {
+    listFeatureViews: deps.listFeatureViews,
+    db: deps.db,
+    supervisor: deps.supervisor,
+    workerStopGraceMs: deps.workerStopGraceMs,
+    logger: deps.logger,
+  });
   if (deps.db !== undefined && deps.controlState !== undefined) {
     registerControlRoutes(app, {
       db: deps.db,

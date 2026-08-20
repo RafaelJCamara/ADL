@@ -3,15 +3,23 @@ import type { Hono } from 'hono';
 import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import * as z from 'zod';
-import { featuresRepository, nowIso, type Database } from '@adl/db';
+import {
+  featuresRepository,
+  nowIso,
+  type Database,
+  type FeaturesTable,
+} from '@adl/db';
 import { applyControlEvent, type ControlState } from '../../control/state.js';
+import { stopWorker } from '../../worker-supervisor/lifecycle.js';
 import type { WorkerSupervisor } from '../../worker-supervisor/supervisor.js';
 
 /**
  * `src/api/routes/control.ts` — D-20's control surface: pause/resume at
- * feature, repo, and global scope (D-26). `POST /control/kill` (D-27..29)
- * is added by 03-07 Task 3; `POST /features/:id/kill` lives in
- * `routes/features.ts` instead, alongside the other single-feature routes.
+ * feature, repo, and global scope (D-26), and `POST /control/kill`
+ * (D-27..29). `POST /features/:id/kill` lives in `routes/features.ts`
+ * instead, alongside the other single-feature routes, but shares this
+ * module's {@link killFeature} so the stop-then-transition sequence cannot
+ * drift between the two call sites.
  *
  * `zValidator` is applied per route, not through `app.use()`, so the
  * validated type is inferred correctly at the handler
@@ -150,10 +158,118 @@ async function resumeScope(
   return affected;
 }
 
+/** The subset of `ControlRoutesDeps` kill actually needs, all present. */
+export interface KillDeps {
+  readonly db: Kysely<Database>;
+  readonly supervisor: WorkerSupervisor;
+  readonly workerStopGraceMs: number;
+  readonly logger: Logger;
+}
+
+/**
+ * D-27's kill: stop the worker **first** (if this feature is currently
+ * in-flight — a queued feature has none), then transition to `paused`.
+ * Order matters: a transition written while the worker is still running
+ * would be a state the lease holder can still contradict.
+ *
+ * A killed feature lands in `paused`, never `escalated` — kill stops the
+ * process, it does not judge the feature (D-27). Reusing `applyControlEvent`
+ * with a `pause` event is exactly how that's expressed: the same edge D-26's
+ * maintainer-initiated pause uses, so there is only ever one way a feature
+ * reaches `paused`.
+ */
+export async function killFeature(
+  deps: KillDeps,
+  feature: FeaturesTable,
+  actor: string,
+): Promise<boolean> {
+  const active = deps.supervisor.get(feature.id);
+  if (active !== undefined) {
+    await stopWorker(
+      deps.supervisor,
+      active,
+      deps.workerStopGraceMs,
+      deps.logger,
+    );
+  }
+  return applyControlEvent(
+    deps.db,
+    feature,
+    { t: 'pause', by: actor },
+    actor,
+    nowIso(),
+  );
+}
+
+async function killScope(
+  deps: KillDeps,
+  scope: 'repo' | 'all',
+  repoId: string | undefined,
+): Promise<string[]> {
+  const repo = featuresRepository(deps.db);
+  const leased = await repo.listLeased();
+  const queued = await repo.listQueued();
+  const leasedTargets =
+    scope === 'repo' ? leased.filter((f) => f.repo_id === repoId) : leased;
+  // The `all`/`repo` scope stops every in-flight feature and parks every
+  // queued one (the OBS-04 flagged assumption in 03-07-PLAN.md — the
+  // alternative reading, stopping only what is in flight, is equally
+  // consistent with the requirement text).
+  const queuedTargets =
+    scope === 'repo' ? queued.filter((f) => f.repo_id === repoId) : queued;
+
+  const affected: string[] = [];
+  for (const feature of leasedTargets) {
+    const changed = await killFeature(deps, feature, CONTROL_ACTOR);
+    if (changed) affected.push(feature.id);
+  }
+  const now = nowIso();
+  for (const feature of queuedTargets) {
+    const changed = await applyControlEvent(
+      deps.db,
+      feature,
+      { t: 'pause', by: CONTROL_ACTOR },
+      CONTROL_ACTOR,
+      now,
+    );
+    if (changed) affected.push(feature.id);
+  }
+  return affected;
+}
+
 export function registerControlRoutes(
   app: Hono,
   deps: ControlRoutesDeps,
 ): void {
+  const { supervisor, workerStopGraceMs, logger } = deps;
+  if (
+    supervisor !== undefined &&
+    workerStopGraceMs !== undefined &&
+    logger !== undefined
+  ) {
+    app.post(
+      '/control/kill',
+      zValidator('json', KillRequestSchema),
+      async (c) => {
+        const body = c.req.valid('json');
+        if (body.scope === 'feature') {
+          return c.json(
+            {
+              error:
+                "scope 'feature' is not valid here — use POST /features/:id/kill",
+            },
+            400,
+          );
+        }
+        const affected = await killScope(
+          { db: deps.db, supervisor, workerStopGraceMs, logger },
+          body.scope,
+          body.repoId,
+        );
+        return c.json({ affected } satisfies ControlResult);
+      },
+    );
+  }
   app.post('/features/:id/pause', async (c) => {
     const featureId = c.req.param('id');
     const repo = featuresRepository(deps.db);

@@ -31,12 +31,14 @@ export type { FeatureView } from './api/routes/features.js';
 export {
   ControlResultSchema,
   ControlScopeSchema,
+  killFeature,
   KillRequestSchema,
   PauseRequestSchema,
   registerControlRoutes,
   type ControlResult,
   type ControlRoutesDeps,
   type ControlScope,
+  type KillDeps,
   type KillRequest,
   type PauseRequest,
 } from './api/routes/control.js';
@@ -197,13 +199,17 @@ export {
   type ProcessStartTimeResult,
 } from './boot/orphans.js';
 
-// Graceful shutdown (D-37, D-28) — and the per-worker escalation helper a
-// later plan's `adl kill` (`03-07`) shares rather than re-deriving.
+// Graceful shutdown (D-37, D-28).
+export { gracefulShutdown, type ShutdownDeps } from './boot/shutdown.js';
+
+// The per-worker stop escalation (D-28 as amended) — the single
+// implementation `gracefulShutdown` and `adl kill` (D-27..29, 03-07 Task 3)
+// both share, so the soft_stop-then-SIGKILL behaviour cannot drift apart.
 export {
-  gracefulShutdown,
-  stopWorkerGracefully,
-  type ShutdownDeps,
-} from './boot/shutdown.js';
+  stopAllWorkers,
+  stopWorker,
+  type StopOutcome,
+} from './worker-supervisor/lifecycle.js';
 
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
