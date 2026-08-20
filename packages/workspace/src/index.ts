@@ -86,13 +86,23 @@ export {
 // could call it and then had no name for the value in their hands. That is a
 // hole rather than a boundary — plan `02-05` flagged it as a carry-forward and
 // this is the change it named.
+//
+// `writeScratchGitConfig` and `SCRATCH_GITCONFIG_FILENAME` are exported for the
+// same reason `applyWorkerAccess` already is (D-2-08-1): an out-of-tree
+// workspace backend that stands up its own scratch home faces the identical
+// `safe.directory` problem — the child it launches runs as a different uid
+// than whatever created its worktree, and git refuses to proceed without this
+// exact marking — and it must be able to solve it with the same reviewed code
+// rather than an unreviewed second implementation.
 export {
   createScratchHome,
   destroyScratchHome,
+  SCRATCH_GITCONFIG_FILENAME,
   type ScratchHome,
   type ScratchHomeTeardown,
   listScratchHomes,
   scratchHomeRoot,
+  writeScratchGitConfig,
   type ScratchHomeEntry,
   type ScratchHomeOwner,
 } from './exec/scratch-home.js';

@@ -36,6 +36,7 @@
 import { join } from 'node:path';
 import type { ExecSpec } from '@adl/core/stage';
 import { WorkspaceError } from '../errors.js';
+import { SCRATCH_GITCONFIG_FILENAME } from './scratch-home.js';
 
 /**
  * The neutralisers, and the reason each one is a path *inside* the scratch home
@@ -67,8 +68,11 @@ import { WorkspaceError } from '../errors.js';
 function neutralisers(scratchHome: string): Record<string, string> {
   return {
     // git looks at $HOME/.gitconfig unless this names a file explicitly. The
-    // agent may write to it; it dies with the directory.
-    GIT_CONFIG_GLOBAL: join(scratchHome, '.gitconfig'),
+    // agent may write to it; it dies with the directory. Built from the same
+    // constant `exec/scratch-home.ts`'s `writeScratchGitConfig` writes to, so
+    // the writer and this pointer cannot drift into naming two different files
+    // (D-2-08-1).
+    GIT_CONFIG_GLOBAL: join(scratchHome, SCRATCH_GITCONFIG_FILENAME),
     // `/etc/gitconfig` is outside the scratch directory and outside ADL's
     // control, so the only way to make it not apply is to switch it off.
     GIT_CONFIG_NOSYSTEM: '1',
