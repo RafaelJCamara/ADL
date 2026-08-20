@@ -76,3 +76,32 @@ export function withIgnoresStopWorker(
     execArgv: ['--import', 'tsx'],
   };
 }
+
+/**
+ * The D-32 scenario's "held" double's own entry module (03-09) — see
+ * `held-worker-entry.ts`'s docblock: it never completes a stage on its own,
+ * so a `SIGKILL` aimed at it never races the worker's own completion timer.
+ */
+export const heldWorkerEntry = fileURLToPath(
+  new URL('./held-worker-entry.ts', import.meta.url),
+);
+
+/**
+ * The fork() options that launch the "held" double — the deterministic
+ * mid-run kill hook `03-09-PLAN.md` names: every worker this config forks
+ * stays assigned and heartbeating until an external signal or `soft_stop`
+ * stops it, which is what lets the concurrency-3 crash-and-restart scenario
+ * (`test/scenario/concurrency-crash-restart.test.ts`) capture all three of
+ * its workers "mid-run" without a race against a stage runner's own
+ * completion delay. Reusable across any number of concurrently-leased
+ * features — the same factory, called once per feature.
+ */
+export function withHeldWorker(
+  options: { readonly cwd?: string } = {},
+): ScriptedWorkerConfig {
+  return {
+    entryPath: heldWorkerEntry,
+    cwd: options.cwd ?? process.cwd(),
+    execArgv: ['--import', 'tsx'],
+  };
+}
