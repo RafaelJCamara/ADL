@@ -72,11 +72,11 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 
 ### Model Backends
 
-- [ ] **BACK-01**: ADL drives agentic CLIs that own their own loop and tools, through an `AgentBackend` port
+- [x] **BACK-01**: ADL drives agentic CLIs that own their own loop and tools, through an `AgentBackend` port
 - [ ] **BACK-02**: ADL drives raw model APIs, owning the loop itself, through a `ModelBackend` port
 - [ ] **BACK-03**: A single conformance suite is passed by every adapter in both families, in CI
 - [ ] **BACK-04**: Backend-specific behaviour is confined to adapters — the core loop never branches on backend identity
-- [ ] **BACK-05**: Claude Code headless works as a backend
+- [x] **BACK-05**: Claude Code headless works as a backend
 - [ ] **BACK-06**: Anthropic API direct works as a backend
 - [ ] **BACK-07**: OpenAI works as a backend, via API and Codex CLI
 - [ ] **BACK-08**: Gemini works as a backend, via API and CLI
@@ -123,7 +123,7 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 ### Observability & Control
 
 - [x] **OBS-01**: Maintainer can see what every feature is doing right now
-- [ ] **OBS-02**: Maintainer can follow a running agent's transcript live
+- [x] **OBS-02**: Maintainer can follow a running agent's transcript live
 - [x] **OBS-03**: Maintainer can pause work
 - [x] **OBS-04**: Maintainer can kill a single feature, everything in one repo, or everything
 - [ ] **OBS-05**: Maintainer can see spend per feature and per role
@@ -223,11 +223,11 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | HARN-04 | Phase 7 | Pending |
 | HARN-05 | Phase 13 | Pending |
 | HARN-06 | Phase 13 | Pending |
-| BACK-01 | Phase 4 | Pending |
+| BACK-01 | Phase 4 | Complete |
 | BACK-02 | Phase 11 | Pending |
 | BACK-03 | Phase 11 | Pending |
 | BACK-04 | Phase 11 | Pending |
-| BACK-05 | Phase 4 | Pending |
+| BACK-05 | Phase 4 | Complete |
 | BACK-06 | Phase 11 | Pending |
 | BACK-07 | Phase 16 | Pending |
 | BACK-08 | Phase 16 | Pending |
@@ -262,7 +262,7 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | WORK-09 | Phase 15 | Pending |
 | WORK-10 | Phase 15 | Pending |
 | OBS-01 | Phase 3 | Complete |
-| OBS-02 | Phase 4 | Pending |
+| OBS-02 | Phase 4 | Complete |
 | OBS-03 | Phase 3 | Complete |
 | OBS-04 | Phase 3 | Complete |
 | OBS-05 | Phase 6 | Pending |
