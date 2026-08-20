@@ -262,6 +262,36 @@ export {
   type TerminalAttemptStatus,
 } from './bookkeeping/attempt.js';
 
+// The transcript path builder (04-05 Task 1) — the deterministic
+// `logs/<feature>/<round>/<stage>/<attempt>.ndjson` location for one stage
+// attempt (`ARCHITECTURE.md` §4). Published because both the worker (which
+// writes a transcript) and the manager's HTTP route (04-08, which reads one)
+// need the identical path for the identical address — a second computation
+// of "the same" path is how the two end up disagreeing.
+export {
+  logsRootFor,
+  transcriptPathFor,
+  TRANSCRIPT_EXTENSION,
+  TranscriptAddressError,
+  type TranscriptAddress,
+} from './store/transcript-path.js';
+
+// The NDJSON transcript store (04-05 Task 2) — the byte-offset
+// append/read primitive `ARCHITECTURE.md` §9's `?offset=N&follow=1` addressing
+// depends on. Published for the same two consumers as `transcriptPathFor`
+// above: the worker appends through `openTranscriptWriter` as `AgentEvent`s
+// arrive, and the manager's transcript route (04-08) reads through
+// `readTranscriptFrom`/`transcriptLength`. They must agree on what an offset
+// means, which is exactly what sharing this one implementation guarantees.
+export {
+  openTranscriptWriter,
+  readTranscriptFrom,
+  transcriptLength,
+  TranscriptOffsetError,
+  type TranscriptRead,
+  type TranscriptWriter,
+} from './store/ndjson-log-store.js';
+
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
 // unexported from `@adl/workspace`'s barrel: it is an implementation detail
