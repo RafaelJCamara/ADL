@@ -244,6 +244,24 @@ export {
   type StopOutcome,
 } from './worker-supervisor/lifecycle.js';
 
+// The bookkeeping module (04-04 Task 2) — the one place a round and a stage
+// attempt are opened and closed, and the DB-backed resolution a stage
+// attempt id must go through before it becomes a filesystem path (T-4-15).
+// Published so the dispatcher, the transcript route (04-08), and the usage
+// writer (04-10) all call the same functions rather than each growing their
+// own insert.
+export {
+  closeAttempt,
+  findAttempt,
+  openAttempt,
+  type AttemptAddress,
+  type AttemptDeps,
+  type CloseAttemptInput,
+  type OpenAttempt,
+  type OpenAttemptInput,
+  type TerminalAttemptStatus,
+} from './bookkeeping/attempt.js';
+
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
 // unexported from `@adl/workspace`'s barrel: it is an implementation detail
