@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely';
+import type { Logger } from 'pino';
 import { ulid } from 'ulid';
 import {
   featuresRepository,
@@ -72,6 +73,14 @@ export interface DispatcherDeps {
   readonly spawnWorker: (call: SpawnCall) => void;
   readonly actor?: string;
   readonly now?: () => string;
+  /**
+   * Optional so every earlier plan's tests keep constructing `DispatcherDeps`
+   * without one — absent, `mergeConfig`'s clamp/discard report (WR-01) is
+   * silently dropped exactly as it always was, matching this file's existing
+   * "absent, dispatch is never paused" precedent for `controlState`.
+   * `daemon.ts` wires its real logger here.
+   */
+  readonly logger?: Logger;
   /**
    * The dispatch brake (D-26, 03-07 Task 2). Consulted per candidate,
    * before the concurrency cap — a paused repository is simply never a
@@ -152,11 +161,17 @@ export async function dispatchOnce(
   // Snapshot the effective configuration at lease time (Phase 1's versioning
   // rule 3). `mergeConfig` already produces exactly the frozen resolved
   // object this needs; this is the one place this plan calls it.
-  const { config } = mergeConfig(
+  const { config, report } = mergeConfig(
     DEFAULT_CONFIG,
     deps.daemonConfig,
     deps.resolveAdlYml(feature),
   );
+  if (report.clamped.length > 0 || report.discarded.length > 0) {
+    deps.logger?.warn(
+      { featureId: feature.id, clamped: report.clamped, discarded: report.discarded },
+      'adl.yml requested fields outside its trust boundary',
+    );
+  }
   const effectiveConfigJson = JSON.stringify(config);
 
   // D-12's other half, made an explicit branch rather than left as an

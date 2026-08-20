@@ -306,6 +306,7 @@ export async function startDaemon(
         daemonConfig: options.daemonConfig,
         resolveAdlYml: options.resolveAdlYml,
         controlState,
+        logger,
         spawnWorker: ({ feature, leaseToken, assign }) => {
           supervisor.spawn(feature, leaseToken, assign);
         },
