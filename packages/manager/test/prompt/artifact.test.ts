@@ -250,7 +250,7 @@ function checkingAgentRunner(onRun: () => void): AgentRunner {
     async probe() {
       return { usable: true, installedVersion: null, expectedVersion: 'test' };
     },
-    async run(_task, _ctx) {
+    async run() {
       onRun();
       return {
         outcome: 'completed',

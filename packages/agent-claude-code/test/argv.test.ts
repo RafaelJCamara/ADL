@@ -3,7 +3,6 @@ import type {
   AgentTask,
   ExecResult,
   ExecSpec,
-  LogChunk,
   Workspace,
 } from '@adl/core/stage';
 import { claudeCodeBackend } from '../src/backend.js';
@@ -32,10 +31,7 @@ function fakeWorkspace(): { workspace: Workspace; execCalls: ExecSpec[] } {
     id: 'ws-argv-test',
     root: '/workspace/root',
     scratchHome: '/workspace/scratch-home',
-    async exec(
-      spec: ExecSpec,
-      _log: (chunk: LogChunk) => void,
-    ): Promise<ExecResult> {
+    async exec(spec: ExecSpec): Promise<ExecResult> {
       execCalls.push(spec);
       return { exitCode: 0, durationMs: 1 };
     },

@@ -187,9 +187,8 @@ describe('buildDeveloperPrompt', () => {
     const previous = process.env['ADL_TEST_ENV_LEAK_CHECK'];
     process.env['ADL_TEST_ENV_LEAK_CHECK'] = marker;
     try {
-      const { instructions, systemPrompt } = buildDeveloperPrompt(
-        fixtureInput(),
-      );
+      const { instructions, systemPrompt } =
+        buildDeveloperPrompt(fixtureInput());
       expect(instructions).not.toContain(marker);
       expect(systemPrompt).not.toContain(marker);
     } finally {
@@ -248,11 +247,7 @@ describe('buildDeveloperPrompt', () => {
 
     it('a repository instruction file present on disk but NOT declared does not appear in the rendered prompt', async () => {
       await withTempDir(async (dir) => {
-        await writeFile(
-          join(dir, 'AGENTS.md'),
-          'DECLARED-FILE-MARKER',
-          'utf8',
-        );
+        await writeFile(join(dir, 'AGENTS.md'), 'DECLARED-FILE-MARKER', 'utf8');
         // Present on disk, never named in context.files — presence is not consent.
         await writeFile(
           join(dir, 'CLAUDE.md'),
@@ -335,7 +330,11 @@ describe('buildDeveloperPrompt', () => {
             `fixture adl.yml failed to parse: ${JSON.stringify(result.error.issues)}`,
           );
         }
-        const { config } = mergeConfig(DEFAULT_CONFIG, emptyDaemon(), result.data);
+        const { config } = mergeConfig(
+          DEFAULT_CONFIG,
+          emptyDaemon(),
+          result.data,
+        );
 
         expect(() =>
           buildDeveloperPrompt({
