@@ -191,7 +191,7 @@ Plans:
   3. The backend's CLI version is pinned and preflight-checked at startup, so an unexpected version is reported as a broken installation rather than discovered mid-run.
   4. Repository-level agent-CLI config auto-discovery is disabled and system prompts are set explicitly, so the same feature on the same commit receives the same prompt twice running.
 
-**Plans**: 6/10 plans executed
+**Plans**: 9/10 plans executed
 
 Plans:
 **Wave 1**
@@ -211,9 +211,9 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 04-07-PLAN.md — Version preflight: the exact pin, the hard block, the broken-installation diagnosis
-- [ ] 04-08-PLAN.md — Reconnect without loss or duplication: the follow loop and `adl logs -f`
-- [ ] 04-09-PLAN.md — Determinism: discovery disabled, context supplied explicitly, the prompt persisted per attempt
+- [x] 04-07-PLAN.md — Version preflight: the exact pin, the hard block, the broken-installation diagnosis
+- [x] 04-08-PLAN.md — Reconnect without loss or duplication: the follow loop and `adl logs -f`
+- [x] 04-09-PLAN.md — Determinism: discovery disabled, context supplied explicitly, the prompt persisted per attempt
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -480,7 +480,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
 | 3. Manager Skeleton | 10/10 | Complete    | 2026-08-20 |
-| 4. First Agent Backend & Live Transcripts | 6/10 | In Progress|  |
+| 4. First Agent Backend & Live Transcripts | 9/10 | In Progress|  |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
 | 7. Code Reviewer on the Gate Plugin Interface | 0/TBD | Not started | - |
