@@ -99,8 +99,8 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 
 ### Execution & State
 
-- [ ] **EXEC-01**: Manager process owns detection, queue, state, config, credentials, and accounting
-- [ ] **EXEC-02**: Worker runs as a separate OS process holding a lease on one feature
+- [x] **EXEC-01**: Manager process owns detection, queue, state, config, credentials, and accounting
+- [x] **EXEC-02**: Worker runs as a separate OS process holding a lease on one feature
 - [x] **EXEC-03**: A worker killed mid-loop is detected and its feature recovered, with committed work preserved and burned spend retained on the ledger
 - [x] **EXEC-04**: A resumed zombie worker cannot write stale results over newer state
 - [x] **EXEC-05**: Maintainer sets concurrency; it defaults to one feature in flight
@@ -125,7 +125,7 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 - [ ] **OBS-01**: Maintainer can see what every feature is doing right now
 - [ ] **OBS-02**: Maintainer can follow a running agent's transcript live
 - [ ] **OBS-03**: Maintainer can pause work
-- [ ] **OBS-04**: Maintainer can kill a single feature, everything in one repo, or everything
+- [x] **OBS-04**: Maintainer can kill a single feature, everything in one repo, or everything
 - [ ] **OBS-05**: Maintainer can see spend per feature and per role
 - [ ] **OBS-06**: An HTTP API exposes everything the CLI can do
 - [ ] **OBS-07**: A web dashboard presents the same information over that API
@@ -244,8 +244,8 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | FORGE-10 | Phase 5 | Pending |
 | FORGE-11 | Phase 9 | Pending |
 | FORGE-12 | Phase 9 | Pending |
-| EXEC-01 | Phase 3 | Pending |
-| EXEC-02 | Phase 3 | Pending |
+| EXEC-01 | Phase 3 | Complete |
+| EXEC-02 | Phase 3 | Complete |
 | EXEC-03 | Phase 3 | Complete |
 | EXEC-04 | Phase 3 | Complete |
 | EXEC-05 | Phase 3 | Complete |
@@ -264,7 +264,7 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | OBS-01 | Phase 3 | Pending |
 | OBS-02 | Phase 4 | Pending |
 | OBS-03 | Phase 3 | Pending |
-| OBS-04 | Phase 3 | Pending |
+| OBS-04 | Phase 3 | Complete |
 | OBS-05 | Phase 6 | Pending |
 | OBS-06 | Phase 17 | Pending |
 | OBS-07 | Phase 17 | Pending |

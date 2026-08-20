@@ -200,3 +200,28 @@ above, and serves the API in the foreground.
 See `packages/cli/README.md` for the full `adl` verb set, and
 `packages/workspace/README.md` for what ADL's own git overrides do and do
 not protect — this package adds nothing to that list.
+
+---
+
+## No single-instance guard (accepted for v1)
+
+**Nothing stops two `adl daemon start` processes from being pointed at the
+same database file.** There is no PID file, no advisory lock, no
+single-instance check. This is a deliberate v1 decision (EXEC-01), not an
+oversight: the lease fence already prevents the one outcome that would
+corrupt work — two managers can never both hold a lease on the same feature,
+because `acquireLease` is a fenced, atomic compare-and-swap at the database
+layer.
+
+**What the lease fence does *not* prevent:** if two daemons are run against
+the same database, both will reap, both will dispatch, and both will run the
+boot orphan kill. The second daemon's boot orphan kill has no way to tell
+"a worker forked by the *other live daemon*" apart from "an orphan from a
+dead daemon" — it will target and kill the first daemon's live workers. This
+is an operational hazard for the operator to avoid by not doing this, not a
+data-safety hazard the daemon protects you from.
+
+**Operator guidance:** run exactly one `adl daemon start` per database file.
+A single-instance guard (PID file or advisory lock) would be a small,
+additive change if a future phase needs one; it was consciously deferred
+here because the lease fence already makes the failure mode non-corrupting.
