@@ -253,6 +253,7 @@ export {
 export {
   closeAttempt,
   findAttempt,
+  isAttemptEnded,
   openAttempt,
   type AttemptAddress,
   type AttemptDeps,
@@ -334,5 +335,15 @@ export {
   type DevRunRoutesDeps,
 } from './api/routes/dev-run.js';
 
-// `GET /stages/:id/logs` (04-06) — published for the same reason.
-export { registerLogsRoute, type LogsRouteDeps } from './api/routes/logs.js';
+// `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow loop)
+// — published for the same reason every other route module is: so a test can
+// mount it directly. `TRANSCRIPT_POLL_INTERVAL_MS`/`LOG_STREAM_EVENTS` are
+// published because a CLI client (04-08's `adl logs -f`) branches on the
+// exact same wire vocabulary the route emits — one definition, not two.
+export {
+  LOG_STREAM_EVENTS,
+  registerLogsRoute,
+  TRANSCRIPT_POLL_INTERVAL_MS,
+  type LogsRouteDeps,
+  type LogStreamEventName,
+} from './api/routes/logs.js';

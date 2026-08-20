@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 2
+open_count: 3
 waived_count: 0
 fixed_count: 0
-total_count: 2
-last_updated: 2026-08-20T20:23:14.681Z
+total_count: 3
+last_updated: 2026-08-20T20:38:10.929Z
 ---
 
 # Broken Windows Ledger
@@ -17,6 +17,7 @@ last_updated: 2026-08-20T20:23:14.681Z
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 4 | unrun-verify | packages/workspace/test/worktree/safe-directory.test.ts |  | D-2-08-1 privilege-drop reproduction (positive + negative control) is linuxOnly-gated and did not execute this session — the executor ran on Windows; needs a Linux CI leg or provisioned host to close 04-RESEARCH.md Assumption A4. | open |  | 2026-08-20T13:44:24.299Z |  |
 | 2 | 04 | unrun-verify | packages/manager/src/boot/backend-preflight.ts |  | claudeVersionCheckRunner (real claude --version via ADL-owned exec boundary) never exercised against a real, pinned CLI — 04-01 Task 3 fixture capture still deferred | open |  | 2026-08-20T20:23:14.681Z |  |
+| 3 | 04 | deviation | packages/manager/test/api/logs-reconnect.test.ts |  | Task 3's kill/reattach proof uses createApi()+withEphemeralPort (same production route/store code, real HTTP, real on-disk transcript files) instead of a full startDaemon()+forked-worker+real-agent-CLI-double pipeline — the byte-precise adversarial cases (partial in-flight write, stale-offset reattach) need deterministic timing a real agent subprocess's output cadence cannot guarantee. The main growing-transcript kill/reattach scenario exercises the same lighter harness for consistency; 04-06's tracer already proves the full daemon/worker/agent pipeline separately. | open |  | 2026-08-20T20:38:10.929Z |  |
 
 ````json
 [
@@ -43,7 +44,18 @@ last_updated: 2026-08-20T20:23:14.681Z
     "reason": "",
     "recorded_at": "2026-08-20T20:23:14.681Z",
     "resolved_at": null
+  },
+  {
+    "id": 3,
+    "kind": "deviation",
+    "phase": "04",
+    "file": "packages/manager/test/api/logs-reconnect.test.ts",
+    "line": null,
+    "description": "Task 3's kill/reattach proof uses createApi()+withEphemeralPort (same production route/store code, real HTTP, real on-disk transcript files) instead of a full startDaemon()+forked-worker+real-agent-CLI-double pipeline — the byte-precise adversarial cases (partial in-flight write, stale-offset reattach) need deterministic timing a real agent subprocess's output cadence cannot guarantee. The main growing-transcript kill/reattach scenario exercises the same lighter harness for consistency; 04-06's tracer already proves the full daemon/worker/agent pipeline separately.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-20T20:38:10.929Z",
+    "resolved_at": null
   }
 ]
 ````
-

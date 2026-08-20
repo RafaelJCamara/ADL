@@ -95,11 +95,18 @@ export interface ApiDeps {
    */
   readonly dispatchOnce?: () => Promise<DispatchDecision>;
   /**
-   * `GET /stages/:id/logs` (04-06): present only when the caller also wants
-   * the transcript route mounted. The directory transcripts live under —
-   * `logsRootFor(dbFilePath)`, computed once by `daemon.ts`.
+   * `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow
+   * loop): present only when the caller also wants the transcript route
+   * mounted. The directory transcripts live under — `logsRootFor(dbFilePath)`,
+   * computed once by `daemon.ts`.
    */
   readonly logsRoot?: string;
+  /**
+   * Overrides the follow loop's poll cadence for this app instance — a test
+   * seam only; `daemon.ts` never sets this, so `TRANSCRIPT_POLL_INTERVAL_MS`
+   * applies in production.
+   */
+  readonly logsPollIntervalMs?: number;
 }
 
 export function createApi(deps: ApiDeps): Hono {
@@ -179,7 +186,11 @@ export function createApi(deps: ApiDeps): Hono {
     });
   }
   if (deps.db !== undefined && deps.logsRoot !== undefined) {
-    registerLogsRoute(app, { db: deps.db, logsRoot: deps.logsRoot });
+    registerLogsRoute(app, {
+      db: deps.db,
+      logsRoot: deps.logsRoot,
+      pollIntervalMs: deps.logsPollIntervalMs,
+    });
   }
   if (deps.onShutdownRequested !== undefined) {
     app.post('/control/shutdown', (c) => {

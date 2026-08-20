@@ -7,7 +7,7 @@ import { daemonStartCommand, daemonStopCommand } from './commands/daemon.js';
 import { devRunCommand } from './commands/dev-run.js';
 import { gcCommand } from './commands/gc.js';
 import { killCommand } from './commands/kill.js';
-import { logsCommand } from './commands/logs.js';
+import { InvalidLogsOffsetError, logsCommand } from './commands/logs.js';
 import { pauseCommand } from './commands/pause.js';
 import { resumeCommand } from './commands/resume.js';
 import { statusCommand, type WriteSink } from './commands/status.js';
@@ -114,7 +114,8 @@ export function buildProgram(deps: BuildProgramDeps): Command {
       if (
         error instanceof DaemonUnreachableError ||
         error instanceof DaemonRequestError ||
-        error instanceof ScopeUsageError
+        error instanceof ScopeUsageError ||
+        error instanceof InvalidLogsOffsetError
       ) {
         stderr.write(`${error.message}\n`);
         process.exitCode = 1;
@@ -244,19 +245,29 @@ export function buildProgram(deps: BuildProgramDeps): Command {
     .argument('<stage-attempt-id>', 'The stage attempt to stream logs for')
     .option(
       '-f, --follow',
-      'Keep polling for new records as the run continues',
+      'Stay attached and receive new records as the run continues',
       false,
     )
-    .action(async (stageAttemptId: string, options: { follow?: boolean }) => {
-      const config = resolveConfig();
-      const client = buildClient(config);
-      await runVerb(() =>
-        logsCommand(
-          { stageAttemptId, follow: Boolean(options.follow) },
-          { client, stdout: deps.stdout },
-        ),
-      );
-    });
+    .option('--offset <bytes>', 'Start (or resume) from a given byte offset')
+    .action(
+      async (
+        stageAttemptId: string,
+        options: { follow?: boolean; offset?: string },
+      ) => {
+        const config = resolveConfig();
+        const client = buildClient(config);
+        await runVerb(() =>
+          logsCommand(
+            {
+              stageAttemptId,
+              follow: Boolean(options.follow),
+              offset: options.offset,
+            },
+            { client, stdout: deps.stdout },
+          ),
+        );
+      },
+    );
 
   const daemonProgram = program
     .command('daemon')
