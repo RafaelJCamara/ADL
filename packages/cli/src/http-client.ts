@@ -31,9 +31,51 @@ export interface DaemonClientConfig {
   readonly token: string;
 }
 
+/** `@adl/manager`'s `ControlResultSchema`, restated (D-18) — the affected feature ids. */
+export interface ControlResult {
+  readonly affected: readonly string[];
+}
+
+/** The three blast radii D-29 defines. `'feature'` is never sent to `/control/*` — see `postControl`. */
+export type ControlScope = 'feature' | 'repo' | 'all';
+
+/** `@adl/manager`'s `GcRunSummary`, restated — what one GC pass reclaimed and could not. */
+export interface GcRunSummary {
+  readonly worktreesRemoved: readonly string[];
+  readonly scratchHomesRemoved: readonly string[];
+  readonly worktreeFailures: readonly unknown[];
+  readonly scratchHomeFailures: readonly unknown[];
+}
+
+/** A non-2xx response from a *reachable* daemon — a 404, a 401, a validation 400. */
+export class DaemonRequestError extends Error {
+  readonly status: number;
+
+  constructor(path: string, status: number) {
+    super(`${path} failed with status ${status}`);
+    this.name = 'DaemonRequestError';
+    this.status = status;
+  }
+}
+
 export interface DaemonClient {
   /** `GET /features` — the raw JSON array the manager returns. */
   getFeatures(): Promise<readonly unknown[]>;
+  /** `POST /features/:id/{verb}` — the single-feature scope of pause/resume/kill. */
+  postFeatureControl(
+    featureId: string,
+    verb: 'pause' | 'resume' | 'kill',
+  ): Promise<ControlResult>;
+  /** `POST /control/{verb}` with `{ scope: 'repo' | 'all', repoId? }` (D-20, D-26, D-27..29). */
+  postControl(
+    verb: 'pause' | 'resume' | 'kill',
+    scope: 'repo' | 'all',
+    repoId?: string,
+  ): Promise<ControlResult>;
+  /** `POST /control/gc` — one GC pass on demand (D-34). */
+  postGc(): Promise<GcRunSummary>;
+  /** `POST /control/shutdown` — `adl daemon stop`'s graceful-shutdown request. */
+  postShutdown(): Promise<void>;
 }
 
 /**
@@ -44,25 +86,59 @@ export interface DaemonClient {
 export function daemonClient(config: DaemonClientConfig): DaemonClient {
   const baseUrl = `http://${config.host}:${config.port}`;
 
-  async function request(path: string): Promise<Response> {
-    let response: Response;
+  async function rawRequest(
+    path: string,
+    init?: RequestInit,
+  ): Promise<Response> {
     try {
-      response = await fetch(`${baseUrl}${path}`, {
-        headers: { Authorization: `Bearer ${config.token}` },
+      return await fetch(`${baseUrl}${path}`, {
+        ...init,
+        headers: { ...init?.headers, Authorization: `Bearer ${config.token}` },
       });
     } catch {
       throw new DaemonUnreachableError(config.host, config.port);
     }
-    return response;
+  }
+
+  async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await rawRequest(path, init);
+    if (!response.ok) {
+      throw new DaemonRequestError(path, response.status);
+    }
+    return (await response.json()) as T;
+  }
+
+  function postJson<T>(path: string, body?: unknown): Promise<T> {
+    return requestJson<T>(path, {
+      method: 'POST',
+      ...(body !== undefined
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          }
+        : {}),
+    });
   }
 
   return {
-    async getFeatures() {
-      const response = await request('/features');
-      if (!response.ok) {
-        throw new Error(`GET /features failed with status ${response.status}`);
-      }
-      return (await response.json()) as readonly unknown[];
+    getFeatures() {
+      return requestJson<readonly unknown[]>('/features');
+    },
+
+    postFeatureControl(featureId, verb) {
+      return postJson<ControlResult>(`/features/${featureId}/${verb}`);
+    },
+
+    postControl(verb, scope, repoId) {
+      return postJson<ControlResult>(`/control/${verb}`, { scope, repoId });
+    },
+
+    postGc() {
+      return postJson<GcRunSummary>('/control/gc');
+    },
+
+    async postShutdown() {
+      await postJson<unknown>('/control/shutdown');
     },
   };
 }

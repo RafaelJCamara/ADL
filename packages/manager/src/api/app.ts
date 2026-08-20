@@ -7,6 +7,7 @@ import type { ControlState } from '../control/state.js';
 import type { WorkerSupervisor } from '../worker-supervisor/supervisor.js';
 import { registerControlRoutes } from './routes/control.js';
 import { registerFeaturesRoute, type FeatureView } from './routes/features.js';
+import { registerGcRoute } from './routes/gc.js';
 import { registerHealthRoute } from './routes/health.js';
 
 /**
@@ -69,6 +70,20 @@ export interface ApiDeps {
   readonly supervisor?: WorkerSupervisor;
   readonly workerStopGraceMs?: number;
   readonly logger?: Logger;
+  /**
+   * The repository `POST /control/gc` sweeps (D-34, 03-08 Task 3). Present
+   * only when the caller also wants the GC route mounted — optional so
+   * every earlier plan's `createApi` call site keeps compiling unchanged.
+   */
+  readonly mainRepo?: string;
+  /**
+   * `adl daemon stop`'s target (03-08 Task 2): present only when the caller
+   * also wants `POST /control/shutdown` mounted. Called *after* this
+   * request's response has already been written — see the route body —
+   * never awaited by the handler itself, so the client sees a real 200
+   * before the server starts closing.
+   */
+  readonly onShutdownRequested?: () => void;
 }
 
 export function createApi(deps: ApiDeps): Hono {
@@ -107,6 +122,28 @@ export function createApi(deps: ApiDeps): Hono {
       supervisor: deps.supervisor,
       workerStopGraceMs: deps.workerStopGraceMs,
       logger: deps.logger,
+    });
+  }
+  if (
+    deps.db !== undefined &&
+    deps.logger !== undefined &&
+    deps.mainRepo !== undefined
+  ) {
+    registerGcRoute(app, {
+      mainRepo: deps.mainRepo,
+      db: deps.db,
+      logger: deps.logger,
+    });
+  }
+  if (deps.onShutdownRequested !== undefined) {
+    app.post('/control/shutdown', (c) => {
+      // Fire after this handler returns — a `setTimeout(0)` macrotask runs
+      // once the current response has been handed to the socket, rather
+      // than racing it with a same-tick microtask (`queueMicrotask`) that
+      // could run before the bytes are on the wire.
+      const requestShutdown = deps.onShutdownRequested!;
+      setTimeout(() => requestShutdown(), 0);
+      return c.json({ ok: true });
     });
   }
 
