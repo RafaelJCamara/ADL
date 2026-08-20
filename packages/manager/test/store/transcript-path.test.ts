@@ -16,7 +16,7 @@ import {
  * than sanitising it.
  */
 
-const ROOT = process.platform === 'win32' ? 'C:\\adl\\logs' : '/adl/logs';
+const ROOT = sep === '\\' ? 'C:\\adl\\logs' : '/adl/logs';
 
 function address(
   overrides: Partial<TranscriptAddress> = {},
@@ -149,22 +149,16 @@ describe('transcriptPathFor', () => {
 describe('logsRootFor', () => {
   it('derives the logs root as a "logs" directory beside the database file, mirroring scratchRoot', () => {
     const dbFilePath =
-      process.platform === 'win32'
-        ? 'C:\\adl\\state\\adl.db'
-        : '/adl/state/adl.db';
+      sep === '\\' ? 'C:\\adl\\state\\adl.db' : '/adl/state/adl.db';
     const root = logsRootFor(dbFilePath);
     expect(root).toBe(
-      (process.platform === 'win32' ? 'C:\\adl\\state' : '/adl/state') +
-        sep +
-        'logs',
+      (sep === '\\' ? 'C:\\adl\\state' : '/adl/state') + sep + 'logs',
     );
   });
 
   it('two calls with the same database file path produce the identical root', () => {
     const dbFilePath =
-      process.platform === 'win32'
-        ? 'C:\\adl\\state\\adl.db'
-        : '/adl/state/adl.db';
+      sep === '\\' ? 'C:\\adl\\state\\adl.db' : '/adl/state/adl.db';
     expect(logsRootFor(dbFilePath)).toBe(logsRootFor(dbFilePath));
   });
 });
