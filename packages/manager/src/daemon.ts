@@ -28,11 +28,13 @@ import {
 import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
+import { startGcSchedule } from './scheduler/gc-schedule.js';
 import {
   createFastPathRecovery,
   reapOne,
   startReaper,
 } from './scheduler/reaper.js';
+import { resolveStageCell } from './stage-name.js';
 import {
   createSupervisor,
   type WorkerReady,
@@ -227,40 +229,48 @@ export async function startDaemon(
     intervalMs: options.heartbeatIntervalMs,
   });
 
+  // Phase 2's deferred D-15 backstop, on a schedule of its own (D-34): a
+  // separate, much longer cadence than the reaper's, sharing only the
+  // scheduling mechanism (croner) — never the interval.
+  const gcSchedule = startGcSchedule({
+    mainRepo: options.workerCwd ?? process.cwd(),
+    db,
+    logger,
+    intervalMs: options.daemonConfig.gc.interval_ms,
+  });
+
   async function listFeatureViews(): Promise<readonly FeatureView[]> {
+    // One clock read for the whole request (D-24) — every row's `ageMs` in
+    // this response is computed against the exact same instant, so a
+    // feature's age is never a moving target within one `GET /features`.
+    const now = Date.now();
     const rows = await db
       .selectFrom('features')
       .selectAll()
       .orderBy('id')
       .execute();
-    const now = Date.now();
     return rows.map((row): FeatureView => {
-      let pipelineLength = 0;
-      if (row.effective_config_json) {
-        try {
-          const parsed = JSON.parse(row.effective_config_json) as {
-            pipeline?: readonly unknown[];
-          };
-          pipelineLength = parsed.pipeline?.length ?? 0;
-        } catch {
-          pipelineLength = 0;
-        }
-      }
       const active = supervisor.get(row.id);
       return {
         id: row.id,
         repoId: row.repo_id,
         path: row.path,
         state: row.state,
+        stage: resolveStageCell(row),
         round: row.round,
-        stageIndex: row.current_stage_index,
-        pipelineLength,
-        ageMs: now - Date.parse(row.created_at),
+        ageMs: now - Date.parse(row.updated_at),
         worker: active ? { pid: active.worker.pid } : null,
         staleRejections: staleRejectionCounter.forFeature(row.id),
       };
     });
   }
+
+  // Set below, once `stop` itself exists — the HTTP route needs to trigger
+  // the exact same shutdown sequence `DaemonHandle.stop()` does, and `stop`
+  // is declared after the app it is wired into (it closes `server`). A
+  // holder object rather than a reassigned `let`, so the binding itself
+  // stays a `const` — only `.current` ever changes.
+  const shutdownRef: { current?: () => void } = {};
 
   const app = createApi({
     apiToken: options.apiToken,
@@ -271,6 +281,8 @@ export async function startDaemon(
     supervisor,
     workerStopGraceMs: options.daemonConfig.worker_stop_grace_ms,
     logger,
+    mainRepo: options.workerCwd ?? process.cwd(),
+    onShutdownRequested: () => shutdownRef.current?.(),
   });
 
   const server: ServerType = await new Promise((resolve) => {
@@ -308,6 +320,7 @@ export async function startDaemon(
   }, options.dispatchIntervalMs ?? 25);
 
   async function stop(): Promise<void> {
+    gcSchedule.stop();
     // D-37: stop dispatch, then every worker with a real grace window
     // (soft_stop over IPC, SIGKILL after worker_stop_grace_ms — Pattern 2,
     // never an OS SIGTERM), then close the server, then flush.
@@ -321,6 +334,8 @@ export async function startDaemon(
       logger,
     });
   }
+
+  shutdownRef.current = () => void stop();
 
   return { host, port: boundPort, supervisor, stop };
 }

@@ -89,6 +89,35 @@ export {
   type SpawnCall,
 } from './scheduler/dispatcher.js';
 
+// The GC schedule (D-15, D-34, 03-08 Task 3) — discharging Phase 2's
+// deferred backstop trigger. `runGcOnce`/`createFeatureStateLookup` are
+// published so a test can drive one pass directly against a temp database,
+// the same way `dispatchOnce` and `reapOne` already are.
+export {
+  createFeatureStateLookup,
+  runGcOnce,
+  startGcSchedule,
+  type GcRunDeps,
+  type GcRunSummary,
+  type GcScheduleDeps,
+  type GcScheduleHandle,
+} from './scheduler/gc-schedule.js';
+
+// `POST /control/gc`'s route registrar (03-08 Task 3) — published so a test
+// can mount it directly, matching every other route module's own export.
+export { registerGcRoute, type GcRouteDeps } from './api/routes/gc.js';
+
+// The stage cell (D-22..25, 03-08 Task 1) — resolving a feature row's
+// position in its own snapshotted pipeline into what `GET /features` and
+// `adl status` render. Published so a test can drive it directly against a
+// bare row, with no HTTP or database in the loop.
+export {
+  pipelineFromEffectiveConfig,
+  resolveStageCell,
+  type StageCell,
+  type StageCellInput,
+} from './stage-name.js';
+
 // The lease-expiry backstop and the child-exit fast path's shared
 // implementation (D-03, D-04). Exported so a test can drive `reapOne` and
 // `reapExpiredLeases` directly against a temp database, the same way
