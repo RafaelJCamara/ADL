@@ -87,6 +87,21 @@ export interface ApiDeps {
 }
 
 export function createApi(deps: ApiDeps): Hono {
+  // WR-04: fail closed at startup rather than at request time. An empty
+  // configured token makes `timingSafeTokenEqual` accept an equally-empty
+  // presented token as a match — the auth middleware below would then
+  // authenticate *any* request that omits the Authorization header
+  // entirely (an empty `presented` string compares equal-length to an
+  // empty `expected` one). A bearer token is the only thing standing
+  // between a non-loopback bind (`ApiConfigSchema.host` explicitly allows
+  // widening it) and an unauthenticated control plane, so a misconfigured
+  // empty token must be a startup-time failure, never a live bypass.
+  if (deps.apiToken.length === 0) {
+    throw new Error(
+      'createApi: apiToken must be a non-empty string — an empty token would authenticate every request',
+    );
+  }
+
   const app = new Hono();
 
   app.use('*', async (c, next) => {
