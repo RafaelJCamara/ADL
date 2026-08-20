@@ -124,7 +124,7 @@ Requirements are phrased from the perspective of the two users ADL serves: the *
 
 - [ ] **OBS-01**: Maintainer can see what every feature is doing right now
 - [ ] **OBS-02**: Maintainer can follow a running agent's transcript live
-- [ ] **OBS-03**: Maintainer can pause work
+- [x] **OBS-03**: Maintainer can pause work
 - [x] **OBS-04**: Maintainer can kill a single feature, everything in one repo, or everything
 - [ ] **OBS-05**: Maintainer can see spend per feature and per role
 - [ ] **OBS-06**: An HTTP API exposes everything the CLI can do
@@ -263,7 +263,7 @@ Populated during roadmap creation. See `.planning/ROADMAP.md` for phase goals an
 | WORK-10 | Phase 15 | Pending |
 | OBS-01 | Phase 3 | Pending |
 | OBS-02 | Phase 4 | Pending |
-| OBS-03 | Phase 3 | Pending |
+| OBS-03 | Phase 3 | Complete |
 | OBS-04 | Phase 3 | Complete |
 | OBS-05 | Phase 6 | Pending |
 | OBS-06 | Phase 17 | Pending |
