@@ -136,7 +136,7 @@ Plans:
   4. Feature state, rounds, spend, and transcripts are all present and consistent after a daemon restart.
   5. Maintainer can pause work and kill one feature, everything in one repository, or everything; concurrency is configurable and defaults to one feature in flight.
 
-**Plans**: 9/10 plans executed (03-10 is gap closure for UAT G-03-3)
+**Plans**: 10/10 plans executed (03-10 is gap closure for UAT G-03-3)
 
 Plans:
 **Wave 1**
@@ -174,7 +174,7 @@ Plans:
 
 **Wave 9** *(gap closure — blocked on Wave 8 completion)*
 
-- [ ] 03-10-PLAN.md — Global pause survives a daemon restart: a persisted `meta` row and a boot-time restore (closes G-03-3)
+- [x] 03-10-PLAN.md — Global pause survives a daemon restart: a persisted `meta` row and a boot-time restore (closes G-03-3)
 
 **Notes**: The manager owns detection, queue, state, config, credentials, and accounting; the worker is a separate OS process holding one lease. Forge *reads* belong to the manager too. Recovery semantics tested with zero AI in the loop is the cheapest this will ever be. Run CI at concurrency 3 even though the default ships as 1 — a crashed worker plus a restarted daemon is concurrency 2 in practice.
 
@@ -453,7 +453,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
-| 3. Manager Skeleton | 9/9 | In Progress|  |
+| 3. Manager Skeleton | 10/10 | In Progress|  |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
