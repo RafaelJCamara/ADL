@@ -31,7 +31,11 @@ import {
   type WorkerIdentity,
 } from '../exec/privilege.js';
 import { run } from '../exec/run.js';
-import { createScratchHome, destroyScratchHome } from '../exec/scratch-home.js';
+import {
+  createScratchHome,
+  destroyScratchHome,
+  writeScratchGitConfig,
+} from '../exec/scratch-home.js';
 import { assertCwdWithinRoot, assertWithinRoot } from '../paths.js';
 import { report, reportScratchHomeTeardown } from '../teardown.js';
 import { createWorktree, destroyWorktree } from './lifecycle.js';
@@ -128,6 +132,29 @@ export async function worktreeWorkspace(
     spec.baseRef,
   );
   const scratchHome = await createScratchHome();
+
+  // D-2-08-1: git ≥2.35.2 (CVE-2022-24765) refuses to operate inside a
+  // repository owned by a different uid than the process running it — exactly
+  // the state the privilege drop below creates on purpose. This marks BOTH
+  // the worktree and the main repository as safe before any child is
+  // launched: a linked worktree's git operations reach into the main
+  // repository's `.git` too, so marking only the worktree leaves the other
+  // half of every command unowned. Must run before `applyWorkerAccess`
+  // below — that call recurses into `scratchHome.path` and widens whatever
+  // it finds there to the shared worker group, so writing the config file
+  // first is what lets the same grant cover the file as well as the
+  // directory (verified against `exec/privilege.ts`'s `grantGroupAccess`,
+  // which recurses over `readdir` rather than granting only the directories
+  // it is given).
+  //
+  // This marking makes git PROCEED; it is not a substitute for the
+  // worktree's on-disk ownership being right (04-RESEARCH.md Assumption A4).
+  // If a deployment's real cause turns out to be a genuine worker-uid/
+  // worktree-owner mismatch, that is a WORK-05 concern this marking would
+  // mask, not verify.
+  await writeScratchGitConfig(scratchHome.path, {
+    safeDirectories: [worktreePath, spec.mainRepo],
+  });
 
   // Resolved against the DAEMON's PATH here, and again against the child's
   // `ExecSpec.path` inside `run()`. Two resolutions rather than one because the

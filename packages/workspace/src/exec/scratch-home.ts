@@ -49,6 +49,7 @@
  * {@link listScratchHomes} and `worktree/gc.ts`'s `sweepScratchHomes`.
  */
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -72,6 +73,16 @@ const SCRATCH_HOME_PREFIX = 'adl-home-';
 
 /** The suffix on a home's owner marker. See {@link ownerFileFor}. */
 const OWNER_SUFFIX = '.owner';
+
+/**
+ * The `.gitconfig` basename inside a scratch HOME.
+ *
+ * Shared with `exec/env.ts`'s `GIT_CONFIG_GLOBAL` value — `neutralisers()`
+ * builds that path from this same constant — so the file {@link
+ * writeScratchGitConfig} writes and the path every child is pointed at cannot
+ * drift apart into two different files.
+ */
+export const SCRATCH_GITCONFIG_FILENAME = '.gitconfig';
 
 /**
  * The one directory every scratch `HOME` is created inside.
@@ -257,6 +268,92 @@ export async function createScratchHome(): Promise<ScratchHome> {
   const path = await mkdtemp(join(root, SCRATCH_HOME_PREFIX));
   await recordOwner(path);
   return { path };
+}
+
+/**
+ * Quote one `safe.directory` value for git's config-file syntax.
+ *
+ * Values are written **verbatim** — this function's only job is to make sure
+ * git parses the quoted form back to the exact string it was given, never to
+ * normalise, resolve, or case-fold it. Wrapping in double quotes and escaping
+ * the two characters git's config parser treats specially (`\` and `"`)
+ * preserves the value byte-for-byte, including leading/trailing whitespace a
+ * bare, unquoted value would otherwise lose — and it is what makes a Windows
+ * path's backslashes survive the round trip rather than being read as (invalid)
+ * escape sequences.
+ */
+function quoteConfigValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Write the scratch HOME's global git config (D-2-08-1).
+ *
+ * **Why this exists at all.** Git ≥2.35.2 refuses to operate inside a
+ * repository owned by a different uid than the process running it —
+ * `fatal: detected dubious ownership in repository`, exit 128 — which is
+ * CVE-2022-24765's mitigation, and it is exactly the state the privilege drop
+ * in `exec/privilege.ts` creates on purpose: the worker runs as a different OS
+ * identity than whatever created the worktree. Git reads `safe.directory` from
+ * SYSTEM and GLOBAL configuration only, never from a repository's own config —
+ * so a repository cannot mark itself safe — and `env.ts`'s `neutralisers()`
+ * already sets `GIT_CONFIG_NOSYSTEM` and points `GIT_CONFIG_GLOBAL` at
+ * `<scratchHome>/.gitconfig`, a file `createScratchHome()` never writes. This
+ * is the one channel through which `safe.directory` can be set at all for a
+ * child of this workspace, and this function is what writes it.
+ *
+ * **Where it must NOT be attempted instead.** `namesGitExecution()` in
+ * `exec/env.ts` refuses the whole git-configuration family on `ExecSpec.env`
+ * by design (WR-02) — routing this fix through a caller-supplied environment
+ * variable would reopen the arbitrary-config-is-arbitrary-execution vector
+ * that refusal exists to close. This is a direct file write inside
+ * `@adl/workspace`, not a value threaded through an `ExecSpec`.
+ *
+ * **A plain write, not `recordOwner`'s `flag: 'wx'`.** An existing file at
+ * this path is a rewrite here, not an anomaly — a home is created once, but
+ * this function is the one whose second call over the same home must REPLACE
+ * the file's contents rather than append to them, so a reused home does not
+ * accumulate duplicate `directory` entries.
+ *
+ * **A failure to write is a real failure, not swallowed.** Unlike
+ * `recordOwner`, whose failure costs one uncollectable directory, a missing
+ * config file means every git command every child of this workspace runs
+ * fails — so the error propagates as a {@link WorkspaceError} naming the home
+ * path and the OS error code, never a value out of any child's environment.
+ *
+ * **The mode.** `recordOwner`'s `0o600` is deliberately not reused: the
+ * dropped worker identity is a different OS user than whatever created this
+ * file, and `env.ts`'s own comment already says the agent may write to this
+ * file and that it dies with the directory. `0o660` — owner and group
+ * read/write, no world bit — is what lets the worker identity use the file at
+ * all once `worktree/backend.ts`'s `applyWorkerAccess` call has chowned it to
+ * the shared worker group; owner-only bits would leave that grant with
+ * nothing to widen. Set with an explicit {@link chmod} AFTER the write rather
+ * than `writeFile`'s own `mode` option, because that option's result is
+ * masked by the calling process's umask — a default `022` umask silently
+ * strips the group-write bit this function exists to set, and `chmod` is not
+ * subject to umask at all.
+ */
+export async function writeScratchGitConfig(
+  home: string,
+  options: { readonly safeDirectories: readonly string[] },
+): Promise<void> {
+  const path = join(home, SCRATCH_GITCONFIG_FILENAME);
+  const lines = [
+    '[safe]',
+    ...options.safeDirectories.map(
+      (dir) => `\tdirectory = ${quoteConfigValue(dir)}`,
+    ),
+  ];
+
+  try {
+    await writeFile(path, `${lines.join('\n')}\n`, { encoding: 'utf8' });
+    await chmod(path, 0o660);
+  } catch (error) {
+    throw new WorkspaceError(
+      `Cannot write the scratch HOME's git config at ${path}: ${codeOf(error) ?? 'unknown error'}. Every git command a child of this workspace runs depends on this file existing before the child is launched (D-2-08-1).`,
+    );
+  }
 }
 
 /**
