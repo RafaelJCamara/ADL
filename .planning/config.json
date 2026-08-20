@@ -1,5 +1,5 @@
 {
-  "model_profile": "inherit",
+  "model_profile": "adaptive",
   "commit_docs": true,
   "parallelization": true,
   "search_gitignored": false,
@@ -90,5 +90,23 @@
     "source_grounding_authority": "grep"
   },
   "mode": "yolo",
-  "granularity": "fine"
+  "granularity": "fine",
+  "effort": {
+    "default": "high",
+    "routing_tier_defaults": {
+      "heavy": "high",
+      "standard": "high",
+      "light": "medium"
+    },
+    "agent_overrides": {
+      "gsd-planner": "high",
+      "gsd-plan-checker": "high",
+      "gsd-verifier": "high",
+      "gsd-code-reviewer": "high",
+      "gsd-pattern-mapper": "xhigh"
+    }
+  },
+  "model_overrides": {
+    "gsd-plan-checker": "sonnet"
+  }
 }
