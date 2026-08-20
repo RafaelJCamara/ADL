@@ -337,8 +337,7 @@ export function registerControlRoutes(
         if (error instanceof GlobalPausePersistError) {
           return c.json(
             {
-              error:
-                'the pause flag was not persisted — dispatch is unchanged',
+              error: 'the pause flag was not persisted — dispatch is unchanged',
             },
             500,
           );

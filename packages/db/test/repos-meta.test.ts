@@ -2,6 +2,7 @@ import { ulid } from 'ulid';
 import { describe, expect, it } from 'vitest';
 
 import {
+  GLOBAL_PAUSE_KEY,
   metaRepository,
   migrateToLatest,
   reposRepository,
@@ -165,6 +166,70 @@ describe('metaRepository', () => {
       const result = await meta.getSchemaVersion();
       expect(result).toEqual({ kind: 'invalid', rawValue: 'not-a-number' });
       expect(result.kind).not.toBe('valid');
+    });
+  });
+
+  it('getGlobalPause reports the absent case against a migrated database with no global_pause row (G-03-3)', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const meta = metaRepository(db);
+
+      const result = await meta.getGlobalPause();
+      expect(result).toEqual({ kind: 'absent' });
+    });
+  });
+
+  it('getGlobalPause reports valid for each well-formed stored value', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const meta = metaRepository(db);
+
+      await meta.setGlobalPause(true, NOW);
+      expect(await meta.getGlobalPause()).toEqual({
+        kind: 'valid',
+        paused: true,
+      });
+
+      await meta.setGlobalPause(false, LATER);
+      expect(await meta.getGlobalPause()).toEqual({
+        kind: 'valid',
+        paused: false,
+      });
+    });
+  });
+
+  it('getGlobalPause reports invalid for arbitrary stored text, carrying it verbatim rather than coercing it', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const meta = metaRepository(db);
+
+      await meta.set(GLOBAL_PAUSE_KEY, 'yes-please', NOW);
+
+      const result = await meta.getGlobalPause();
+      expect(result).toEqual({ kind: 'invalid', rawValue: 'yes-please' });
+      expect(result.kind).not.toBe('valid');
+    });
+  });
+
+  it('setGlobalPause is idempotent — writing the same value twice leaves one row with the later updated_at', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const meta = metaRepository(db);
+
+      await meta.setGlobalPause(true, NOW);
+      await meta.setGlobalPause(true, LATER);
+
+      const rows = await db
+        .selectFrom('meta')
+        .selectAll()
+        .where('key', '=', GLOBAL_PAUSE_KEY)
+        .execute();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.updated_at).toBe(LATER);
+      expect(await meta.getGlobalPause()).toEqual({
+        kind: 'valid',
+        paused: true,
+      });
     });
   });
 });

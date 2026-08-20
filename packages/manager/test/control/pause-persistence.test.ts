@@ -6,10 +6,29 @@ import {
   type AdlYml,
   type DaemonConfig,
 } from '@adl/core/config';
-import { featuresRepository, migrateToLatest, nowIso } from '@adl/db';
+import {
+  createDb,
+  featuresRepository,
+  GLOBAL_PAUSE_KEY,
+  metaRepository,
+  migrateToLatest,
+  nowIso,
+  type Database,
+} from '@adl/db';
+import type { Kysely } from 'kysely';
 import { startDaemon } from '../../src/daemon.js';
 import { restoreGlobalPause } from '../../src/boot/startup.js';
-import { MIGRATIONS_DIR, withTempDb } from '../../../db/test/helpers/temp-db.js';
+import {
+  createApi,
+  createControlState,
+  dispatchOnce,
+  GlobalPausePersistError,
+} from '../../src/index.js';
+import {
+  MIGRATIONS_DIR,
+  withTempDb,
+} from '../../../db/test/helpers/temp-db.js';
+import { withEphemeralPort } from '../helpers/ephemeral-port.js';
 import { withScriptedWorker } from '../helpers/worker-harness.js';
 import { createCapturingLogger } from '../helpers/capturing-logger.js';
 
@@ -21,6 +40,11 @@ import { createCapturingLogger } from '../helpers/capturing-logger.js';
  * feature dispatch (the non-vacuity half — see `03-10-PLAN.md`'s own
  * warning that a fixture that never dispatches would pass the negative half
  * of this test forever).
+ *
+ * Task 2 adds the two failure edges where a persisted flag can hurt: an
+ * unreadable stored value at boot, and a persistence write that fails at
+ * request time. Both are proven against a real failure, never a stub of the
+ * function under test.
  */
 
 const API_TOKEN = `pause-persist-token-${ulid()}`;
@@ -78,6 +102,57 @@ async function postControl(
   });
 }
 
+async function seedRepo(
+  db: Kysely<Database>,
+  id: string = ulid(),
+): Promise<string> {
+  const now = nowIso();
+  await db
+    .insertInto('repos')
+    .values({
+      id,
+      remote_url: 'https://github.com/example/target-repo.git',
+      default_branch: 'main',
+      forge: 'github',
+      features_dir: 'features',
+      created_at: now,
+      updated_at: now,
+    })
+    .execute();
+  return id;
+}
+
+async function seedQueuedFeature(
+  db: Kysely<Database>,
+  repoId: string,
+): Promise<string> {
+  const featureId = ulid();
+  const now = nowIso();
+  await db
+    .insertInto('features')
+    .values({
+      id: featureId,
+      repo_id: repoId,
+      path: `features/${featureId}`,
+      state: 'queued',
+      state_version: 1,
+      round: 0,
+      current_stage_index: 0,
+      spec_hash: 'a'.repeat(64),
+      effective_config_json: null,
+      workspace_handle: null,
+      lease_owner: null,
+      lease_token: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      crash_count: 0,
+      created_at: now,
+      updated_at: now,
+    })
+    .execute();
+  return featureId;
+}
+
 describe('restoreGlobalPause', () => {
   it('returns false against a migrated database with no global_pause row', async () => {
     await withTempDb(async ({ db }) => {
@@ -87,6 +162,128 @@ describe('restoreGlobalPause', () => {
       const result = await restoreGlobalPause({ db, logger });
 
       expect(result).toBe(false);
+    });
+  });
+
+  it('returns true against an unparseable stored value, and logs an error-level line carrying the raw value', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      await metaRepository(db).set(GLOBAL_PAUSE_KEY, 'maybe', nowIso());
+      const { logger, logs } = createCapturingLogger();
+
+      const result = await restoreGlobalPause({ db, logger });
+
+      // A daemon does not dispatch against a value it could not read
+      // (design decision 2) — the cost of wrongly resuming outweighs the
+      // cost of wrongly staying paused.
+      expect(result).toBe(true);
+
+      const errorLine = logs.find((log) => log.level === 50);
+      expect(errorLine).toBeDefined();
+      expect(errorLine?.rawValue).toBe('maybe');
+    });
+  });
+
+  it('against a paused stored value, logs a warn-level line carrying the paused flag', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      await metaRepository(db).setGlobalPause(true, nowIso());
+      const { logger, logs } = createCapturingLogger();
+
+      const result = await restoreGlobalPause({ db, logger });
+
+      expect(result).toBe(true);
+      const warnLine = logs.find((log) => log.level === 40);
+      expect(warnLine).toBeDefined();
+      expect(warnLine?.paused).toBe(true);
+    });
+  });
+});
+
+describe('the failed write (G-03-3): the in-memory brake and the persisted row never disagree', () => {
+  it('a real persistence failure rejects with GlobalPausePersistError, leaves isGlobalPaused() unchanged, and a subsequent dispatchOnce still dispatches', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedQueuedFeature(db, repoId);
+
+      // A real, separate database handle with no `meta` table — an
+      // in-memory database that was never migrated. `setGlobalPause`'s own
+      // write genuinely rejects ("no such table: meta"), never a stub of
+      // the function under test. Kept off the primary temp file entirely
+      // so this failure cannot interact with the file-locking semantics
+      // `withTempDb`'s own teardown depends on.
+      const failingDb = createDb(':memory:');
+      try {
+        const controlState = createControlState({ db: failingDb });
+
+        await expect(controlState.setGlobalPause(true)).rejects.toThrow(
+          GlobalPausePersistError,
+        );
+        // Unchanged from before the call — the write failed, so the brake
+        // never engaged.
+        expect(controlState.isGlobalPaused()).toBe(false);
+
+        const decision = await dispatchOnce({
+          db,
+          leaseTtlMs: 60_000,
+          heartbeatIntervalMs: 5_000,
+          daemonConfig: daemonConfigFixture(),
+          resolveAdlYml: () => ADL_YML_FIXTURE,
+          controlState,
+          spawnWorker: () => {
+            /* no-op */
+          },
+        });
+        expect(decision.dispatched).toBe(true);
+      } finally {
+        await failingDb.destroy();
+      }
+    });
+  });
+
+  it('a POST /control/pause request whose persistence fails answers 500 with a body reporting dispatch unchanged', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedQueuedFeature(db, repoId);
+
+      const failingDb = createDb(':memory:');
+      try {
+        const controlState = createControlState({ db: failingDb });
+
+        const app = createApi({
+          apiToken: API_TOKEN,
+          schemaVersion: 1,
+          listFeatureViews: async () => [],
+          db,
+          controlState,
+        });
+
+        await withEphemeralPort(app, async ({ port }) => {
+          const response = await postControl(port, '/control/pause', {
+            scope: 'all',
+          });
+          expect(response.status).toBe(500);
+          const body = (await response.json()) as { error: string };
+          expect(body.error.toLowerCase()).toContain('unchanged');
+        });
+
+        const decision = await dispatchOnce({
+          db,
+          leaseTtlMs: 60_000,
+          heartbeatIntervalMs: 5_000,
+          daemonConfig: daemonConfigFixture(),
+          resolveAdlYml: () => ADL_YML_FIXTURE,
+          controlState,
+          spawnWorker: () => {
+            /* no-op */
+          },
+        });
+        expect(decision.dispatched).toBe(true);
+      } finally {
+        await failingDb.destroy();
+      }
     });
   });
 });
