@@ -174,7 +174,6 @@ function openSseCursor(response: Response): SseCursor {
 
   function drain(): void {
     let idx: number;
-    // eslint-disable-next-line no-cond-assign -- draining every complete frame already buffered
     while ((idx = buffer.indexOf('\n\n')) !== -1) {
       const block = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
@@ -330,9 +329,8 @@ describe('GET /stages/:id/logs — the follow loop and its four wire states', ()
             },
           );
           const cursor = openSseCursor(response);
-          let writer: Awaited<
-            ReturnType<typeof openTranscriptWriter>
-          > | undefined;
+          let writer:
+            Awaited<ReturnType<typeof openTranscriptWriter>> | undefined;
           try {
             await cursor.waitUntil((events) =>
               events.some((e) => e.event === 'pending'),
@@ -380,9 +378,8 @@ describe('GET /stages/:id/logs — the follow loop and its four wire states', ()
             },
           );
           const cursor = openSseCursor(response);
-          let writer: Awaited<
-            ReturnType<typeof openTranscriptWriter>
-          > | undefined;
+          let writer:
+            Awaited<ReturnType<typeof openTranscriptWriter>> | undefined;
           try {
             // pending: the file does not exist yet.
             await cursor.waitUntil((events) =>
@@ -474,9 +471,7 @@ describe('GET /stages/:id/logs — the follow loop and its four wire states', ()
             .split('\n\n')
             .map((b) => b.trim())
             .filter(Boolean);
-          const kinds = blocks.map(
-            (b) => /^event: (.+)$/m.exec(b)?.[1] ?? '',
-          );
+          const kinds = blocks.map((b) => /^event: (.+)$/m.exec(b)?.[1] ?? '');
           expect(kinds).toContain('records');
           expect(kinds).toContain('ended');
           expect(kinds.indexOf('ended')).toBe(kinds.length - 1);
@@ -736,9 +731,7 @@ describe('the reconnect proof — kill and reattach against a real growing trans
             const secondPayload = JSON.parse(
               secondRecordsEvent.data,
             ) as RecordsPayload;
-            expect(secondPayload.nextOffset).toBeGreaterThan(
-              lengthAtFirstRead,
-            );
+            expect(secondPayload.nextOffset).toBeGreaterThan(lengthAtFirstRead);
 
             const consumedOffset = secondPayload.nextOffset;
 

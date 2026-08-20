@@ -1,49 +1,138 @@
-import type { DaemonClient } from '../http-client.js';
+import type { DaemonClient, StageLogEvent } from '../http-client.js';
 import type { WriteSink } from './status.js';
 
 /**
- * `adl logs [-f|--follow] <stage-attempt-id>` — consumes the server-sent
- * event stream added in `04-01` (`eventsource-parser`, via
- * `DaemonClient.streamStageLogs`) and writes each transcript record to
- * stdout as it arrives.
+ * `adl logs [-f|--follow] [--offset <bytes>] <stage-attempt-id>` — a
+ * resumable consumer of the manager's `GET /stages/:id/logs?offset=N&follow=1`
+ * SSE route (`04-08`).
  *
- * `GET /stages/:id/logs` (this plan's own route, `04-06`) serves history —
- * one read from an offset, then the response ends; it does not push new
- * data as it is written (`04-08`'s addition). `--follow` is therefore
- * implemented HERE, client-side, as short-interval polling: each poll reads
- * from the `nextOffset` the previous poll reported, so a record is never
- * printed twice and never dropped between polls. Without `--follow`, one
- * poll runs and the command exits — the same history-only contract the
- * route itself has.
+ * As of `04-08` the manager's own route does the polling: with `--follow`,
+ * the connection stays open and the manager pushes `records`/`idle`/
+ * `pending` events until it emits `ended` and closes the response itself.
+ * This command's job is therefore narrower than the `04-06` tracer's
+ * version was — it no longer re-polls a history-only route on its own
+ * interval. It reconnects only when the underlying connection actually
+ * drops, resuming from the offset it last **wrote**, not merely received
+ * (see `consumeOneConnection`'s docblock).
  */
 
 export interface LogsCommandOptions {
   readonly stageAttemptId: string;
   readonly follow: boolean;
+  /**
+   * The raw `--offset` CLI value, if given. Validated here — before any
+   * request is made — rather than by the caller, so one call site owns "a
+   * malformed offset is rejected up front" for both interactive and
+   * programmatic callers.
+   */
+  readonly offset?: string;
 }
 
 export interface LogsCommandDeps {
   readonly client: DaemonClient;
   readonly stdout?: WriteSink;
-  /** Injected so a test can drive the follow loop without a real delay. Defaults to a real `setTimeout`. */
+  /** Injected so a test can drive the reconnect delay without a real wait. Defaults to a real `setTimeout`-based sleep. */
   readonly sleep?: (ms: number) => Promise<void>;
-  /** Injected stop signal for `--follow`'s otherwise-unbounded loop — a test seam; production leaves this unset and relies on the process being interrupted (Ctrl-C). */
-  readonly shouldStop?: () => boolean;
+  /** Overrides {@link MAX_CONSECUTIVE_RECONNECT_FAILURES} for this call — a test seam. */
+  readonly maxConsecutiveReconnectFailures?: number;
 }
 
-const POLL_INTERVAL_MS = 500;
+/** The delay before a reconnect attempt after a dropped connection. */
+const RECONNECT_DELAY_MS = 500;
 
-interface OffsetPayload {
+/**
+ * How many consecutive reconnect attempts that deliver NOTHING at all
+ * `--follow` tolerates before it gives up and reports why, rather than
+ * looping forever against a daemon that is gone. A reconnect that delivers
+ * at least one event before dropping again resets this counter — the bound
+ * exists for "the daemon is unreachable", not for "the connection drops
+ * occasionally but keeps recovering".
+ */
+export const MAX_CONSECUTIVE_RECONNECT_FAILURES = 5;
+
+/** Thrown by {@link logsCommand} for a `--offset` value that is not a non-negative integer. Handled by `index.ts`'s `runVerb`, matching every other CLI usage error. */
+export class InvalidLogsOffsetError extends Error {
+  override readonly name = 'InvalidLogsOffsetError';
+
+  constructor(raw: string) {
+    super(
+      `--offset must be a non-negative integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+}
+
+function parseOffsetOption(raw: string | undefined): number {
+  if (raw === undefined) return 0;
+  if (!/^\d+$/.test(raw)) {
+    throw new InvalidLogsOffsetError(raw);
+  }
+  return Number(raw);
+}
+
+interface RecordsPayload {
+  readonly records: readonly unknown[];
   readonly nextOffset: number;
 }
 
-function isOffsetPayload(value: unknown): value is OffsetPayload {
+function isRecordsPayload(value: unknown): value is RecordsPayload {
   return (
     typeof value === 'object' &&
     value !== null &&
-    'nextOffset' in value &&
+    Array.isArray((value as { records: unknown }).records) &&
     typeof (value as { nextOffset: unknown }).nextOffset === 'number'
   );
+}
+
+interface FollowState {
+  /** What THIS client has actually written to `out` so far — the offset the next reconnect resumes from. */
+  writtenOffset: number;
+}
+
+/**
+ * Consume one connection's worth of events, writing records as they arrive.
+ *
+ * `state.writtenOffset` advances only **after** a batch of records has been
+ * written, never on receipt — a client that advanced its tracked offset on
+ * receipt and then died before writing has silently dropped output on its
+ * next reconnect, invisibly, because the offsets would still line up.
+ *
+ * `onEvent` fires for every event observed, INCLUDING one observed just
+ * before the underlying stream throws (a dropped connection) — it is the
+ * caller's only way to learn "this connection made progress" when the
+ * function itself never returns normally. Returning a `sawAnyEvent` boolean
+ * in a result object would not work for that case: a thrown `for await`
+ * never reaches this function's own `return`, so any signal has to escape
+ * through a side channel the caller already holds a reference to.
+ */
+async function consumeOneConnection(
+  stream: AsyncIterable<StageLogEvent>,
+  out: WriteSink,
+  state: FollowState,
+  onEvent: () => void,
+): Promise<'ended' | 'dropped'> {
+  for await (const event of stream) {
+    onEvent();
+    if (event.event === 'records') {
+      const parsed: unknown = JSON.parse(event.data);
+      if (!isRecordsPayload(parsed)) continue;
+      for (const record of parsed.records) {
+        out.write(`${JSON.stringify(record)}\n`);
+      }
+      // Write first, advance second.
+      state.writtenOffset = parsed.nextOffset;
+      continue;
+    }
+    if (event.event === 'idle' || event.event === 'pending') {
+      // Ordinary follow states — keep waiting on the same connection.
+      continue;
+    }
+    if (event.event === 'ended') {
+      return 'ended';
+    }
+    // An unrecognised event name is ignored rather than treated as fatal —
+    // forward compatibility with a future wire addition costs nothing here.
+  }
+  return 'dropped';
 }
 
 export async function logsCommand(
@@ -54,24 +143,57 @@ export async function logsCommand(
   const sleep =
     deps.sleep ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const shouldStop = deps.shouldStop ?? (() => false);
+  const maxFailures =
+    deps.maxConsecutiveReconnectFailures ?? MAX_CONSECUTIVE_RECONNECT_FAILURES;
 
-  let offset = 0;
+  // Validated before any request is made.
+  const state: FollowState = {
+    writtenOffset: parseOffsetOption(options.offset),
+  };
+
+  let hasConnectedOnce = false;
+  let consecutiveFailures = 0;
+
   for (;;) {
-    for await (const event of deps.client.streamStageLogs(
-      options.stageAttemptId,
-      offset,
-    )) {
-      if (event.event === 'record') {
-        out.write(`${event.data}\n`);
-        continue;
-      }
-      if (event.event === 'offset') {
-        const parsed: unknown = JSON.parse(event.data);
-        if (isOffsetPayload(parsed)) offset = parsed.nextOffset;
+    let sawAnyEvent = false;
+    try {
+      const stream = deps.client.streamStageLogs(options.stageAttemptId, {
+        offset: state.writtenOffset,
+        follow: options.follow,
+      });
+      const outcome = await consumeOneConnection(stream, out, state, () => {
+        // Fires as soon as the first byte of the first connection arrives
+        // — even if THIS connection later throws mid-stream, so a
+        // connection that delivered data and then dropped is never
+        // mistaken for "the daemon was never reachable" (see the catch
+        // block below).
+        hasConnectedOnce = true;
+        sawAnyEvent = true;
+      });
+      if (outcome === 'ended') return;
+    } catch (error) {
+      if (!hasConnectedOnce) {
+        // The first attach never got a byte back — this is the
+        // daemon-down case, reported by the caller's own shared message
+        // (D-25), never a second message with the same meaning.
+        throw error;
       }
     }
-    if (!options.follow || shouldStop()) return;
-    await sleep(POLL_INTERVAL_MS);
+
+    if (!options.follow) return;
+
+    if (sawAnyEvent) {
+      consecutiveFailures = 0;
+    } else {
+      consecutiveFailures += 1;
+      if (consecutiveFailures > maxFailures) {
+        out.write(
+          `adl logs: lost the connection ${String(consecutiveFailures)} times in a row while following ${options.stageAttemptId}; giving up.\n`,
+        );
+        return;
+      }
+    }
+
+    await sleep(RECONNECT_DELAY_MS);
   }
 }

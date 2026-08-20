@@ -78,6 +78,14 @@ export class DaemonRequestError extends Error {
   }
 }
 
+/** {@link DaemonClient.streamStageLogs}'s options — restates the route's own `offset`/`follow` query parameters at this package's boundary. */
+export interface StreamStageLogsOptions {
+  /** The byte offset to resume from. Omitted (or `0`) starts from the beginning. */
+  readonly offset?: number;
+  /** `true` opens `?follow=1` — the connection stays open and the manager pushes new records as they land (04-08). */
+  readonly follow?: boolean;
+}
+
 export interface DaemonClient {
   /** `GET /features` — the raw JSON array the manager returns. */
   getFeatures(): Promise<readonly unknown[]>;
@@ -99,14 +107,18 @@ export interface DaemonClient {
   /** `POST /dev-run/:featureId` (04-06, D-03) — `adl dev-run`. */
   postDevRun(featureId: string): Promise<DevRunResult>;
   /**
-   * `GET /stages/:id/logs?offset=N` (04-06) — `adl logs`. Yields each
-   * server-sent event as it arrives; the caller decides what a `record`
-   * versus an `offset` event means. Ends when the response stream ends
-   * (this route serves history, not a live follow — `04-08`'s addition).
+   * `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow)
+   * — `adl logs`. Yields each server-sent event as it arrives; the caller
+   * decides what a `records`/`idle`/`pending`/`ended` event means (the
+   * manager's own `LOG_STREAM_EVENTS` vocabulary, restated here rather than
+   * imported — this package cannot depend on `@adl/manager`, D-18/D-21).
+   * Ends when the response stream ends: without `follow`, after one read;
+   * with `follow`, only once the manager itself closes the connection
+   * (the `ended` event) or the connection drops.
    */
   streamStageLogs(
     stageAttemptId: string,
-    offset?: number,
+    options?: StreamStageLogsOptions,
   ): AsyncIterable<StageLogEvent>;
 }
 
@@ -177,8 +189,16 @@ export function daemonClient(config: DaemonClientConfig): DaemonClient {
       return postJson<DevRunResult>(`/dev-run/${featureId}`);
     },
 
-    async *streamStageLogs(stageAttemptId, offset) {
-      const path = `/stages/${stageAttemptId}/logs${offset !== undefined ? `?offset=${String(offset)}` : ''}`;
+    async *streamStageLogs(stageAttemptId, options) {
+      const params = new URLSearchParams();
+      if (options?.offset !== undefined) {
+        params.set('offset', String(options.offset));
+      }
+      if (options?.follow === true) {
+        params.set('follow', '1');
+      }
+      const query = params.toString();
+      const path = `/stages/${stageAttemptId}/logs${query.length > 0 ? `?${query}` : ''}`;
       const response = await rawRequest(path);
       if (!response.ok) {
         throw new DaemonRequestError(path, response.status);
