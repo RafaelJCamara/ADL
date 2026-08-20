@@ -2,10 +2,12 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve, type ServerType } from '@hono/node-server';
+import { ulid } from 'ulid';
 import {
   createDb,
   featuresRepository,
   nowIso,
+  usageRepository,
   type Database,
   type FeaturesTable,
 } from '@adl/db';
@@ -349,6 +351,28 @@ export async function startDaemon(
         params.repoId,
         'pause-park',
       );
+    },
+    // 04-10, D-06: the one INSERT path for a `usage_events` row — through
+    // the existing `usageRepository(db).record`, never a second writer. The
+    // supervisor has already fenced the message and resolved the feature id
+    // from its own assignment before this is called.
+    recordUsage: async (params) => {
+      await usageRepository(db).record({
+        id: ulid(),
+        feature_id: params.featureId,
+        round_id: params.roundId,
+        stage_attempt_id: params.stageAttemptId,
+        model_id: params.modelId,
+        speed: params.speed,
+        input_tokens: params.inputTokens,
+        output_tokens: params.outputTokens,
+        cache_creation_input_tokens: params.cacheCreationInputTokens,
+        cache_read_input_tokens: params.cacheReadInputTokens,
+        cost_usd: params.costUsd,
+        cost_source: params.costSource,
+        cost_category: params.costCategory,
+        at: nowIso(),
+      });
     },
   });
 

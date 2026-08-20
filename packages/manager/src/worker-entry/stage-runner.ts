@@ -50,7 +50,6 @@ import {
   stageErrorPolicy,
   type AgentErrorEvent,
   type AgentEvent,
-  type AgentRunner,
   type AgentTask,
   type DeveloperOutcome,
   type StageError,
@@ -61,8 +60,10 @@ import { workspaceRegistry, managerGitClient } from '@adl/workspace';
 import {
   CLAUDE_CODE_CAPABILITIES,
   claudeCodeBackend,
+  type AgentUsageRecord,
+  type ClaudeCodeAgentRunner,
 } from '@adl/agent-claude-code';
-import type { AssignMessage } from '../ipc/protocol.js';
+import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import { writePromptArtifact } from '../prompt/artifact.js';
 import { buildDeveloperPrompt } from '../prompt/build.js';
 import { openTranscriptWriter } from '../store/ndjson-log-store.js';
@@ -157,6 +158,33 @@ function developerOutcomeResult(outcome: DeveloperOutcome): StageRunnerResult {
   return { verdictJson: JSON.stringify(verdict) };
 }
 
+/**
+ * Report one agent invocation's spend over the existing `fork()` IPC channel
+ * (04-10 Task 2). This module must not import `@adl/db` — the worker
+ * INSERTs nothing itself; the supervisor's `usage` message handler does,
+ * through the one existing writer (`usageRepository(db).record`). Mirrors
+ * `worker-entry/index.ts`'s own `send()`: `process.send` is only defined
+ * when this process was forked with an IPC channel, which is true for every
+ * real and scripted invocation of this module.
+ */
+function sendUsage(leaseToken: string, record: AgentUsageRecord): void {
+  if (typeof process.send !== 'function') return;
+  const message: WorkerToManagerMessage = {
+    t: 'usage',
+    leaseToken,
+    modelId: record.modelId,
+    speed: record.speed,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheCreationInputTokens: record.cacheCreationInputTokens,
+    cacheReadInputTokens: record.cacheReadInputTokens,
+    costUsd: record.costUsd,
+    costSource: record.costSource,
+    costCategory: record.costCategory,
+  };
+  process.send(message);
+}
+
 export interface ProductionStageRunnerDeps {
   /** The agent CLI as an argv prefix — a test seam for the replay double. Defaults to `['claude']`. */
   readonly claudeBinary?: readonly string[];
@@ -170,8 +198,16 @@ export interface ProductionStageRunnerDeps {
    * asserting ordering (e.g. "the prompt artifact exists on disk the moment
    * `run()` is invoked", 04-09 Task 2) without a real subprocess. Never used
    * in production: `daemon.ts` never sets this field.
+   *
+   * Typed as {@link ClaudeCodeAgentRunner} (04-10), not the plain
+   * `AgentRunner` port, so this module can read `usageRecord` off the
+   * resolved run result with no cast. A test double built against the
+   * narrower `AgentRunner` interface still satisfies this field structurally
+   * — `AgentRunResultWithUsage`'s one extra field is optional, and a
+   * function returning the base `AgentRunResult` is still assignable
+   * wherever the superset is expected.
    */
-  readonly agentBackend?: AgentRunner;
+  readonly agentBackend?: ClaudeCodeAgentRunner;
 }
 
 /**
@@ -344,7 +380,19 @@ export function createProductionStageRunner(
         signal: controller.signal,
       });
       await Promise.all(appendPromises);
-      void runResult;
+
+      // 04-10 Task 2: reported over IPC — never inserted from here, since
+      // this module must not import `@adl/db` — and sent BEFORE the stage
+      // result is reported (`worker-entry/index.ts`'s `runAssignedStage`
+      // sends `stage_result` only once THIS function returns). An invocation
+      // killed between the two still has its spend on the ledger, matching
+      // `.planning/STATE.md`'s existing "burned spend survives a crash"
+      // property for Phase 3. An invocation whose backend reported no usage
+      // at all (`runResult.usageRecord` undefined) sends nothing — an event
+      // that did not happen is not the same as one with nothing in it.
+      if (runResult.usageRecord !== undefined) {
+        sendUsage(assign.leaseToken, runResult.usageRecord);
+      }
 
       if (firstError !== undefined) {
         // Prohibition P1: a stage runner whose backend reports a failure —

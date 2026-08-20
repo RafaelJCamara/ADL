@@ -5,6 +5,7 @@ import {
   parseWorkerMessage,
   type AssignMessage,
   type LeaseLostMessage,
+  type UsageMessage,
 } from '../ipc/protocol.js';
 import { checkFence, type StaleRejectionCounter } from '../fencing.js';
 
@@ -29,6 +30,30 @@ export type RenewLease = (params: {
 export type GetCurrentLeaseToken = (
   featureId: string,
 ) => Promise<string | null>;
+
+/**
+ * What `recordUsage` needs to write one `usage_events` row (04-10, D-06):
+ * the message's own payload columns, plus the feature/round/stage-attempt
+ * identity — supplied by the SUPERVISOR from the assignment it already
+ * holds, never from the message itself (T-4-38's mitigation).
+ */
+export interface RecordUsageInput {
+  readonly featureId: string;
+  readonly roundId: string;
+  readonly stageAttemptId: string;
+  readonly modelId: string;
+  readonly speed: string;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly cacheCreationInputTokens: number | null;
+  readonly cacheReadInputTokens: number | null;
+  readonly costUsd: number | null;
+  readonly costSource: string;
+  readonly costCategory: string;
+}
+
+/** Writes one `usage_events` row through `usageRepository(db).record` — never a second insert path. */
+export type RecordUsage = (input: RecordUsageInput) => Promise<void>;
 
 /** One rejected worker message, for D-09's "expected-but-notable, counted" handling. */
 export interface StaleMessage {
@@ -80,6 +105,15 @@ export interface SupervisorDeps {
   readonly getCurrentLeaseToken?: GetCurrentLeaseToken;
   /** D-09's rejection counter — incremented once per dropped stale message. */
   readonly staleRejectionCounter?: StaleRejectionCounter;
+  /**
+   * Writes one `usage_events` row for a fence-matched `usage` message
+   * (04-10). Optional so every earlier plan's `createSupervisor` call site
+   * keeps compiling unchanged — absent, a `usage` message is still validated
+   * and fenced, but simply produces no write, mirroring `onReady`/
+   * `onRoundBoundary`'s own "no caller in production yet" precedent where
+   * applicable.
+   */
+  readonly recordUsage?: RecordUsage;
   /** Called whenever a lease-scoped message's token no longer matches the lease (D-09). */
   readonly onStaleMessage?: (message: StaleMessage) => void;
   /** Called once a forked worker reports `ready` — the pid it started as. */
@@ -222,7 +256,8 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
       if (
         message.t === 'heartbeat' ||
         message.t === 'stage_result' ||
-        message.t === 'fatal'
+        message.t === 'fatal' ||
+        message.t === 'usage'
       ) {
         const kind = message.t;
         const leaseToken = message.leaseToken;
@@ -307,6 +342,34 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
               };
               worker.child.send?.(leaseLost);
             }
+            return;
+          }
+
+          if (kind === 'usage') {
+            // 04-10, D-06: the identity fields (feature/round/stage-attempt)
+            // come from THIS supervisor's own `assign` — captured in this
+            // `spawn()` call's closure, never from the message — so a worker
+            // cannot attribute spend to a feature it does not hold the lease
+            // for (T-4-38). Not deduplicated: a second usage message for one
+            // attempt is legitimate (D-14's repair reprompt is a second,
+            // separately-categorised event) and a manager that collapsed them
+            // would silently under-report exactly the spend 04-10 exists to
+            // make visible.
+            const usageMessage: UsageMessage = message;
+            await deps.recordUsage?.({
+              featureId: feature.id,
+              roundId: assign.roundId,
+              stageAttemptId: assign.stageAttemptId,
+              modelId: usageMessage.modelId,
+              speed: usageMessage.speed,
+              inputTokens: usageMessage.inputTokens,
+              outputTokens: usageMessage.outputTokens,
+              cacheCreationInputTokens: usageMessage.cacheCreationInputTokens,
+              cacheReadInputTokens: usageMessage.cacheReadInputTokens,
+              costUsd: usageMessage.costUsd,
+              costSource: usageMessage.costSource,
+              costCategory: usageMessage.costCategory,
+            });
             return;
           }
 
