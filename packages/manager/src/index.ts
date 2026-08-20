@@ -262,6 +262,20 @@ export {
   type TerminalAttemptStatus,
 } from './bookkeeping/attempt.js';
 
+// The transcript path builder (04-05 Task 1) — the deterministic
+// `logs/<feature>/<round>/<stage>/<attempt>.ndjson` location for one stage
+// attempt (`ARCHITECTURE.md` §4). Published because both the worker (which
+// writes a transcript) and the manager's HTTP route (04-08, which reads one)
+// need the identical path for the identical address — a second computation
+// of "the same" path is how the two end up disagreeing.
+export {
+  logsRootFor,
+  transcriptPathFor,
+  TRANSCRIPT_EXTENSION,
+  TranscriptAddressError,
+  type TranscriptAddress,
+} from './store/transcript-path.js';
+
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
 // unexported from `@adl/workspace`'s barrel: it is an implementation detail
