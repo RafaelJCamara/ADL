@@ -168,7 +168,11 @@ export async function dispatchOnce(
   );
   if (report.clamped.length > 0 || report.discarded.length > 0) {
     deps.logger?.warn(
-      { featureId: feature.id, clamped: report.clamped, discarded: report.discarded },
+      {
+        featureId: feature.id,
+        clamped: report.clamped,
+        discarded: report.discarded,
+      },
       'adl.yml requested fields outside its trust boundary',
     );
   }

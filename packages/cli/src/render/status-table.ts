@@ -98,17 +98,19 @@ export function renderStatusTable(rows: readonly FeatureRow[]): string {
   );
   const workerCol = header.length - 1;
 
-  return allRows
-    .map((cols, rowIndex) =>
-      cols
-        .map((cell, col) => {
-          const padded = cell.padEnd(widths[col] ?? cell.length);
-          return rowIndex > 0 && col === workerCol && cell === '-'
-            ? pc.dim(padded)
-            : padded;
-        })
-        .join('  ')
-        .trimEnd(),
-    )
-    .join('\n') + '\n';
+  return (
+    allRows
+      .map((cols, rowIndex) =>
+        cols
+          .map((cell, col) => {
+            const padded = cell.padEnd(widths[col] ?? cell.length);
+            return rowIndex > 0 && col === workerCol && cell === '-'
+              ? pc.dim(padded)
+              : padded;
+          })
+          .join('  ')
+          .trimEnd(),
+      )
+      .join('\n') + '\n'
+  );
 }
