@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Core Contracts** - The verdict schema, finding shape, criterion IDs, spec normalization, and `adl.yml` — settled before any I/O exists (completed 2026-08-17)
 - [ ] **Phase 2: Workspace & the Exec Boundary** - Every process launch routes through one swappable workspace, with the worker's blast radius bounded
-- [ ] **Phase 3: Manager Skeleton — State, Leases, API, CLI** - A crash-surviving control plane the maintainer can watch, pause, and kill
+- [x] **Phase 3: Manager Skeleton — State, Leases, API, CLI** - A crash-surviving control plane the maintainer can watch, pause, and kill (completed 2026-08-20)
 - [ ] **Phase 4: First Agent Backend & Live Transcripts** - Claude Code headless makes a real commit through the workspace, streamed live
 - [ ] **Phase 5: The Loop Closes** - A feature folder becomes a draft PR on GitHub after a gate failed and sent the developer back
 - [ ] **Phase 6: Accountant — Budgets, Stalls, Escalation** - Unattended running becomes safe: caps enforced before dispatch, stalemates caught, limits escalated to a human
@@ -453,7 +453,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
-| 3. Manager Skeleton | 10/10 | In Progress|  |
+| 3. Manager Skeleton | 10/10 | Complete    | 2026-08-20 |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
