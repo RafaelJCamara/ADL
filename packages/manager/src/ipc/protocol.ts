@@ -112,6 +112,19 @@ export const AssignMessageSchema = z
     stageAttemptId: z.string().min(1),
     stageId: z.string().min(1),
     stageIndex: z.number().int().nonnegative(),
+    /**
+     * The directory transcripts live under — `logsRootFor(dbFilePath)`
+     * (04-06), computed once by `daemon.ts` and threaded through so the
+     * worker (which may not import `@adl/db` and therefore cannot see
+     * `dbFilePath` itself) resolves the IDENTICAL root the manager's own
+     * `GET /stages/:id/logs` route reads from. Required, like every other
+     * workspace field on this message (D-04's "a worker that has to guess
+     * is a process running somewhere nobody chose", T-4-14) — a worker
+     * deriving its own guess from `scratchRoot`'s colocation is correct only
+     * when `scratchRoot` happens to sit beside the database file, which is
+     * the default but not a guarantee.
+     */
+    logsRoot: z.string().min(1),
   })
   .meta({ id: 'ManagerAssignMessage' });
 

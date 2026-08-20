@@ -4,11 +4,14 @@ import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import type { Database } from '@adl/db';
 import type { ControlState } from '../control/state.js';
+import type { DispatchDecision } from '../scheduler/dispatcher.js';
 import type { WorkerSupervisor } from '../worker-supervisor/supervisor.js';
 import { registerControlRoutes } from './routes/control.js';
+import { registerDevRunRoutes } from './routes/dev-run.js';
 import { registerFeaturesRoute, type FeatureView } from './routes/features.js';
 import { registerGcRoute } from './routes/gc.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerLogsRoute } from './routes/logs.js';
 
 /**
  * The Hono app: bearer middleware per Task 1's checkpoint decision
@@ -84,6 +87,19 @@ export interface ApiDeps {
    * before the server starts closing.
    */
   readonly onShutdownRequested?: () => void;
+  /**
+   * `POST /dev-run/:featureId` (04-06, D-03): present only when the caller
+   * also wants dev-run mounted. Runs exactly one dispatch attempt — the same
+   * function the background tick calls — so the route never assembles its
+   * own copy of `DispatcherDeps`.
+   */
+  readonly dispatchOnce?: () => Promise<DispatchDecision>;
+  /**
+   * `GET /stages/:id/logs` (04-06): present only when the caller also wants
+   * the transcript route mounted. The directory transcripts live under —
+   * `logsRootFor(dbFilePath)`, computed once by `daemon.ts`.
+   */
+  readonly logsRoot?: string;
 }
 
 export function createApi(deps: ApiDeps): Hono {
@@ -149,6 +165,21 @@ export function createApi(deps: ApiDeps): Hono {
       db: deps.db,
       logger: deps.logger,
     });
+  }
+  if (
+    deps.db !== undefined &&
+    deps.mainRepo !== undefined &&
+    deps.dispatchOnce !== undefined
+  ) {
+    registerDevRunRoutes(app, {
+      db: deps.db,
+      mainRepo: deps.mainRepo,
+      dispatchOnce: deps.dispatchOnce,
+      logger: deps.logger,
+    });
+  }
+  if (deps.db !== undefined && deps.logsRoot !== undefined) {
+    registerLogsRoute(app, { db: deps.db, logsRoot: deps.logsRoot });
   }
   if (deps.onShutdownRequested !== undefined) {
     app.post('/control/shutdown', (c) => {

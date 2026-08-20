@@ -1,3 +1,5 @@
+import { createParser, type EventSourceMessage } from 'eventsource-parser';
+
 /**
  * `@adl/cli`'s HTTP client — the ONLY way this package reaches the manager
  * (D-18, D-21). Wraps `fetch` with the base URL and the `Authorization:
@@ -47,6 +49,24 @@ export interface GcRunSummary {
   readonly scratchHomeFailures: readonly unknown[];
 }
 
+/** `@adl/manager`'s `DevRunResult`, restated (04-06) — what `POST /dev-run/:featureId` returns. */
+export interface DevRunResult {
+  readonly featureId: string;
+  readonly stageAttemptId: string;
+}
+
+/**
+ * One server-sent event from `GET /stages/:id/logs`, restated at this
+ * package's own boundary — `event` is the SSE event name (`record`,
+ * `offset`) and `data` is that event's raw JSON payload, left unparsed here
+ * so a caller decides what to do with a `record` (a `TranscriptRecord`) as
+ * opposed to an `offset` (`{ nextOffset: number }`).
+ */
+export interface StageLogEvent {
+  readonly event: string;
+  readonly data: string;
+}
+
 /** A non-2xx response from a *reachable* daemon — a 404, a 401, a validation 400. */
 export class DaemonRequestError extends Error {
   readonly status: number;
@@ -76,6 +96,18 @@ export interface DaemonClient {
   postGc(): Promise<GcRunSummary>;
   /** `POST /control/shutdown` — `adl daemon stop`'s graceful-shutdown request. */
   postShutdown(): Promise<void>;
+  /** `POST /dev-run/:featureId` (04-06, D-03) — `adl dev-run`. */
+  postDevRun(featureId: string): Promise<DevRunResult>;
+  /**
+   * `GET /stages/:id/logs?offset=N` (04-06) — `adl logs`. Yields each
+   * server-sent event as it arrives; the caller decides what a `record`
+   * versus an `offset` event means. Ends when the response stream ends
+   * (this route serves history, not a live follow — `04-08`'s addition).
+   */
+  streamStageLogs(
+    stageAttemptId: string,
+    offset?: number,
+  ): AsyncIterable<StageLogEvent>;
 }
 
 /**
@@ -139,6 +171,52 @@ export function daemonClient(config: DaemonClientConfig): DaemonClient {
 
     async postShutdown() {
       await postJson<unknown>('/control/shutdown');
+    },
+
+    postDevRun(featureId) {
+      return postJson<DevRunResult>(`/dev-run/${featureId}`);
+    },
+
+    async *streamStageLogs(stageAttemptId, offset) {
+      const path = `/stages/${stageAttemptId}/logs${offset !== undefined ? `?offset=${String(offset)}` : ''}`;
+      const response = await rawRequest(path);
+      if (!response.ok) {
+        throw new DaemonRequestError(path, response.status);
+      }
+      if (response.body === null) return;
+
+      // A plain array rather than a Promise-resolution queue: `parser.feed()`
+      // calls `onEvent` synchronously for every complete SSE event found in
+      // the chunk just fed to it, so draining the queue right after each
+      // `feed()` call sees everything that chunk produced — no coordination
+      // primitive is needed for a single-consumer, single-producer loop like
+      // this one.
+      const queued: StageLogEvent[] = [];
+      const parser = createParser({
+        onEvent(message: EventSourceMessage) {
+          queued.push({
+            event: message.event ?? 'message',
+            data: message.data,
+          });
+        },
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (value !== undefined) {
+            parser.feed(decoder.decode(value, { stream: true }));
+          }
+          while (queued.length > 0) {
+            yield queued.shift()!;
+          }
+          if (done) return;
+        }
+      } finally {
+        reader.releaseLock();
+      }
     },
   };
 }

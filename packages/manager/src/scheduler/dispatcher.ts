@@ -1,3 +1,4 @@
+import { dirname, join } from 'node:path';
 import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import { ulid } from 'ulid';
@@ -60,6 +61,14 @@ export interface DispatchDecision {
   readonly dispatched: boolean;
   readonly featureId?: string;
   readonly leaseToken?: string;
+  /**
+   * The stage attempt `openAttempt` opened for this dispatch, present only
+   * when `dispatched` is true (04-06). Added so a caller that needs the
+   * transcript-addressing id synchronously — `POST /dev-run/:featureId`,
+   * which calls `dispatchOnce` directly rather than waiting for the next
+   * background tick — does not have to re-derive or re-open it.
+   */
+  readonly stageAttemptId?: string;
 }
 
 export interface DispatcherDeps {
@@ -86,6 +95,19 @@ export interface DispatcherDeps {
    * under (04-04). Must already exist — `daemon.ts` creates it at startup.
    */
   readonly scratchRoot: string;
+  /**
+   * The directory transcripts live under (04-06) — `logsRootFor(dbFilePath)`,
+   * threaded onto every assign message so the worker (which cannot import
+   * `@adl/db` and therefore cannot see `dbFilePath` itself) resolves the
+   * IDENTICAL root the manager's own `GET /stages/:id/logs` route reads
+   * from. Optional so every earlier plan's tests keep constructing
+   * `DispatcherDeps` without one — absent, it defaults to the same
+   * `scratchRoot`-colocated path `daemon.ts` used before this field
+   * existed, which is correct exactly when `scratchRoot` is colocated with
+   * the database file (the common case, but not a guarantee — `daemon.ts`
+   * itself always supplies the real value explicitly).
+   */
+  readonly logsRoot?: string;
   /**
    * Which registered workspace backend the assign message names. Optional so
    * every earlier plan's tests keep constructing `DispatcherDeps` without
@@ -360,6 +382,7 @@ export async function dispatchOnce(
     stageAttemptId: attempt.stageAttemptId,
     stageId: attempt.stageId,
     stageIndex: attempt.stageIndex,
+    logsRoot: deps.logsRoot ?? join(dirname(deps.scratchRoot), 'logs'),
   };
 
   deps.spawnWorker({
@@ -376,5 +399,10 @@ export async function dispatchOnce(
     assign,
   });
 
-  return { dispatched: true, featureId: feature.id, leaseToken };
+  return {
+    dispatched: true,
+    featureId: feature.id,
+    leaseToken,
+    stageAttemptId: attempt.stageAttemptId,
+  };
 }

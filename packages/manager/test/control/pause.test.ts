@@ -152,6 +152,7 @@ function dispatchDeps(
     resolveAdlYml: () => ADL_YML_FIXTURE,
     mainRepo: '/main/repo',
     scratchRoot: '/main/repo/.adl/scratch',
+    logsRoot: '/main/repo/.adl/logs',
     controlState,
     spawnWorker: () => {
       /* no-op */
@@ -454,6 +455,7 @@ describe('the round boundary (D-26): parking in-flight work', () => {
           heartbeatIntervalMs: 50,
           mainRepo: '/main/repo',
           scratchRoot: '/main/repo/.adl/scratch',
+          logsRoot: '/main/repo/.adl/logs',
           baseRef: 'main',
           workspaceBackendId: 'worktree',
           roundId: 'round-1',

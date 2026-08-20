@@ -31,6 +31,12 @@ function fakeClient(rows: readonly FeatureRow[]): DaemonClient {
       scratchHomeFailures: [],
     }),
     postShutdown: async () => {},
+    postDevRun: async (featureId) => ({
+      featureId,
+      stageAttemptId: 'attempt-1',
+    }),
+
+    streamStageLogs: async function* () {},
   };
 }
 
