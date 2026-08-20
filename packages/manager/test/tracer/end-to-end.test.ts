@@ -189,6 +189,7 @@ describe('IPC_MESSAGE_KINDS', () => {
         'ready',
         'soft_stop',
         'stage_result',
+        'usage',
       ].sort(),
     );
   });

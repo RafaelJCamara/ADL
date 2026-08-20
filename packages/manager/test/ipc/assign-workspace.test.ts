@@ -181,8 +181,9 @@ describe('parseManagerMessage — assign carries the workspace spec', () => {
 });
 
 describe('IPC_MESSAGE_KINDS', () => {
-  it('is unchanged by this plan — still exactly 7 entries', () => {
-    expect(IPC_MESSAGE_KINDS).toHaveLength(7);
+  it('is unchanged by this plan\'s own assign-message work — still exactly 8 entries (04-10 added "usage")', () => {
+    expect(IPC_MESSAGE_KINDS).toHaveLength(8);
+    expect(IPC_MESSAGE_KINDS).toContain('usage');
   });
 });
 

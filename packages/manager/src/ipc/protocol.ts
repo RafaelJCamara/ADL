@@ -69,12 +69,43 @@ export const FatalMessageSchema = z
   })
   .meta({ id: 'WorkerFatalMessage' });
 
+/**
+ * One agent invocation's spend, reported by the worker (04-10, D-06).
+ *
+ * Carries the lease token — every lease-scoped write is fenced the same way
+ * (D-06) — and the `usage_events` payload columns, but deliberately NOT
+ * `featureId`/`roundId`/`stageAttemptId`: T-4-38's mitigation is that those
+ * three join keys come from the supervisor's OWN assignment (the `assign`
+ * message it already holds for this worker), never from a value the worker
+ * itself could name. A worker that could put its own feature id on this
+ * message could attribute spend to a feature it does not hold the lease for
+ * — this schema makes that structurally impossible rather than checking it
+ * at write time.
+ */
+export const UsageMessageSchema = z
+  .strictObject({
+    t: z.literal('usage'),
+    leaseToken: LeaseTokenSchema,
+    modelId: z.string().min(1),
+    speed: z.string().min(1),
+    inputTokens: z.number().int().nonnegative().nullable(),
+    outputTokens: z.number().int().nonnegative().nullable(),
+    cacheCreationInputTokens: z.number().int().nonnegative().nullable(),
+    cacheReadInputTokens: z.number().int().nonnegative().nullable(),
+    /** Null when {@link UsageMessageSchema}'s `costSource` is `'unknown'` — never zero (D-31). */
+    costUsd: z.number().nonnegative().nullable(),
+    costSource: z.enum(['reported', 'computed', 'unknown']),
+    costCategory: z.enum(['feature', 'overhead']),
+  })
+  .meta({ id: 'WorkerUsageMessage' });
+
 export const WorkerToManagerMessageSchema = z
   .discriminatedUnion('t', [
     ReadyMessageSchema,
     HeartbeatMessageSchema,
     StageResultMessageSchema,
     FatalMessageSchema,
+    UsageMessageSchema,
   ])
   .meta({ id: 'WorkerToManagerMessage' });
 
@@ -82,6 +113,7 @@ export type ReadyMessage = z.infer<typeof ReadyMessageSchema>;
 export type HeartbeatMessage = z.infer<typeof HeartbeatMessageSchema>;
 export type StageResultMessage = z.infer<typeof StageResultMessageSchema>;
 export type FatalMessage = z.infer<typeof FatalMessageSchema>;
+export type UsageMessage = z.infer<typeof UsageMessageSchema>;
 export type WorkerToManagerMessage = z.infer<
   typeof WorkerToManagerMessageSchema
 >;
@@ -166,14 +198,16 @@ type IpcMessageDiscriminator =
 
 /**
  * Every discriminator in both unions, in declaration order. The acceptance
- * proof this phase requires — `soft_stop` in both the manager-to-worker
- * union and this list — is literal: it is one of the seven entries below.
+ * proof Phase 3 required — `soft_stop` in both the manager-to-worker union
+ * and this list — is literal: it is one of the eight entries below (04-10
+ * added `usage`, the eighth).
  */
 export const IPC_MESSAGE_KINDS = Object.freeze([
   'ready',
   'heartbeat',
   'stage_result',
   'fatal',
+  'usage',
   'assign',
   'soft_stop',
   'lease_lost',
