@@ -55,3 +55,24 @@ export function withZombieWorker(
     execArgv: ['--import', 'tsx'],
   };
 }
+
+/** The D-28/T-3-33 "ignores soft_stop" double's own entry module — see `ignores-stop-worker-entry.ts`'s docblock. */
+export const ignoresStopWorkerEntry = fileURLToPath(
+  new URL('./ignores-stop-worker-entry.ts', import.meta.url),
+);
+
+/**
+ * The fork() options that launch the "ignores soft_stop" double: a worker
+ * that acknowledges `assign` and then reacts to nothing else — `soft_stop`
+ * included — and never exits on its own. Used by `test/control/kill.test.ts`
+ * to prove `stopWorker`'s forced path: `SIGKILL` after `worker_stop_grace_ms`.
+ */
+export function withIgnoresStopWorker(
+  options: { readonly cwd?: string } = {},
+): ScriptedWorkerConfig {
+  return {
+    entryPath: ignoresStopWorkerEntry,
+    cwd: options.cwd ?? process.cwd(),
+    execArgv: ['--import', 'tsx'],
+  };
+}

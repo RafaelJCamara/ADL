@@ -18,14 +18,31 @@ import {
   type TransitionCtx,
 } from '@adl/core/state';
 import type { AssignMessage } from '../ipc/protocol.js';
+import { isDispatchPaused, type ControlState } from '../control/state.js';
 
 /**
- * One dispatch attempt (D-15..17): pick the oldest queued feature, lease it,
- * snapshot its effective configuration, transition it to `leased`, and hand
- * it to the supervisor to fork.
+ * One dispatch attempt (D-15..17): pick the oldest admissible queued
+ * feature, lease it, snapshot its effective configuration, transition it to
+ * `leased`, and hand it to the supervisor to fork.
  *
- * The concurrency cap is **not** in scope here — the tracer runs one feature;
- * a later plan adds it. Round-robin across repositories is deferred (D-17).
+ * The concurrency cap (D-15, D-16) is enforced here: a **global** number with
+ * an optional **per-repository** override, checked as a conjunction of two
+ * named predicates immediately before the lease is acquired — never after.
+ * The ceiling is **inclusive**: a cap of 3 admits a 4th lease only when
+ * in-flight is *below* 3, so exactly 3 leases are ever held at once, never 4.
+ * In-flight is counted from `listLeased()` rather than an in-memory counter,
+ * so a restarted daemon that has not yet seen a fork still counts correctly
+ * (T-3-14). Lowering the cap mid-flight **drains**: it governs dispatch only,
+ * never an existing lease, and this function never revokes one.
+ *
+ * Selection is the lowest queued `id`. ULIDs are lexicographically sortable,
+ * so `ORDER BY id` (already `listQueued`'s own ordering) is FIFO for free
+ * with no extra column, and their uniqueness makes the order total — there is
+ * no tie to break. Round-robin across repositories is deferred (D-17): when
+ * the lowest-id candidate is blocked (by the cap, or — 03-07 Task 2 — by a
+ * pause), this function tries the next-lowest candidate rather than shedding
+ * the tick entirely, but it never reorders past a `paused` scope to favour
+ * one repository over another's fair share of the global cap.
  */
 
 export interface SpawnCall {
@@ -55,6 +72,16 @@ export interface DispatcherDeps {
   readonly spawnWorker: (call: SpawnCall) => void;
   readonly actor?: string;
   readonly now?: () => string;
+  /**
+   * The dispatch brake (D-26, 03-07 Task 2). Consulted per candidate,
+   * before the concurrency cap — a paused repository is simply never a
+   * candidate, so dispatch still proceeds for other repositories'
+   * unpaused, admissible work. Optional so every earlier plan's tests (and
+   * the tracer, which exercises no pause path) keep constructing
+   * `DispatcherDeps` with no brake at all — absent, dispatch is never
+   * paused.
+   */
+  readonly controlState?: ControlState;
 }
 
 /**
@@ -67,7 +94,38 @@ export async function dispatchOnce(
 ): Promise<DispatchDecision> {
   const repo = featuresRepository(deps.db);
   const queued = await repo.listQueued();
-  const feature = queued[0];
+  if (queued.length === 0) {
+    return { dispatched: false };
+  }
+
+  // Snapshot in-flight once per tick, from the database rather than a
+  // counter this process may not have seen every fork for (T-3-14).
+  const leased = await repo.listLeased();
+  const concurrency = deps.daemonConfig.concurrency;
+
+  const feature = queued.find((candidate) => {
+    if (
+      deps.controlState !== undefined &&
+      isDispatchPaused(deps.controlState, candidate.repo_id)
+    ) {
+      return false;
+    }
+    // The inclusive ceiling: in-flight >= cap blocks, never in-flight > cap
+    // only. A cap reachable only by lowering it mid-flight (in-flight > cap)
+    // falls into the same branch — dispatch nothing, revoke nothing.
+    if (leased.length >= concurrency.global) {
+      return false;
+    }
+    if (concurrency.per_repo !== undefined) {
+      const repoLeasedCount = leased.filter(
+        (row) => row.repo_id === candidate.repo_id,
+      ).length;
+      if (repoLeasedCount >= concurrency.per_repo) {
+        return false;
+      }
+    }
+    return true;
+  });
   if (feature === undefined) {
     return { dispatched: false };
   }

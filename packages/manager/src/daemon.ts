@@ -25,6 +25,7 @@ import {
   runStartupGate,
   SchemaVersionRefusalError,
 } from './boot/startup.js';
+import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import {
@@ -178,6 +179,10 @@ export async function startDaemon(
   await expireAllLeasesAtBoot(db, logger);
 
   const staleRejectionCounter = createStaleRejectionCounter();
+  // The dispatch brake (D-26, 03-07 Task 2) — one instance for this daemon
+  // process's lifetime, in memory only (see control/state.ts's own
+  // docblock: a restart resumes dispatch).
+  const controlState = createControlState();
 
   const supervisor = createSupervisor({
     entryPath: options.workerEntryPath ?? DEFAULT_WORKER_ENTRY_PATH,
@@ -202,6 +207,18 @@ export async function startDaemon(
     // safe no-op if the lease was already reassigned by the time this exit
     // is observed.
     onUnexpectedExit: createFastPathRecovery({ db, logger }),
+    // D-26's round boundary: an accepted stage_result means the round is
+    // done; if dispatch is paused for this feature's repository right now,
+    // park it there rather than mid-round.
+    onRoundBoundary: (params) => {
+      void parkOnRoundBoundary(
+        db,
+        controlState,
+        params.featureId,
+        params.repoId,
+        'pause-park',
+      );
+    },
   });
 
   const reaper = startReaper({
@@ -249,6 +266,11 @@ export async function startDaemon(
     apiToken: options.apiToken,
     schemaVersion: DAEMON_SCHEMA_VERSION,
     listFeatureViews,
+    db,
+    controlState,
+    supervisor,
+    workerStopGraceMs: options.daemonConfig.worker_stop_grace_ms,
+    logger,
   });
 
   const server: ServerType = await new Promise((resolve) => {
@@ -271,6 +293,7 @@ export async function startDaemon(
         heartbeatIntervalMs: options.heartbeatIntervalMs,
         daemonConfig: options.daemonConfig,
         resolveAdlYml: options.resolveAdlYml,
+        controlState,
         spawnWorker: ({ feature, leaseToken, assign }) => {
           supervisor.spawn(feature, leaseToken, assign);
         },
