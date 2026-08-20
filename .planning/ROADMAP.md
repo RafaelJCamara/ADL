@@ -191,9 +191,35 @@ Plans:
   3. The backend's CLI version is pinned and preflight-checked at startup, so an unexpected version is reported as a broken installation rather than discovered mid-run.
   4. Repository-level agent-CLI config auto-discovery is disabled and system prompts are set explicitly, so the same feature on the same commit receives the same prompt twice running.
 
-**Plans**: TBD
+**Plans**: 10 plans
 
-**Research**: ⚠️ flagged — per-backend agentic-CLI behaviour under *unattended* conditions is under-documented; CLI flag surfaces rate MEDIUM confidence.
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Package legitimacy gate, the `@adl/agent-claude-code` package, and fixtures captured from the real pinned CLI
+- [ ] 04-02-PLAN.md — D-2-08-1: the agent can run git inside its own worktree
+- [ ] 04-03-PLAN.md — The `AgentRunner` port and the on-disk transcript record format
+- [ ] 04-04-PLAN.md — What a worker needs to stand a workspace up: `assign`'s workspace fields and the round/attempt rows
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-05-PLAN.md — The NDJSON transcript store: deterministic path, byte-offset append and read
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-06-PLAN.md — Tracer: `adl dev-run` makes a real commit through a real agent, streamed live
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 04-07-PLAN.md — Version preflight: the exact pin, the hard block, the broken-installation diagnosis
+- [ ] 04-08-PLAN.md — Reconnect without loss or duplication: the follow loop and `adl logs -f`
+- [ ] 04-09-PLAN.md — Determinism: discovery disabled, context supplied explicitly, the prompt persisted per attempt
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 04-10-PLAN.md — Cost accounting: the real `usage_events` row and the spike closed
+
+**Research**: ⚠️ flagged — per-backend agentic-CLI behaviour under *unattended* conditions is under-documented; CLI flag surfaces rate MEDIUM confidence. Closed in planning by `04-01`, which captures the real four-flag invocation, the version-output shape, and the usage field names as committed fixtures before any translator is written.
 
 **Notes**: Prompt construction lives in a separate `PromptBuilder` module — adapters never build prompts — and rendered prompts are persisted as artifacts. Transcripts are NDJSON with byte-offset addressing, never DB rows.
 
@@ -454,7 +480,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
 | 3. Manager Skeleton | 10/10 | Complete    | 2026-08-20 |
-| 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
+| 4. First Agent Backend & Live Transcripts | 0/10 | Planned | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
 | 7. Code Reviewer on the Gate Plugin Interface | 0/TBD | Not started | - |
