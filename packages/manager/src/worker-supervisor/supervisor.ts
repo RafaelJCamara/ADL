@@ -212,6 +212,23 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
       ) {
         const kind = message.t;
         const leaseToken = message.leaseToken;
+        if (kind === 'stage_result') {
+          // WR-02: marked synchronously, before any `await` below, so this
+          // can never race the child's own `exit` event. The worker sends
+          // `stage_result` and then calls `exitNow(0)` with no delay in
+          // between (`worker-entry/index.ts`) — if this were set only after
+          // the async fence check's `await deps.getCurrentLeaseToken(...)`,
+          // the child could exit and the parent's `'exit'` handler could run
+          // first, misclassifying an expected exit as unexpected and firing
+          // the fast-path `lease_expired` recovery on a feature that
+          // actually completed its round cleanly. Marking unconditionally
+          // here is still safe if the fence later rejects this message as
+          // stale (below): a stale token means some other writer already
+          // moved this lease, so suppressing this worker's own fast-path
+          // call costs nothing — the reaper's `expectedLeaseToken` guard
+          // already treats that case as a no-op.
+          expectingExit.set(feature.id, true);
+        }
         void (async () => {
           // D-06's message-level fence, run before any repository write, for
           // every lease-scoped kind — not only `stage_result`.
@@ -281,9 +298,10 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
 
           if (kind === 'stage_result') {
             // The worker is finishing on its own after a *fence-matched*
-            // result — D-04's "expected exit" case. The fast path must not
-            // also apply `lease_expired` for the exit that follows.
-            expectingExit.set(feature.id, true);
+            // result — D-04's "expected exit" case. `expectingExit` was
+            // already marked synchronously above (WR-02), before this
+            // async fence check even started, so the fast path cannot race
+            // the child's own exit here.
             deps.onRoundBoundary?.({
               featureId: feature.id,
               leaseToken,

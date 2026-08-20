@@ -361,6 +361,7 @@ describe('the round boundary (D-26): parking in-flight work', () => {
       process.env.ADL_TEST_STAGE_DELAY_MS = '250';
       const { logger } = createCapturingLogger();
       const controlState = createControlState();
+      let unexpectedExitCalls = 0;
 
       const supervisor = createSupervisor({
         entryPath: worker.entryPath,
@@ -369,6 +370,20 @@ describe('the round boundary (D-26): parking in-flight work', () => {
         logger,
         leaseTtlMs: 60_000,
         renewLease: (params) => featuresRepository(db).renewLease(params),
+        // WR-02 regression coverage: a real async DB round-trip here (not
+        // the omitted-dep short-circuit the old version of this test used)
+        // exercises the exact `await` the fast-path exit race sits behind.
+        // If `expectingExit` were only set after this await resolves, the
+        // scripted worker's near-immediate `exitNow(0)` following its
+        // `stage_result` could still race the parent's own `'exit'` handler
+        // and misfire the fast path.
+        getCurrentLeaseToken: (id) =>
+          featuresRepository(db)
+            .findById(id)
+            .then((row) => row?.lease_token ?? null),
+        onUnexpectedExit: () => {
+          unexpectedExitCalls += 1;
+        },
         onRoundBoundary: (params) => {
           void parkOnRoundBoundary(
             db,
@@ -409,6 +424,12 @@ describe('the round boundary (D-26): parking in-flight work', () => {
         const pauseEvent = events.find((e) => e.to_state === 'paused');
         expect(pauseEvent).toBeDefined();
         expect(pauseEvent?.actor).toBeTruthy();
+
+        // WR-02: the worker's near-immediate exit after `stage_result` must
+        // never be misclassified as unexpected — `expectingExit` is marked
+        // synchronously before the fence check's `await`, so the fast path
+        // must not have fired even once.
+        expect(unexpectedExitCalls).toBe(0);
       } finally {
         delete process.env.ADL_TEST_STAGE_DELAY_MS;
       }
