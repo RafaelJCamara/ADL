@@ -55,5 +55,6 @@ blocked: 0
   reason: "User reported: require persistence via a meta row"
   severity: major
   test: 3
-  artifacts: []
-  missing: []
+  root_cause: "03-07-PLAN.md's own flagged_assumptions block already named this: 'This plan holds the global pause flag in memory only, so a restart resumes dispatch... A persisted pause would be a `meta` row and a boot-time read.' control/state.ts's createControlState() never touches the database; the global pause flag lives only in a JS closure. No investigation needed — the fix direction was already specified by the plan author, just never implemented."
+  artifacts: [packages/manager/src/control/state.ts, packages/manager/src/boot/startup.ts, packages/db/src/repository/meta.ts]
+  missing: [persisted global-pause meta row, boot-time read/restore of that row, write-through on pause/resume]
