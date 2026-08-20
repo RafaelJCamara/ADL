@@ -191,7 +191,7 @@ Plans:
   3. The backend's CLI version is pinned and preflight-checked at startup, so an unexpected version is reported as a broken installation rather than discovered mid-run.
   4. Repository-level agent-CLI config auto-discovery is disabled and system prompts are set explicitly, so the same feature on the same commit receives the same prompt twice running.
 
-**Plans**: 9/10 plans executed
+**Plans**: 10/10 plans executed
 
 Plans:
 **Wave 1**
@@ -217,7 +217,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 04-10-PLAN.md — Cost accounting: the real `usage_events` row and the spike closed
+- [x] 04-10-PLAN.md — Cost accounting: the real `usage_events` row and the spike closed
 
 **Research**: ⚠️ flagged — per-backend agentic-CLI behaviour under *unattended* conditions is under-documented; CLI flag surfaces rate MEDIUM confidence. Closed in planning by `04-01`, which captures the real four-flag invocation, the version-output shape, and the usage field names as committed fixtures before any translator is written.
 
@@ -480,7 +480,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
 | 3. Manager Skeleton | 10/10 | Complete    | 2026-08-20 |
-| 4. First Agent Backend & Live Transcripts | 9/10 | In Progress|  |
+| 4. First Agent Backend & Live Transcripts | 10/10 | In Progress|  |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
 | 7. Code Reviewer on the Gate Plugin Interface | 0/TBD | Not started | - |
