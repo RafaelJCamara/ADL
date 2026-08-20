@@ -118,27 +118,58 @@ export async function openTranscriptWriter(
 
   let currentOffset = (await handle.stat()).size;
 
-  return {
-    async append(record: TranscriptRecord): Promise<number> {
-      // Validated here, not merely trusted from the caller: a malformed
-      // record reaching JSON.stringify would still produce *a* line, just
-      // not one `TranscriptRecordSchema.parse` could read back — catching
-      // that at the write site is cheaper than discovering it at read time.
-      const parsed = TranscriptRecordSchema.parse(record);
-      const line = `${JSON.stringify(parsed)}\n`;
-      await handle.appendFile(line, 'utf8');
+  // Node documents concurrent, unawaited writes to one FileHandle as
+  // unsafe — they are dispatched to the libuv threadpool independently, with
+  // no guaranteed completion order. A caller whose event source can emit
+  // several records before the first `append()` promise settles (the real
+  // CLI-adapter case: one stdout chunk can translate to multiple AgentEvents
+  // in one synchronous loop) would otherwise risk two records landing on
+  // disk out of `seq` order, or interleaving mid-write into an invalid JSON
+  // line. Chaining every append onto a private queue makes ordering
+  // structural — true for every caller — rather than something each caller
+  // must remember to `await` one at a time.
+  //
+  // The queue tail itself must never become a rejected promise: `.then()`
+  // with no rejection handler propagates a rejection straight through
+  // without running its callback, so one malformed record (a validation
+  // failure, not an I/O failure) would silently stop every append after it
+  // for the lifetime of this writer. Each turn therefore swallows its own
+  // failure into the queue (`.catch(() => undefined)`) while still
+  // rejecting the *caller's* promise for that specific append via a
+  // separately-tracked result.
+  let writeQueue: Promise<void> = Promise.resolve();
 
-      // Re-stat rather than accumulate `Buffer.byteLength(line)`: this is
-      // what makes "the returned offset equals the file's size on disk"
-      // true by construction rather than by an argument that the two never
-      // drift apart.
-      currentOffset = (await handle.stat()).size;
-      return currentOffset;
+  return {
+    append(record: TranscriptRecord): Promise<number> {
+      const result = writeQueue.then(async () => {
+        // Validated here, not merely trusted from the caller: a malformed
+        // record reaching JSON.stringify would still produce *a* line, just
+        // not one `TranscriptRecordSchema.parse` could read back — catching
+        // that at the write site is cheaper than discovering it at read time.
+        const parsed = TranscriptRecordSchema.parse(record);
+        const line = `${JSON.stringify(parsed)}\n`;
+        await handle.appendFile(line, 'utf8');
+
+        // Re-stat rather than accumulate `Buffer.byteLength(line)`: this is
+        // what makes "the returned offset equals the file's size on disk"
+        // true by construction rather than by an argument that the two
+        // never drift apart.
+        currentOffset = (await handle.stat()).size;
+        return currentOffset;
+      });
+      writeQueue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
     },
     offset(): number {
       return currentOffset;
     },
     async close(): Promise<void> {
+      // Drain any queued appends before closing — closing the handle out
+      // from under a still-pending `appendFile` would fail that write.
+      await writeQueue;
       await handle.close();
     },
   };

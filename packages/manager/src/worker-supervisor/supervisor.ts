@@ -55,6 +55,26 @@ export interface RecordUsageInput {
 /** Writes one `usage_events` row through `usageRepository(db).record` — never a second insert path. */
 export type RecordUsage = (input: RecordUsageInput) => Promise<void>;
 
+/**
+ * What `closeAttempt` needs to record a stage attempt's terminal outcome
+ * (04-04 Task 2's `bookkeeping/attempt.ts`): the identity comes from THIS
+ * supervisor's own `assign` closure, mirroring `RecordUsageInput` — a worker
+ * cannot report its own stage attempt id.
+ */
+export interface CloseAttemptInput {
+  readonly stageAttemptId: string;
+  /** `'verdict'` for a fence-matched `stage_result`, `'error'` for a self-reported `fatal`. */
+  readonly status: 'verdict' | 'error';
+}
+
+/**
+ * Writes `ended_at`/terminal `status` for a stage attempt through
+ * `bookkeeping/attempt.ts`'s `closeAttempt` — never a second writer. Optional
+ * so every earlier plan's `createSupervisor` call site keeps compiling
+ * unchanged, mirroring `recordUsage`.
+ */
+export type CloseAttemptFn = (input: CloseAttemptInput) => Promise<void>;
+
 /** One rejected worker message, for D-09's "expected-but-notable, counted" handling. */
 export interface StaleMessage {
   readonly featureId: string;
@@ -114,6 +134,17 @@ export interface SupervisorDeps {
    * applicable.
    */
   readonly recordUsage?: RecordUsage;
+  /**
+   * Records a stage attempt's terminal outcome for a fence-matched
+   * `stage_result` (`status: 'verdict'`) or self-reported `fatal`
+   * (`status: 'error'`) — CR-01: without this, `ended_at` is never written
+   * from production, so `GET /stages/:id/logs?follow=1`'s `isAttemptEnded`
+   * gate can never observe a real run finishing and `adl logs -f` never
+   * terminates on its own. Optional so every earlier plan's
+   * `createSupervisor` call site keeps compiling unchanged, mirroring
+   * `recordUsage`.
+   */
+  readonly closeAttempt?: CloseAttemptFn;
   /** Called whenever a lease-scoped message's token no longer matches the lease (D-09). */
   readonly onStaleMessage?: (message: StaleMessage) => void;
   /** Called once a forked worker reports `ready` — the pid it started as. */
@@ -384,14 +415,31 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
               leaseToken,
               repoId: feature.repo_id,
             });
+            // CR-01: a fence-matched stage_result is the one place the
+            // manager KNOWS this attempt reached a verdict — `assign` (this
+            // spawn() call's own closure) carries the stageAttemptId, never
+            // the message itself, mirroring `recordUsage`'s identity source.
+            // Without this write, `stage_attempts.ended_at` stays null
+            // forever and `GET /stages/:id/logs?follow=1` can never emit
+            // `ended` for a real run.
+            await deps.closeAttempt?.({
+              stageAttemptId: assign.stageAttemptId,
+              status: 'verdict',
+            });
           }
-          // 'fatal' is deliberately NOT marked as an expected exit — a
-          // self-reported fatal error is a worker dying just as surely as a
-          // SIGKILL, and the fast path recovers it the same way.
-          // Round/stage bookkeeping (writing stage_attempts, verdicts) for
-          // an accepted 'stage_result' is a later plan's job — this plan
-          // proves the fence, the heartbeat path, and the exit
-          // classification end to end.
+          if (kind === 'fatal') {
+            // A self-reported fatal is a terminal outcome too — the attempt
+            // did not produce a verdict, but it is no longer running, and a
+            // follower waiting on `ended` deserves to be told so rather than
+            // polling `idle` forever. Deliberately NOT marked as an expected
+            // exit — a self-reported fatal error is a worker dying just as
+            // surely as a SIGKILL, and the fast-path unexpected-exit
+            // recovery still runs for it, independently of this write.
+            await deps.closeAttempt?.({
+              stageAttemptId: assign.stageAttemptId,
+              status: 'error',
+            });
+          }
         })();
       }
       // 'ready' is handled above.

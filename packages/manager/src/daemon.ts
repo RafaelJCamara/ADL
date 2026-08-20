@@ -20,6 +20,7 @@ import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
+import { closeAttempt } from './bookkeeping/attempt.js';
 import {
   BackendUnavailableError,
   runBackendPreflight,
@@ -374,6 +375,16 @@ export async function startDaemon(
         at: nowIso(),
       });
     },
+    // CR-01: the one place `stage_attempts.ended_at`/terminal `status` is
+    // written from production, through `bookkeeping/attempt.ts`'s
+    // `closeAttempt` — never a second writer. Without this, `GET
+    // /stages/:id/logs?follow=1`'s `isAttemptEnded` gate can never see a
+    // real run finish, and `adl logs -f` never terminates on its own.
+    closeAttempt: (params) =>
+      closeAttempt(
+        { db },
+        { stageAttemptId: params.stageAttemptId, status: params.status },
+      ),
   });
 
   const reaper = startReaper({

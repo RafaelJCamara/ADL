@@ -144,6 +144,64 @@ describe('openTranscriptWriter', () => {
       }
     });
   });
+
+  it('concurrent, unawaited appends land on disk in call order rather than racing on the shared file handle', async () => {
+    // Mirrors the real caller shape that motivated queueing appends: a
+    // synchronous loop (e.g. one stdout chunk translating to several
+    // AgentEvents) that fires off several appends before awaiting any of
+    // them. Node documents concurrent unawaited writes to one FileHandle as
+    // order-unsafe — without an internal write queue this test is flaky by
+    // construction; with one, it is deterministic.
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      try {
+        const promises = [
+          writer.append(record(1)),
+          writer.append(record(2)),
+          writer.append(record(3)),
+          writer.append(record(4)),
+          writer.append(record(5)),
+        ];
+        await Promise.all(promises);
+
+        const read = await readTranscriptFrom(path, 0);
+        expect(read.outcome).toBe('read');
+        if (read.outcome === 'read') {
+          expect(read.records.map((r) => r.seq)).toEqual([1, 2, 3, 4, 5]);
+        }
+      } finally {
+        await writer.close();
+      }
+    });
+  });
+
+  it('a validation failure on one queued append rejects only that call — later appends still land', async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      try {
+        const good1 = writer.append(record(1));
+        // seq must be a non-negative integer per TranscriptRecordSchema —
+        // this call's promise must reject without poisoning the internal
+        // write queue for the calls after it.
+        const bad = writer.append(record(-1));
+        const good2 = writer.append(record(2));
+
+        await expect(good1).resolves.toBeTypeOf('number');
+        await expect(bad).rejects.toThrow();
+        await expect(good2).resolves.toBeTypeOf('number');
+
+        const read = await readTranscriptFrom(path, 0);
+        expect(read.outcome).toBe('read');
+        if (read.outcome === 'read') {
+          expect(read.records.map((r) => r.seq)).toEqual([1, 2]);
+        }
+      } finally {
+        await writer.close();
+      }
+    });
+  });
 });
 
 describe('readTranscriptFrom', () => {

@@ -19,6 +19,11 @@ import type { WorkerToManagerMessage } from '../../src/ipc/protocol.js';
  * - `ADL_TEST_STAGE_DELAY_MS`: delay before completing the stage, so a test
  *   has time to observe the usage message(s) land before `stage_result`
  *   arrives. Defaults to 50ms.
+ * - `ADL_TEST_THROW`: when set (any value), the stage throws after sending
+ *   any scripted usage messages instead of resolving — drives `runWorker`'s
+ *   `exitFatal` path (a `fatal` IPC message) rather than `stage_result`, so
+ *   a test can exercise the error side of `closeAttempt`'s wiring without a
+ *   second scripted worker file.
  */
 
 interface ScriptedUsagePayload {
@@ -69,6 +74,9 @@ const stageRunner: StageRunner = async (assign) => {
     });
   }
   await new Promise((resolve) => setTimeout(resolve, delayMs));
+  if (process.env['ADL_TEST_THROW'] !== undefined) {
+    throw new Error('ADL_TEST_THROW: scripted worker failure');
+  }
   return {
     verdictJson: JSON.stringify({
       outcome: 'skip',

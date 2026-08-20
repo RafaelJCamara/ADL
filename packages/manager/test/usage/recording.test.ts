@@ -19,11 +19,13 @@ import {
 } from '@adl/db';
 import type { Kysely } from 'kysely';
 import {
+  closeAttempt as closeAttemptWrite,
   createStaleRejectionCounter,
   createSupervisor,
   dispatchOnce,
   findAttempt,
   IPC_MESSAGE_KINDS,
+  isAttemptEnded,
   parseWorkerMessage,
   startDaemon,
   type ActiveWorker,
@@ -186,6 +188,11 @@ describe('createSupervisor — usage message handling', () => {
       readonly recordUsage?: Parameters<
         typeof createSupervisor
       >[0]['recordUsage'];
+      readonly closeAttempt?: Parameters<
+        typeof createSupervisor
+      >[0]['closeAttempt'];
+      /** Sets `ADL_TEST_THROW` so the scripted stage reports `fatal` instead of `stage_result`. */
+      readonly throwInStage?: boolean;
     } = {},
   ): Promise<{
     readonly featureId: string;
@@ -207,6 +214,7 @@ describe('createSupervisor — usage message handling', () => {
           opts.scriptedMessages ?? [],
         ),
         ADL_TEST_STAGE_DELAY_MS: '80',
+        ...(opts.throwInStage === true ? { ADL_TEST_THROW: '1' } : {}),
       },
       logger,
       leaseTtlMs: opts.leaseTtlMs ?? 60_000,
@@ -217,6 +225,7 @@ describe('createSupervisor — usage message handling', () => {
       },
       staleRejectionCounter: createStaleRejectionCounter(),
       recordUsage: opts.recordUsage,
+      closeAttempt: opts.closeAttempt,
     });
 
     let call: SpawnCall | undefined;
@@ -425,6 +434,77 @@ describe('createSupervisor — usage message handling', () => {
       expect(recorded).toBe(0);
       const rows = await usageRepository(db).listForFeature(featureId);
       expect(rows).toHaveLength(0);
+    });
+  }, 20_000);
+
+  // -------------------------------------------------------------------------
+  // CR-01 (04-REVIEW.md): closeAttempt wired into production message handling
+  // -------------------------------------------------------------------------
+
+  it("a fence-matched stage_result closes the attempt with status 'verdict' — the write GET /stages/:id/logs?follow=1's ended event depends on", async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const { stageAttemptId, child } = await dispatchAndSpawn(db, {
+        closeAttempt: (params) =>
+          closeAttemptWrite(
+            { db },
+            { stageAttemptId: params.stageAttemptId, status: params.status },
+          ),
+      });
+
+      // Not yet ended while the worker is still finishing its scripted delay.
+      expect(await isAttemptEnded(db, stageAttemptId)).toBe(false);
+
+      await waitForExit(child);
+      await waitUntil(() => isAttemptEnded(db, stageAttemptId));
+
+      const row = await db
+        .selectFrom('stage_attempts')
+        .select(['status', 'ended_at'])
+        .where('id', '=', stageAttemptId)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe('verdict');
+      expect(row.ended_at).not.toBeNull();
+    });
+  }, 20_000);
+
+  it("a self-reported fatal closes the attempt with status 'error' rather than leaving it running forever", async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const { stageAttemptId, child } = await dispatchAndSpawn(db, {
+        throwInStage: true,
+        closeAttempt: (params) =>
+          closeAttemptWrite(
+            { db },
+            { stageAttemptId: params.stageAttemptId, status: params.status },
+          ),
+      });
+
+      await waitForExit(child);
+      await waitUntil(() => isAttemptEnded(db, stageAttemptId));
+
+      const row = await db
+        .selectFrom('stage_attempts')
+        .select(['status', 'ended_at'])
+        .where('id', '=', stageAttemptId)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe('error');
+      expect(row.ended_at).not.toBeNull();
+    });
+  }, 20_000);
+
+  it('without closeAttempt wired (the pre-fix shape), the attempt never ends — proving the fix is load-bearing, not incidental', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const { stageAttemptId, child } = await dispatchAndSpawn(db, {
+        // No closeAttempt supplied — mirrors every createSupervisor call
+        // site before this fix.
+      });
+
+      await waitForExit(child);
+      await delay(150);
+
+      expect(await isAttemptEnded(db, stageAttemptId)).toBe(false);
     });
   }, 20_000);
 });
