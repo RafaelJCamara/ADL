@@ -39,6 +39,96 @@ describe('@adl/plugin-sdk re-exports @adl/core by reference', () => {
     },
   );
 
+  it.each([
+    [
+      'AGENT_EVENT_KINDS',
+      PluginSdk.AGENT_EVENT_KINDS,
+      CoreStage.AGENT_EVENT_KINDS,
+    ],
+    [
+      'AgentCapabilitiesSchema',
+      PluginSdk.AgentCapabilitiesSchema,
+      CoreStage.AgentCapabilitiesSchema,
+    ],
+    [
+      'StartedEventSchema',
+      PluginSdk.StartedEventSchema,
+      CoreStage.StartedEventSchema,
+    ],
+    ['TextEventSchema', PluginSdk.TextEventSchema, CoreStage.TextEventSchema],
+    [
+      'ThinkingEventSchema',
+      PluginSdk.ThinkingEventSchema,
+      CoreStage.ThinkingEventSchema,
+    ],
+    [
+      'ToolCallEventSchema',
+      PluginSdk.ToolCallEventSchema,
+      CoreStage.ToolCallEventSchema,
+    ],
+    [
+      'ToolResultEventSchema',
+      PluginSdk.ToolResultEventSchema,
+      CoreStage.ToolResultEventSchema,
+    ],
+    [
+      'AgentUsageSchema',
+      PluginSdk.AgentUsageSchema,
+      CoreStage.AgentUsageSchema,
+    ],
+    [
+      'UsageEventSchema',
+      PluginSdk.UsageEventSchema,
+      CoreStage.UsageEventSchema,
+    ],
+    [
+      'AGENT_RESULT_OUTCOMES',
+      PluginSdk.AGENT_RESULT_OUTCOMES,
+      CoreStage.AGENT_RESULT_OUTCOMES,
+    ],
+    [
+      'AgentResultOutcomeSchema',
+      PluginSdk.AgentResultOutcomeSchema,
+      CoreStage.AgentResultOutcomeSchema,
+    ],
+    [
+      'ResultEventSchema',
+      PluginSdk.ResultEventSchema,
+      CoreStage.ResultEventSchema,
+    ],
+    [
+      'ErrorEventSchema',
+      PluginSdk.ErrorEventSchema,
+      CoreStage.ErrorEventSchema,
+    ],
+    [
+      'AgentEventSchema',
+      PluginSdk.AgentEventSchema,
+      CoreStage.AgentEventSchema,
+    ],
+    ['AgentTaskSchema', PluginSdk.AgentTaskSchema, CoreStage.AgentTaskSchema],
+    [
+      'AgentRunResultSchema',
+      PluginSdk.AgentRunResultSchema,
+      CoreStage.AgentRunResultSchema,
+    ],
+    [
+      'AgentProbeSchema',
+      PluginSdk.AgentProbeSchema,
+      CoreStage.AgentProbeSchema,
+    ],
+    [
+      'TranscriptRecordSchema',
+      PluginSdk.TranscriptRecordSchema,
+      CoreStage.TranscriptRecordSchema,
+    ],
+  ])(
+    '%s (the AgentRunner surface, Phase 4) is the same object as the one @adl/core exports',
+    (_name, fromSdk, fromCore) => {
+      expect(fromSdk).toBe(fromCore);
+    },
+  );
+
   it('re-exports NETWORK_POLICIES by reference, not as a copy of the tuple', () => {
     // The one runtime value in the workspace surface. A `toEqual` here would
     // pass against `Object.freeze(['full', 'none', 'allowlist'])` written out a

@@ -18,6 +18,7 @@
  *    (`.planning/research/SUMMARY.md` § Reconciled Decisions §1).
  */
 import type { Finding } from '../verdict/finding.js';
+import type { AgentRunner } from './agent.js';
 import type { StageOutcome } from './stage-error.js';
 import type { Workspace } from './workspace.js';
 
@@ -27,6 +28,12 @@ import type { Workspace } from './workspace.js';
  * the forward declaration has been replaced by the real interface.
  */
 export type { Workspace } from './workspace.js';
+
+/**
+ * Re-exported for the same reason `Workspace` is above. Phase 4 replaced the
+ * forward declaration below with the real interface in `./agent.js`.
+ */
+export type { AgentRunner } from './agent.js';
 
 /**
  * How a stage is implemented: a model-driven agent, or a shell command.
@@ -69,8 +76,10 @@ export interface LogChunk {
  * by every non-nullish value, so `workspace: {}` would happily accept a number.
  *
  * `Workspace` used to be one of them. Phase 2 replaced it with the real
- * interface in `./workspace.js`, which is imported and re-exported above — the
- * declarations below are what remains.
+ * interface in `./workspace.js`, which is imported and re-exported above.
+ * `AgentRunner` used to be another. Phase 4 replaced it with the real
+ * interface in `./agent.js`, imported and re-exported above the same way —
+ * the declarations below are what remains.
  * ---------------------------------------------------------------------- */
 
 /** **Forward declaration.** Phase 3 supplies the feature view: normalized spec, branch, round, headSha. */
@@ -81,12 +90,6 @@ export interface FeatureView {
 
 /** **Forward declaration.** Plan 01-07 supplies this stage's resolved `adl.yml` config block. */
 export interface StageConfig {
-  /** Structural placeholder only; never read. */
-  readonly __adlForwardDeclaration?: never;
-}
-
-/** **Forward declaration.** Phase 4 supplies the agent runner — the only way to call a model, and it meters cost. */
-export interface AgentRunner {
   /** Structural placeholder only; never read. */
   readonly __adlForwardDeclaration?: never;
 }

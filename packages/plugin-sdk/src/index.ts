@@ -110,11 +110,55 @@ export {
 
   // The rest of `StageContext`, still forward declarations in `@adl/core` until
   // the phase that owns each one lands it: the feature view and the artifact
-  // sink in Phase 3, the agent runner in Phase 4, the round summary in Phase 5.
-  // A harness can name these types today; their members arrive with the phase.
+  // sink in Phase 3, the round summary in Phase 5. A harness can name these
+  // types today; their members arrive with the phase.
   type FeatureView,
   type StageConfig,
-  type AgentRunner,
   type ArtifactSink,
   type RoundSummary,
+
+  // The AgentRunner port — the only way a stage calls a model (BACK-01,
+  // Phase 4). `StageContext.agents` is one of these; a harness receives it
+  // exactly the way it receives a `Workspace`. Every runtime value below is
+  // a `.strictObject` Zod schema (`.strictObject` — an extra property a
+  // backend's translator tries to smuggle through is a parse failure, not a
+  // silently carried value), so a third-party adapter package can validate
+  // against the same contract ADL's own Claude Code adapter does.
+  AGENT_EVENT_KINDS,
+  type AgentEventKind,
+  AgentCapabilitiesSchema,
+  type AgentCapabilities,
+  StartedEventSchema,
+  type AgentStartedEvent,
+  TextEventSchema,
+  type AgentTextEvent,
+  ThinkingEventSchema,
+  type AgentThinkingEvent,
+  ToolCallEventSchema,
+  type AgentToolCallEvent,
+  ToolResultEventSchema,
+  type AgentToolResultEvent,
+  AgentUsageSchema,
+  type AgentUsage,
+  UsageEventSchema,
+  type AgentUsageEvent,
+  AGENT_RESULT_OUTCOMES,
+  type AgentResultOutcome,
+  AgentResultOutcomeSchema,
+  ResultEventSchema,
+  type AgentResultEvent,
+  ErrorEventSchema,
+  type AgentErrorEvent,
+  AgentEventSchema,
+  type AgentEvent,
+  AgentTaskSchema,
+  type AgentTask,
+  AgentRunResultSchema,
+  type AgentRunResult,
+  AgentProbeSchema,
+  type AgentProbe,
+  type AgentRunContext,
+  type AgentRunner,
+  TranscriptRecordSchema,
+  type TranscriptRecord,
 } from '@adl/core/stage';
