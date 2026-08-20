@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 1
+open_count: 2
 waived_count: 0
 fixed_count: 0
-total_count: 1
-last_updated: 2026-08-20T13:44:24.299Z
+total_count: 2
+last_updated: 2026-08-20T20:23:14.681Z
 ---
 
 # Broken Windows Ledger
@@ -16,6 +16,7 @@ last_updated: 2026-08-20T13:44:24.299Z
 | id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 4 | unrun-verify | packages/workspace/test/worktree/safe-directory.test.ts |  | D-2-08-1 privilege-drop reproduction (positive + negative control) is linuxOnly-gated and did not execute this session — the executor ran on Windows; needs a Linux CI leg or provisioned host to close 04-RESEARCH.md Assumption A4. | open |  | 2026-08-20T13:44:24.299Z |  |
+| 2 | 04 | unrun-verify | packages/manager/src/boot/backend-preflight.ts |  | claudeVersionCheckRunner (real claude --version via ADL-owned exec boundary) never exercised against a real, pinned CLI — 04-01 Task 3 fixture capture still deferred | open |  | 2026-08-20T20:23:14.681Z |  |
 
 ````json
 [
@@ -30,6 +31,19 @@ last_updated: 2026-08-20T13:44:24.299Z
     "reason": "",
     "recorded_at": "2026-08-20T13:44:24.299Z",
     "resolved_at": null
+  },
+  {
+    "id": 2,
+    "kind": "unrun-verify",
+    "phase": "04",
+    "file": "packages/manager/src/boot/backend-preflight.ts",
+    "line": null,
+    "description": "claudeVersionCheckRunner (real claude --version via ADL-owned exec boundary) never exercised against a real, pinned CLI — 04-01 Task 3 fixture capture still deferred",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-20T20:23:14.681Z",
+    "resolved_at": null
   }
 ]
 ````
+
