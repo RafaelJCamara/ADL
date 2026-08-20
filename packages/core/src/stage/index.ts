@@ -68,6 +68,51 @@ export {
   type RestoreHandle,
 } from './workspace.js';
 
+// The AgentRunner port — the only way a stage calls a model (BACK-01). Real
+// interfaces and schemas live in `./agent.ts`; declared here (not in
+// `./stage.ts`) for the same reason `Workspace` is, and re-exported through
+// `./stage.ts` so `StageContext.agents` needs no edit. Published through
+// `@adl/plugin-sdk` alongside the rest of the gate surface a harness author
+// depends on.
+export {
+  AGENT_EVENT_KINDS,
+  type AgentEventKind,
+  AgentCapabilitiesSchema,
+  type AgentCapabilities,
+  StartedEventSchema,
+  type AgentStartedEvent,
+  TextEventSchema,
+  type AgentTextEvent,
+  ThinkingEventSchema,
+  type AgentThinkingEvent,
+  ToolCallEventSchema,
+  type AgentToolCallEvent,
+  ToolResultEventSchema,
+  type AgentToolResultEvent,
+  AgentUsageSchema,
+  type AgentUsage,
+  UsageEventSchema,
+  type AgentUsageEvent,
+  AGENT_RESULT_OUTCOMES,
+  type AgentResultOutcome,
+  AgentResultOutcomeSchema,
+  ResultEventSchema,
+  type AgentResultEvent,
+  ErrorEventSchema,
+  type AgentErrorEvent,
+  AgentEventSchema,
+  type AgentEvent,
+  AgentTaskSchema,
+  type AgentTask,
+  AgentRunResultSchema,
+  type AgentRunResult,
+  AgentProbeSchema,
+  type AgentProbe,
+  type AgentRunContext,
+  TranscriptRecordSchema,
+  type TranscriptRecord,
+} from './agent.js';
+
 // The backend side of the same port. A harness never sees these — it receives a
 // `Workspace` — so they are deliberately NOT added to `@adl/plugin-sdk`, whose
 // surface is scoped to what a third-party gate needs. An out-of-tree workspace
