@@ -291,6 +291,8 @@ describe("dispatchOnce's workspace_handle branch", () => {
         heartbeatIntervalMs: 50,
         daemonConfig: DAEMON_CONFIG,
         resolveAdlYml: () => ADL_YML_FIXTURE,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
         spawnWorker: (call) => spawnCalls.push(call),
       });
       expect(first.dispatched).toBe(true);
@@ -314,6 +316,8 @@ describe("dispatchOnce's workspace_handle branch", () => {
         heartbeatIntervalMs: 50,
         daemonConfig: DAEMON_CONFIG,
         resolveAdlYml: () => ADL_YML_FIXTURE,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
         spawnWorker: (call) => spawnCalls.push(call),
       });
       expect(second.dispatched).toBe(true);
@@ -407,6 +411,14 @@ describe('a feature killed mid-round', () => {
           workspaceHandle: created.worktreePath,
           effectiveConfigJson: '{}',
           heartbeatIntervalMs: 50,
+          mainRepo: '/main/repo',
+          scratchRoot: '/main/repo/.adl/scratch',
+          baseRef: 'main',
+          workspaceBackendId: 'worktree',
+          roundId: 'round-1',
+          stageAttemptId: 'attempt-1',
+          stageId: 'develop',
+          stageIndex: 0,
         });
 
         await waitUntil(() => supervisor.get(featureId) !== undefined);

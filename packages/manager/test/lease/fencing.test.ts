@@ -293,6 +293,8 @@ describe('the D-31 zombie scenario', () => {
           heartbeatIntervalMs: 50,
           daemonConfig: DAEMON_CONFIG,
           resolveAdlYml: () => ADL_YML_FIXTURE,
+          mainRepo: '/main/repo',
+          scratchRoot: '/main/repo/.adl/scratch',
           spawnWorker: spawnAndTrack,
         });
         expect(first.dispatched).toBe(true);
@@ -324,6 +326,8 @@ describe('the D-31 zombie scenario', () => {
           heartbeatIntervalMs: 50,
           daemonConfig: DAEMON_CONFIG,
           resolveAdlYml: () => ADL_YML_FIXTURE,
+          mainRepo: '/main/repo',
+          scratchRoot: '/main/repo/.adl/scratch',
           spawnWorker: spawnAndTrack,
         });
         expect(second.dispatched).toBe(true);

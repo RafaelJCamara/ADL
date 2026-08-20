@@ -150,6 +150,8 @@ function dispatchDeps(
     heartbeatIntervalMs: 5_000,
     daemonConfig: DaemonConfigSchema.parse({ concurrency }),
     resolveAdlYml: () => ADL_YML_FIXTURE,
+    mainRepo: '/main/repo',
+    scratchRoot: '/main/repo/.adl/scratch',
     controlState,
     spawnWorker: () => {
       /* no-op */
@@ -450,6 +452,14 @@ describe('the round boundary (D-26): parking in-flight work', () => {
           workspaceHandle: `features/${featureId}`,
           effectiveConfigJson: '{}',
           heartbeatIntervalMs: 50,
+          mainRepo: '/main/repo',
+          scratchRoot: '/main/repo/.adl/scratch',
+          baseRef: 'main',
+          workspaceBackendId: 'worktree',
+          roundId: 'round-1',
+          stageAttemptId: 'attempt-1',
+          stageId: 'develop',
+          stageIndex: 0,
         });
 
         await waitUntil(() => supervisor.get(featureId) !== undefined);

@@ -346,6 +346,8 @@ describe('the D-32 scenario: concurrency 3, one SIGKILL, one daemon restart', ()
             heartbeatIntervalMs: daemonConfig.heartbeat_interval_ms,
             daemonConfig,
             resolveAdlYml: () => ADL_YML_FIXTURE,
+            mainRepo: '/main/repo',
+            scratchRoot: '/main/repo/.adl/scratch',
             spawnWorker: (call) => {
               supervisor1.spawn(call.feature, call.leaseToken, call.assign);
             },

@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve, type ServerType } from '@hono/node-server';
 import {
@@ -47,10 +49,13 @@ import {
  * supervisor, the dispatcher, and the Hono API together, and returns a
  * handle a caller (production `adl daemon start`, or a test) can stop.
  *
- * The startup order is fixed by D-37: schema gate, then copy-and-migrate
- * (inside `runStartupGate`), then repository reconciliation (`reconcileRepos`,
- * D-35), then lease expiry and the boot orphan kill (D-13, `./boot/orphans.js`),
- * then dispatch. A refusal from the gate exits before the API server binds —
+ * The startup order is fixed by D-37: schema gate (refuse newer,
+ * copy-then-migrate an older or unseeded database, inside
+ * `runStartupGate`), then the scratch root a workspace backend creates
+ * per-feature workspaces under (04-04), then repository reconciliation
+ * (`reconcileRepos`, D-35), then lease expiry and the boot orphan kill
+ * (D-13, `./boot/orphans.js`), then dispatch. A refusal from the gate exits
+ * before the API server binds —
  * `startDaemon` throws {@link SchemaVersionRefusalError} rather than returning
  * a handle.
  */
@@ -70,6 +75,14 @@ export interface StartDaemonOptions {
   readonly heartbeatIntervalMs: number;
   readonly daemonConfig: DaemonConfig;
   readonly resolveAdlYml: (feature: FeaturesTable) => AdlYml;
+  /**
+   * The directory a workspace backend may create a per-feature workspace
+   * under (04-04). Defaults to a `scratch` directory beside the database
+   * file. Created at startup if it does not already exist —
+   * `WorkspaceSpec.scratchRoot` documents that it must, and the daemon is
+   * the component that knows where ADL's state lives.
+   */
+  readonly scratchRoot?: string;
   /**
    * The migrations directory `runStartupGate` applies. Defaults to
    * `@adl/db`'s own shipped `migrations/` (via `resolveMigrationsDir()`,
@@ -171,6 +184,17 @@ export async function startDaemon(
     await db.destroy();
     throw new SchemaVersionRefusalError(gateResult.refusal);
   }
+
+  // 04-04: the scratch root a workspace backend creates per-feature
+  // workspaces under. Defaulted beside the database file so an existing
+  // caller keeps working with no config change, and created here — after
+  // the schema gate, before the first dispatch tick — because `daemon.ts`
+  // is the one component that knows where ADL's own state lives.
+  // `WorkspaceSpec.scratchRoot` documents that it must already exist by the
+  // time a worker is assigned it.
+  const scratchRoot =
+    options.scratchRoot ?? join(dirname(options.dbFilePath), 'scratch');
+  await mkdir(scratchRoot, { recursive: true });
 
   // D-35: reconcile watched repositories next.
   await reconcileRepos({ db, repos: options.daemonConfig.repos, logger });
@@ -312,6 +336,8 @@ export async function startDaemon(
         resolveAdlYml: options.resolveAdlYml,
         controlState,
         logger,
+        mainRepo: options.workerCwd ?? process.cwd(),
+        scratchRoot,
         spawnWorker: ({ feature, leaseToken, assign }) => {
           supervisor.spawn(feature, leaseToken, assign);
         },
