@@ -136,7 +136,7 @@ Plans:
   4. Feature state, rounds, spend, and transcripts are all present and consistent after a daemon restart.
   5. Maintainer can pause work and kill one feature, everything in one repository, or everything; concurrency is configurable and defaults to one feature in flight.
 
-**Plans**: 9/9 plans executed
+**Plans**: 9/10 plans executed (03-10 is gap closure for UAT G-03-3)
 
 Plans:
 **Wave 1**
@@ -171,6 +171,10 @@ Plans:
 **Wave 8** *(blocked on Wave 7 completion)*
 
 - [x] 03-09-PLAN.md — The concurrency-3 crash-and-restart scenario, on both platforms
+
+**Wave 9** *(gap closure — blocked on Wave 8 completion)*
+
+- [ ] 03-10-PLAN.md — Global pause survives a daemon restart: a persisted `meta` row and a boot-time restore (closes G-03-3)
 
 **Notes**: The manager owns detection, queue, state, config, credentials, and accounting; the worker is a separate OS process holding one lease. Forge *reads* belong to the manager too. Recovery semantics tested with zero AI in the loop is the cheapest this will ever be. Run CI at concurrency 3 even though the default ships as 1 — a crashed worker plus a restarted daemon is concurrency 2 in practice.
 
