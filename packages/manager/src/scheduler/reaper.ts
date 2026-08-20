@@ -146,9 +146,9 @@ export async function reapOne(
       ? decision.resetStageIndexTo
       : feature.current_stage_index + outcome.counters.currentStageIndex;
 
-  await deps.db.transaction().execute(async (trx) => {
+  const casApplied = await deps.db.transaction().execute(async (trx) => {
     const trxRepo = featuresRepository(trx);
-    await trxRepo.compareAndSwapState({
+    const applied = await trxRepo.compareAndSwapState({
       id: feature.id,
       expectedVersion: outcome.expectedStateVersion,
       state: outcome.next,
@@ -156,6 +156,13 @@ export async function reapOne(
       currentStageIndex: nextCurrentStageIndex,
       updatedAt: now,
     });
+    if (!applied) {
+      // Lost the race — a concurrent writer already moved this row past the
+      // version this reap attempt read. Do not increment crash_count for a
+      // recovery that never actually applied, do not append an event, and
+      // do not clear a lease that may no longer be the one this call read.
+      return false;
+    }
 
     // D-11: increment in the same transaction as the state write, so a
     // manager that dies between the two cannot double-count this crash.
@@ -185,7 +192,16 @@ export async function reapOne(
         leaseToken: feature.lease_token,
       });
     }
+    return true;
   });
+
+  if (!casApplied) {
+    deps.logger.warn(
+      { featureId: feature.id, state: feature.state },
+      'reaper: compareAndSwapState lost the race, skipping recovery write',
+    );
+    return undefined;
+  }
 
   return {
     featureId: feature.id,
