@@ -164,6 +164,17 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-imports',
     mentions: '@adl/db',
   },
+  // ── 04-01: the spawn ban reaches a new package outside packages/workspace ──
+  //
+  // `@adl/agent-claude-code` is deliberately absent from `WORKSPACE_EXEMPTION`
+  // (04-RESEARCH.md § Pitfall 5) — an agent-adapter author shelling out to the
+  // `claude` binary directly, instead of going through the `Workspace`
+  // instance a caller passes in, is exactly the mistake this fixture shapes.
+  {
+    file: 'test/lint/fixtures/spawn-agent-backend.ts',
+    ruleId: 'no-restricted-imports',
+    mentions: 'execa',
+  },
 ];
 
 /**
@@ -581,6 +592,32 @@ describe('the spawn boundary (WORK-02)', () => {
       restrictedPathNames(governed.rules ?? {}),
       `${NON_EXEMPT_SOURCE} is outside the exemption, so the identical import must be banned — otherwise the exemption has quietly widened`,
     ).toContain('execa');
+  });
+
+  it('agent-claude-code is governed by the spawn ban, and the exemption still has exactly one entry (04-01, Pitfall 5)', async () => {
+    // The positive half: `packages/agent-claude-code` is a new package
+    // outside `packages/workspace`, and 04-RESEARCH.md § Pitfall 5 asks the
+    // planner to VERIFY — not assume — that adding it did not require
+    // widening `WORKSPACE_EXEMPTION`. Resolved from the real barrel path
+    // rather than from the fixture, so this cannot pass merely because the
+    // fixture happens to lint clean.
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute('packages/agent-claude-code/src/index.ts'),
+    );
+    expect(
+      restrictedPathNames(resolved.rules ?? {}),
+      'packages/agent-claude-code/src/index.ts must resolve the spawn ban on execa — the new package is not, and must not become, a second exemption',
+    ).toContain('execa');
+
+    // The negative half: the exemption array itself has not grown. A future
+    // contributor adding `packages/agent-claude-code/**` (or any other
+    // second glob) here would make this fail even though the assertion above
+    // would still pass for THIS file, which is exactly why the count is
+    // checked independently rather than inferred from one resolved path.
+    expect(
+      WORKSPACE_EXEMPTION,
+      'the spawn-ban exemption must stay at exactly one glob entry — a second entry here silently widens success criterion 2 while every existing resolved-config assertion keeps passing',
+    ).toHaveLength(1);
   });
 
   it.each(MODULE_EXTENSIONS)(

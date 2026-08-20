@@ -1,0 +1,29 @@
+{
+  // The program `test/**/*.ts` is checked under.
+  //
+  // `tsconfig.json` deliberately includes only `src/**/*.ts` — it is the build
+  // program, it emits to `dist/`, and pulling `test/` into it would ship the
+  // suite (and a `vitest` type dependency) to consumers. This package's own
+  // split is the reverse of `@adl/manager`'s and `@adl/core`'s: those two
+  // packages already need `node` types in `tsconfig.json` because their
+  // `src/` touches Node builtins directly, so their `tsconfig.test.json`
+  // inherits the types for free. This package's `src/` touches nothing —
+  // `node` types belong here instead, because the suite reads
+  // `test/fixtures/*` from disk and `test/helpers/fake-claude.mjs` is a
+  // `node:child_process`-shaped replay double the tests drive.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    // The build program's `rootDir` is `src` (inherited from
+    // `tsconfig.json`), which does not contain `test/**/*.ts` — unlike
+    // `@adl/manager`'s pair, this package's tests never reach outside the
+    // package, so the package root is the narrowest `rootDir` that contains
+    // every file this non-emitting program pulls in.
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

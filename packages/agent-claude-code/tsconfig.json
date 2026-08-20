@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Unlike `@adl/manager` and `@adl/core` — both of which declare `"types":
+    // ["node"]` in THIS file because their `src/` touches a Node builtin
+    // directly (`node:child_process`, `node:crypto`, ...) — this package's
+    // `src/` owns no I/O and touches no builtin: at this point it exports one
+    // pinned version string. So `node` types are deliberately NOT declared
+    // here. They move to `tsconfig.test.json` instead, which is where they
+    // are actually needed: the suite reads fixture files from disk and drives
+    // a replay double over `node:child_process`.
+    "rootDir": "src",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"]
+}
