@@ -335,6 +335,10 @@ export function registerControlRoutes(
         return c.json({ affected } satisfies ControlResult);
       } catch (error) {
         if (error instanceof GlobalPausePersistError) {
+          deps.logger?.error(
+            { err: error },
+            'POST /control/pause: global pause flag was not persisted',
+          );
           return c.json(
             {
               error: 'the pause flag was not persisted — dispatch is unchanged',
@@ -366,6 +370,10 @@ export function registerControlRoutes(
         return c.json({ affected } satisfies ControlResult);
       } catch (error) {
         if (error instanceof GlobalPausePersistError) {
+          deps.logger?.error(
+            { err: error },
+            'POST /control/resume: global pause flag was not persisted',
+          );
           return c.json(
             {
               error:
