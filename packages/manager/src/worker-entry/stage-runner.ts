@@ -248,6 +248,10 @@ export function createProductionStageRunner(
         spec,
         effectiveConfig,
         capabilities: CLAUDE_CODE_CAPABILITIES,
+        // The declared `context.files` in `effectiveConfig` are resolved
+        // against the feature's own worktree — never the daemon's cwd (04-09
+        // Task 1's explicit-context surface).
+        workspaceRoot: workspace.root,
       });
 
       const credential =

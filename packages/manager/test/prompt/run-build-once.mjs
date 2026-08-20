@@ -55,6 +55,11 @@ const result = buildDeveloperPrompt({
     supportsSessionResume: true,
     enforcesTurnCap: true,
   },
+  // No `context.files` declared in `repo` above, so this value is never
+  // read — a fixed literal (not `process.cwd()`) keeps this fixture free of
+  // anything that could vary between the in-process and cross-process call
+  // this script exists to be compared against.
+  workspaceRoot: '/adl-fixture-workspace-root',
 });
 
 process.stdout.write(JSON.stringify(result));
