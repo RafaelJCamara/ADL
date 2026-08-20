@@ -276,6 +276,22 @@ export {
   type TranscriptAddress,
 } from './store/transcript-path.js';
 
+// The NDJSON transcript store (04-05 Task 2) — the byte-offset
+// append/read primitive `ARCHITECTURE.md` §9's `?offset=N&follow=1` addressing
+// depends on. Published for the same two consumers as `transcriptPathFor`
+// above: the worker appends through `openTranscriptWriter` as `AgentEvent`s
+// arrive, and the manager's transcript route (04-08) reads through
+// `readTranscriptFrom`/`transcriptLength`. They must agree on what an offset
+// means, which is exactly what sharing this one implementation guarantees.
+export {
+  openTranscriptWriter,
+  readTranscriptFrom,
+  transcriptLength,
+  TranscriptOffsetError,
+  type TranscriptRead,
+  type TranscriptWriter,
+} from './store/ndjson-log-store.js';
+
 // The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
 // deliberately NOT exported here — same reasoning as `env.ts` being
 // unexported from `@adl/workspace`'s barrel: it is an implementation detail
