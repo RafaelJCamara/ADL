@@ -1,63 +1,202 @@
-# `@adl/manager`
+# `@adl/manager` — the control plane
 
-The control plane: the lease queue, worker supervision, the HTTP API, config,
-credentials, and round/budget accounting. The only package that writes to
-`@adl/db`.
+The manager is the long-running daemon: the one process that owns the lease
+queue, watches over forked worker processes, exposes the HTTP API, and is the
+only thing that ever writes to the database. This document is written for the
+person who runs it, not the person who reads its source.
 
-## Daemon config — `.adl/daemon.json`
+---
 
-The daemon reads (and, on first run, creates) a JSON config file at
-`.adl/daemon.json`, relative to the daemon's working directory (override with
-`--config <path>`). First run is zero-config: if the file does not exist yet,
-the daemon mints a bearer token with `crypto.randomBytes(32)` and writes it
-there, so there is nothing to pre-supply before starting the daemon for the
-first time.
+## What the daemon owns
 
-That file is written with owner-only permissions (`0o600` for the file,
-`0o700` for its containing directory) — it holds the bearer token that
-authenticates every control-plane route except `GET /health`. **On Windows,
-this is a documented no-op**: POSIX mode bits have no Windows equivalent, so
-the file's actual access control there is whatever NTFS ACLs the containing
-directory already grants. Do not rely on `.adl/daemon.json`'s file mode for
-confidentiality on a Windows host — protect the directory itself instead.
+Everything that must be singular in a self-hosted install lives here, not in
+a worker:
 
-## Startup — schema gate, pre-migration copies, and disk growth
+- **The lease queue.** Every feature is either `queued`, held by exactly one
+  lease, or in a terminal/paused/escalated state — the manager is the single
+  writer of `features.state`, and a worker never opens the database itself
+  (D-01). This is what keeps "the manager is the only writer" a literal
+  claim rather than an aspiration.
+- **Worker supervision.** The manager `fork()`s one Node child process per
+  in-flight feature, tracks its heartbeats, and recovers from it dying —
+  whether that death is a clean exit, a crash, or the manager's own restart.
+- **The lease reaper.** A periodic tick reclaims any lease whose holder has
+  gone silent past `lease_ttl_ms`, and a forked child's own `exit` event is a
+  fast path over the same recovery — usually milliseconds, not the full TTL.
+- **The HTTP API.** `GET /features`, `POST /features/:id/pause|resume|kill`,
+  `POST /control/pause|resume|kill|gc|shutdown`, `GET /health`. Every route
+  except `/health` requires the bearer token.
+- **Config, credentials, and accounting.** The daemon config file (below),
+  the concurrency caps, and — in a later phase — round/budget accounting all
+  live here, never in a worker's environment.
 
-On every start, the daemon compares the database's stored `meta.schema_version`
-against its own — derived automatically from the migrations shipped with
-`@adl/db`, never a hand-maintained number — and:
+What it does **not** own: feature detection, agent backends, and forge
+operations are later phases. This phase proves the queue, the recovery
+guarantees, and the API/CLI surface with a scripted worker and zero AI in the
+loop — see `test/scenario/concurrency-crash-restart.test.ts` for the
+end-to-end proof.
 
-- **refuses to run** (writing nothing) if the stored version is newer than
-  the daemon's own, or is not a valid integer;
-- **copies the database file** beside itself, as
-  `<db-file>.pre-<version>-<timestamp>`, before applying any pending
-  migration, if the stored version is older or has never been seeded.
+---
 
-**These copies are never deleted by the daemon.** This is a deliberate
-safety property, not an oversight: the startup sequence contains no
-destructive filesystem operations, so every prior upgrade — however old —
-stays recoverable. The cost is real: on a long-lived installation that is
-upgraded repeatedly, these copies accumulate without bound next to the
-database file, each roughly the size of the database at the time it was
-taken. **An operator is responsible for periodically reviewing and removing
-old `*.pre-*` copies once they are confident they will not need to roll
-back to them.** A future release may add an explicit `adl db prune-copies`
-verb or similar; none exists as of this phase.
+## The daemon config file
 
-## Boot-time orphan handling (D-13, D-14)
+Location: **`.adl/daemon.json`**, relative to the directory the daemon is
+started from (override with `--config <path>` on the CLI, or
+`StartDaemonOptions`'s caller in code). JSON, not YAML — deliberately
+different from `adl.yml`: the daemon is this file's first writer (it mints a
+bearer token into it on first run), and a machine-written secret belongs in a
+machine-written file format, not a hand-edited one.
 
-On Linux, the daemon verifies a recorded worker's _process start time_
-(`/proc/<pid>/stat`) before signalling it at boot, so a reused PID from an
-unrelated process is never killed. **On Windows there is no `/proc`, so this
-verification is not performed there.** The daemon still checks whether the
-recorded PID is currently alive, but cannot confirm it is the _same_ process
-that held the lease — a boot-time orphan kill is therefore skipped entirely
-on Windows whenever a lease was left dangling by a previous daemon process,
-logging why, rather than risk signalling a PID that has since been reused by
-something else. This is the same "documented degradation, never a silent
-weaker guarantee" posture Phase 2 established for privilege dropping.
+**First run is zero-config.** If `.adl/daemon.json` does not exist, the
+daemon creates it with a freshly minted `api.token`
+(`crypto.randomBytes(32)`, hex-encoded) and owner-only permissions
+(`0600`/`0700` on POSIX). An existing file's token is **never** regenerated.
 
-## What ADL's own git overrides
+**On Windows, the owner-only permissions above are a documented no-op**:
+POSIX mode bits have no Windows equivalent, so the file's actual access
+control there is whatever NTFS ACLs the containing directory already
+grants. Do not rely on `.adl/daemon.json`'s file mode for confidentiality
+on a Windows host — protect the directory itself instead.
 
-See `@adl/workspace`'s own `README.md` — this package does not add to that
-list.
+| Key                     | Meaning                                                                                                                                                                                                                       | Default                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `lease_ttl_ms`          | How long a worker may go without heartbeating before the reaper reclaims its lease.                                                                                                                                           | `30000`                   |
+| `heartbeat_interval_ms` | How often a worker heartbeats over IPC. Must satisfy `lease_ttl_ms >= 3 * heartbeat_interval_ms` — a tighter ratio produces spurious lease expiries that look exactly like worker crashes.                                    | `10000`                   |
+| `worker_stop_grace_ms`  | How long a worker gets to react to a `soft_stop` message before the manager escalates to `SIGKILL`.                                                                                                                           | `10000`                   |
+| `concurrency.global`    | The cap on features in flight at once, across every watched repository.                                                                                                                                                       | `1`                       |
+| `concurrency.per_repo`  | An optional additional cap per repository, so one busy repo cannot starve the others.                                                                                                                                         | unset (no per-repo limit) |
+| `api.host`              | The HTTP API's bind address. A non-loopback value is accepted and logged, never rejected — see the auth note below for why that is safe.                                                                                      | `127.0.0.1`               |
+| `api.port`              | The HTTP API's port.                                                                                                                                                                                                          | `4173`                    |
+| `api.token`             | The bearer token every non-`/health` route requires. Minted on first run if absent.                                                                                                                                           | minted                    |
+| `gc.interval_ms`        | How often the worktree/scratch-home GC backstop sweeps. Two orders of magnitude longer than `heartbeat_interval_ms` by design — the two sweeps share a scheduling mechanism, never a cadence.                                 | `1800000` (30 min)        |
+| `repos`                 | The watched repositories, declared here and reconciled into the database at every startup (a row present in the database but absent from this list is left alone, never deleted — a config edit is not a delete instruction). | `[]`                      |
+| `limits`                | A per-field **ceiling** on what a repository's own `adl.yml` may request (e.g. `max_rounds`), not a value that reaches a run directly.                                                                                        | daemon defaults           |
+| `agents`                | The daemon's own backend/model selection per role. A repository's `adl.yml` can never set these — they are recorded and discarded if it tries.                                                                                | unset                     |
+
+**The API bind and the bearer token.** The API binds `127.0.0.1` by default.
+The bearer token exists precisely so that widening the bind later (for a
+future dashboard) does not ship an unauthenticated control plane and does
+not break an adopter's existing scripts — the token is required either way.
+Token comparison is constant-time (`crypto.timingSafeEqual`), and the token
+never appears in a URL, an argv, or a log line.
+
+---
+
+## Startup sequence
+
+In order, every time the daemon starts:
+
+1. **The schema-version gate.** The daemon reads `meta.schema_version` from
+   the database before touching anything else.
+   - If the stored version is **newer** than this daemon's own, the daemon
+     **refuses to run** and writes nothing. This is the case that matters
+     most: a database this daemon does not understand is left completely
+     alone.
+   - If the stored version is **older** (or the database is fresh and
+     unseeded), the daemon **copies the database file** beside itself
+     (`<path>.pre-<version>-<timestamp>`, kept forever — there is no delete
+     path) before applying any migration. The copy is always taken, on
+     every upgrade, with no configuration to disable it.
+   - If the stored version already matches, this is a no-op.
+
+   **What to do if you see a refusal:** the daemon is telling you its own
+   code is older than the database it was pointed at. Upgrade the daemon to
+   a version that recognizes that schema version before running it against
+   this database again. Do not attempt to "fix" the database directly —
+   the refusal is the safe outcome, not an error to work around.
+
+   **These pre-migration copies are never deleted by the daemon.** This is
+   deliberate: the startup sequence contains no destructive filesystem
+   operations, so every prior upgrade — however old — stays recoverable.
+   The cost is real: on a long-lived installation that is upgraded
+   repeatedly, these copies accumulate without bound next to the database
+   file, each roughly the size of the database at the time it was taken.
+   An operator is responsible for periodically reviewing and removing old
+   `*.pre-*` copies once confident they will not need to roll back to
+   them — no `adl db prune-copies` verb or equivalent exists as of this
+   phase.
+
+2. **Repository reconciliation.** Every repository named under `repos` in
+   the daemon config is upserted into the database. A repository present in
+   the database but no longer in the config is left in place and logged,
+   never deleted.
+
+3. **The boot orphan kill.** Any worker process still running from a
+   _previous_ daemon process — one this daemon has no `ChildProcess` handle
+   for, because it did not fork it — is signalled, but only when it can be
+   attributed safely. See the Windows degradation below: this is where it
+   applies.
+
+4. **Unconditional lease expiry.** Every lease still held at boot is expired
+   and its feature requeued, regardless of whether step 3 could actually
+   signal the process holding it. This is what makes a restart a
+   deterministic clean slate: no held lease survives a restart, ever.
+
+5. Dispatch, the reaper tick, and the GC schedule all start, and the HTTP
+   server binds.
+
+---
+
+## The Windows PID-reuse degradation
+
+The boot orphan kill (step 3 above) only signals a process when it can prove
+the PID it recorded still belongs to the same process — PIDs are reused by
+the OS, and a stale PID may belong to something else entirely by the time
+the daemon restarts. The proof is the process's **start time**: the daemon
+records `{pid, startTime}` when a worker reports ready, and only signals
+that PID again if a fresh read of its start time still matches.
+
+**Start time is read from `/proc/<pid>/stat`, which exists on Linux only.**
+On Windows (and any other platform without `/proc`), reading a process's
+start time this way is unavailable. The daemon treats "unavailable" as **not
+attributable** — never as license to signal a PID on trust alone — so on
+Windows the boot orphan kill signals nothing and logs why.
+
+**What this means in practice:** if the manager process itself is killed or
+crashes on Windows while a worker is still running, that worker is left
+alone at the next daemon restart. It **may** become an orphan an operator
+has to notice and clean up by hand (its feature is still correctly requeued
+per step 4 above — this degradation affects only whether the _old_ worker
+process itself is reclaimed, never the feature's state). This is a
+deliberate, accepted trade-off: signalling a PID that turned out to belong
+to an unrelated process on someone else's infrastructure is a materially
+worse failure than leaving one extra process running. Linux is this
+project's stated deployment target, where the full guarantee applies.
+
+---
+
+## The worker-stop mechanism
+
+Stopping a worker — whether from `adl kill`, an operator pausing a feature
+mid-round, or the daemon's own graceful shutdown — is always the same two
+steps, implemented once (`worker-supervisor/lifecycle.ts`) and shared by
+every call site so the behaviour cannot drift:
+
+1. Send a `soft_stop` message over the worker's IPC channel and wait up to
+   `worker_stop_grace_ms`.
+2. If the worker has not exited by then, `SIGKILL` it unconditionally.
+
+**Why not an OS signal (`SIGTERM`) instead of an IPC message?** A forked
+Node child on Windows does not receive `SIGTERM` as a catchable signal —
+`child.kill('SIGTERM')` is emulated there as immediate forceful termination,
+which means a `SIGTERM`-based approach would give a worker no grace period
+at all on one of the two platforms this project's CI covers. The IPC message
+plus a bounded wait behaves **identically on Linux and Windows**, which is
+the entire point: a worker gets a real chance to abort its current stage and
+leave its worktree in a coherent state on either platform, and `SIGKILL` — the
+one signal that is reliably forceful everywhere — is the backstop when it
+does not take that chance.
+
+---
+
+## Operating the daemon
+
+`adl daemon stop` asks a running daemon to shut down gracefully: it stops
+accepting new dispatch, stops every live worker with the same
+soft_stop-then-`SIGKILL` mechanism above, closes the HTTP server, and exits.
+`adl daemon start` reads `.adl/daemon.json`, boots the sequence described
+above, and serves the API in the foreground.
+
+See `packages/cli/README.md` for the full `adl` verb set, and
+`packages/workspace/README.md` for what ADL's own git overrides do and do
+not protect — this package adds nothing to that list.

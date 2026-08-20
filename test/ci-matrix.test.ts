@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
@@ -118,6 +119,63 @@ describe('.github/workflows/ci.yml — the D-33 cross-platform matrix', () => {
     expect(linuxTestStep?.if).toContain('runner.os');
     expect(linuxTestStep?.if).toContain('Linux');
   });
+
+  it(
+    'the non-Linux test step runs `pnpm -r test` — the recursive workspace ' +
+      'command that necessarily reaches @adl/manager and @adl/cli, not a ' +
+      'scoped subset (03-09-PLAN.md Task 2: the Windows leg must carry the ' +
+      "phase's evidence, not merely exist)",
+    async () => {
+      const workflow = await loadWorkflow();
+      const steps = workflow.jobs?.verify?.steps ?? [];
+      const nonLinuxTestStep = steps.find(
+        (step) =>
+          step.run?.includes('pnpm') &&
+          step.run?.includes('test') &&
+          step.if?.includes('runner.os') &&
+          step.if?.includes('!='),
+      );
+
+      expect(
+        nonLinuxTestStep,
+        'the non-Linux test step must exist',
+      ).toBeDefined();
+      // `-r` is what makes this reach every workspace package, including the
+      // two this phase adds — a `--filter` scoped to a subset would pass the
+      // "a test step exists" assertion above while carrying none of this
+      // phase's evidence on the leg that actually runs it (T-3-37).
+      expect(nonLinuxTestStep?.run).toMatch(/pnpm\s+-r\s+test/);
+    },
+  );
+
+  it(
+    '@adl/manager and @adl/cli are real workspace packages with their own ' +
+      '`test` script, so `pnpm -r test` on the non-Linux leg is proven to ' +
+      'reach them rather than asserted by name alone',
+    async () => {
+      for (const pkg of ['manager', 'cli']) {
+        const packageJsonPath = path.join(
+          fileURLToPath(new URL('..', import.meta.url)),
+          'packages',
+          pkg,
+          'package.json',
+        );
+        const raw = await readFile(packageJsonPath, 'utf8');
+        const parsed = JSON.parse(raw) as {
+          readonly name?: string;
+          readonly scripts?: Record<string, string>;
+        };
+        expect(parsed.name, `packages/${pkg}/package.json name`).toBe(
+          `@adl/${pkg}`,
+        );
+        expect(
+          parsed.scripts?.test,
+          `packages/${pkg}/package.json must declare a "test" script for ` +
+            '`pnpm -r test` to reach it',
+        ).toBeDefined();
+      }
+    },
+  );
 
   it('runs the workspace root suite unconditionally on every leg', async () => {
     const workflow = await loadWorkflow();
