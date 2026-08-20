@@ -72,6 +72,22 @@ export interface SupervisorDeps {
   /** Called once a forked worker reports `ready` — the pid it started as. */
   readonly onReady?: (ready: WorkerReady) => void;
   /**
+   * Called once a fence-matched `stage_result` is accepted — the feature's
+   * current round is done (D-26's round boundary), before the worker's exit
+   * is processed. The caller decides what "done" means here: 03-07's park
+   * path checks whether dispatch is paused for this feature's repository
+   * and, if so, transitions the feature to `paused` right at this boundary.
+   * No caller exists in production yet, mirroring `resetCrashCountOnSuccess`'s
+   * own precedent (`scheduler/reaper.ts`) — the real round-completion write
+   * site is Phase 4+'s pipeline; today this is exercised directly by
+   * `test/control/pause.test.ts`.
+   */
+  readonly onRoundBoundary?: (params: {
+    readonly featureId: string;
+    readonly leaseToken: string;
+    readonly repoId: string;
+  }) => void;
+  /**
    * Called when a forked worker's process exits without the manager having
    * accepted a `stage_result` from it or itself requesting the exit (D-04).
    * The database write that recovers the feature (`reapOne`, the same
@@ -268,6 +284,11 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
             // result — D-04's "expected exit" case. The fast path must not
             // also apply `lease_expired` for the exit that follows.
             expectingExit.set(feature.id, true);
+            deps.onRoundBoundary?.({
+              featureId: feature.id,
+              leaseToken,
+              repoId: feature.repo_id,
+            });
           }
           // 'fatal' is deliberately NOT marked as an expected exit — a
           // self-reported fatal error is a worker dying just as surely as a

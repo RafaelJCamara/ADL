@@ -1,5 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
+import type { Kysely } from 'kysely';
+import type { Logger } from 'pino';
+import type { Database } from '@adl/db';
+import type { ControlState } from '../control/state.js';
+import type { WorkerSupervisor } from '../worker-supervisor/supervisor.js';
+import { registerControlRoutes } from './routes/control.js';
 import { registerFeaturesRoute, type FeatureView } from './routes/features.js';
 import { registerHealthRoute } from './routes/health.js';
 
@@ -48,6 +54,20 @@ export interface ApiDeps {
   readonly apiToken: string;
   readonly schemaVersion: number;
   readonly listFeatureViews: () => Promise<readonly FeatureView[]>;
+  /**
+   * The control surface (`/features/:id/pause|resume|kill`,
+   * `/control/pause|resume|kill`) needs `db` and `controlState` to do
+   * anything; both are optional here so every earlier plan's `createApi`
+   * call site (the tracer suite, the fencing suite) keeps compiling
+   * unchanged — omitting them simply mounts no control routes. `daemon.ts`
+   * always supplies both in production.
+   */
+  readonly db?: Kysely<Database>;
+  readonly controlState?: ControlState;
+  /** Present only when the caller also wants kill mounted (03-07 Task 3). */
+  readonly supervisor?: WorkerSupervisor;
+  readonly workerStopGraceMs?: number;
+  readonly logger?: Logger;
 }
 
 export function createApi(deps: ApiDeps): Hono {
@@ -73,6 +93,15 @@ export function createApi(deps: ApiDeps): Hono {
 
   registerHealthRoute(app, { schemaVersion: deps.schemaVersion });
   registerFeaturesRoute(app, { listFeatureViews: deps.listFeatureViews });
+  if (deps.db !== undefined && deps.controlState !== undefined) {
+    registerControlRoutes(app, {
+      db: deps.db,
+      controlState: deps.controlState,
+      supervisor: deps.supervisor,
+      workerStopGraceMs: deps.workerStopGraceMs,
+      logger: deps.logger,
+    });
+  }
 
   return app;
 }

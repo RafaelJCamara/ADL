@@ -25,6 +25,22 @@ export {
 export { createApi, UNAUTHENTICATED_PATHS, type ApiDeps } from './api/app.js';
 export type { FeatureView } from './api/routes/features.js';
 
+// The control surface's request/response schemas and route registrar
+// (D-20, D-26, D-27..29) — published so a CLI (`03-08`) or a test can
+// construct requests against the exact same schema the routes validate.
+export {
+  ControlResultSchema,
+  ControlScopeSchema,
+  KillRequestSchema,
+  PauseRequestSchema,
+  registerControlRoutes,
+  type ControlResult,
+  type ControlRoutesDeps,
+  type ControlScope,
+  type KillRequest,
+  type PauseRequest,
+} from './api/routes/control.js';
+
 // The worker-supervision seam — exported so a caller assembling its own
 // daemon wiring (or a test) can construct one directly.
 export {
@@ -50,6 +66,18 @@ export {
   type StaleRejectionCounter,
   type StaleRejectionSnapshot,
 } from './fencing.js';
+
+// The dispatch brake (D-26) and the shared pause/resume/kill transition
+// helper — published so the routes, the round-boundary hook, and a test can
+// all drive the same brake and apply the same write.
+export {
+  applyControlEvent,
+  createControlState,
+  isDispatchPaused,
+  parkOnRoundBoundary,
+  type ControlState,
+  type PauseScope,
+} from './control/state.js';
 
 // The scheduler — one dispatch attempt at a time (D-15..17).
 export {

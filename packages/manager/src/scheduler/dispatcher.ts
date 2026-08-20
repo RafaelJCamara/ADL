@@ -18,6 +18,7 @@ import {
   type TransitionCtx,
 } from '@adl/core/state';
 import type { AssignMessage } from '../ipc/protocol.js';
+import { isDispatchPaused, type ControlState } from '../control/state.js';
 
 /**
  * One dispatch attempt (D-15..17): pick the oldest admissible queued
@@ -71,6 +72,16 @@ export interface DispatcherDeps {
   readonly spawnWorker: (call: SpawnCall) => void;
   readonly actor?: string;
   readonly now?: () => string;
+  /**
+   * The dispatch brake (D-26, 03-07 Task 2). Consulted per candidate,
+   * before the concurrency cap — a paused repository is simply never a
+   * candidate, so dispatch still proceeds for other repositories'
+   * unpaused, admissible work. Optional so every earlier plan's tests (and
+   * the tracer, which exercises no pause path) keep constructing
+   * `DispatcherDeps` with no brake at all — absent, dispatch is never
+   * paused.
+   */
+  readonly controlState?: ControlState;
 }
 
 /**
@@ -93,6 +104,12 @@ export async function dispatchOnce(
   const concurrency = deps.daemonConfig.concurrency;
 
   const feature = queued.find((candidate) => {
+    if (
+      deps.controlState !== undefined &&
+      isDispatchPaused(deps.controlState, candidate.repo_id)
+    ) {
+      return false;
+    }
     // The inclusive ceiling: in-flight >= cap blocks, never in-flight > cap
     // only. A cap reachable only by lowering it mid-flight (in-flight > cap)
     // falls into the same branch — dispatch nothing, revoke nothing.
