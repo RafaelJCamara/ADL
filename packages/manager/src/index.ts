@@ -298,16 +298,32 @@ export {
 // barrel: they are implementation details of the one caller that forks the
 // module by path, not something that is imported.
 
-// `PromptBuilder` (04-06) — the one module that renders a developer prompt;
-// adapters never build prompts (`ARCHITECTURE.md` §4). Published so a test
-// (and `04-09`'s persisted-artefact/byte-identity proof) can call it
-// directly without going through a full stage run.
+// `PromptBuilder` (04-06, extended 04-09 Task 1 with the declared-context-files
+// surface) — the one module that renders a developer prompt; adapters never
+// build prompts (`ARCHITECTURE.md` §4). Published so a test (and `04-09`'s
+// persisted-artefact/byte-identity proof) can call it directly without going
+// through a full stage run.
 export {
   buildDeveloperPrompt,
   DEVELOPER_SYSTEM_PROMPT,
+  PromptContextFileError,
+  PromptContextOverflowError,
   type DeveloperPromptInput,
   type RenderedPrompt,
 } from './prompt/build.js';
+
+// The persisted prompt artefact (04-09 Task 2) — a sibling of the
+// transcript, written before the agent is launched. Published for the same
+// two reasons `transcriptPathFor`/`openTranscriptWriter` are: the
+// determinism test (Task 3) compares two attempts' artefacts directly off
+// disk, and Phase 9's pull-request rollup will want the same pointer.
+export {
+  PROMPT_ARTIFACT_EXTENSION,
+  PromptArtifactConflictError,
+  promptArtifactPathFor,
+  writePromptArtifact,
+  type PromptArtifactContent,
+} from './prompt/artifact.js';
 
 // `POST /dev-run/:featureId` (04-06, D-03) — published so a test can mount
 // it directly, matching every other route module's own export.

@@ -20,8 +20,14 @@
  *    resolves to, and appends one record per event AS IT ARRIVES — never
  *    buffered until the run ends, which is what makes the live view live
  *    and what keeps a mid-run crash from losing everything;
- * 5. runs the backend, classifying its outcome; and
- * 6. closes the writer and destroys the workspace on every exit path,
+ * 5. writes the rendered prompt as an artifact (`prompt/artifact.ts`),
+ *    BEFORE launching the agent — a crash mid-run still leaves a record of
+ *    what was asked (04-09 Task 2). A write failure fails the attempt
+ *    rather than being swallowed: an attempt that ran with no recorded
+ *    prompt is unauditable, which is the property that file exists to
+ *    prevent;
+ * 6. runs the backend, classifying its outcome; and
+ * 7. closes the writer and destroys the workspace on every exit path,
  *    including a failure — a leaked worktree turns one bad run into an
  *    accumulating one.
  *
@@ -44,6 +50,7 @@ import {
   stageErrorPolicy,
   type AgentErrorEvent,
   type AgentEvent,
+  type AgentRunner,
   type AgentTask,
   type DeveloperOutcome,
   type StageError,
@@ -56,6 +63,7 @@ import {
   claudeCodeBackend,
 } from '@adl/agent-claude-code';
 import type { AssignMessage } from '../ipc/protocol.js';
+import { writePromptArtifact } from '../prompt/artifact.js';
 import { buildDeveloperPrompt } from '../prompt/build.js';
 import { openTranscriptWriter } from '../store/ndjson-log-store.js';
 import {
@@ -157,6 +165,13 @@ export interface ProductionStageRunnerDeps {
   /** The model credential's value. Defaults to `process.env.ANTHROPIC_API_KEY` (absent, when the worker's own environment does not carry it). */
   readonly credentialEnvValue?: string;
   readonly now?: () => string;
+  /**
+   * Overrides the real `claudeCodeBackend` entirely — a test seam for
+   * asserting ordering (e.g. "the prompt artifact exists on disk the moment
+   * `run()` is invoked", 04-09 Task 2) without a real subprocess. Never used
+   * in production: `daemon.ts` never sets this field.
+   */
+  readonly agentBackend?: AgentRunner;
 }
 
 /**
@@ -188,20 +203,25 @@ export function createProductionStageRunner(
       );
     }
 
+    // Shared by the transcript writer AND the prompt artifact (04-09 Task 2)
+    // — one address, resolved once, so the two files can never disagree
+    // about which attempt they belong to.
+    const address: TranscriptAddress = {
+      featureId: assign.featureId,
+      roundId: assign.roundId,
+      stageId: assign.stageId,
+      stageIndex: assign.stageIndex,
+      // The ordinal from `openAttempt` is not yet threaded through
+      // `AssignMessage` (only `stageAttemptId` is). Every dispatch this
+      // plan's own code produces is a fresh first attempt, so `1` is
+      // correct for the cases this plan proves; a repair/retry ordinal is
+      // a natural, non-urgent follow-up.
+      attempt: 1,
+    };
+
     let writerClosed = false;
     const writer = await openTranscriptWriter(
-      transcriptPathFor(assign.logsRoot, {
-        featureId: assign.featureId,
-        roundId: assign.roundId,
-        stageId: assign.stageId,
-        stageIndex: assign.stageIndex,
-        // The ordinal from `openAttempt` is not yet threaded through
-        // `AssignMessage` (only `stageAttemptId` is). Every dispatch this
-        // plan's own code produces is a fresh first attempt, so `1` is
-        // correct for the cases this plan proves; a repair/retry ordinal is
-        // a natural, non-urgent follow-up.
-        attempt: 1,
-      } satisfies TranscriptAddress),
+      transcriptPathFor(assign.logsRoot, address),
     );
 
     let seq = 0;
@@ -254,6 +274,23 @@ export function createProductionStageRunner(
         workspaceRoot: workspace.root,
       });
 
+      // Written BEFORE the agent is launched (04-09 Task 2): ordering is the
+      // point — a crash during the agent's own run still leaves a record of
+      // what was asked. A write failure fails the attempt outright rather
+      // than being swallowed; see this module's own docblock and
+      // `prompt/artifact.ts`'s.
+      try {
+        await writePromptArtifact(assign.logsRoot, address, {
+          systemPrompt,
+          instructions,
+        });
+      } catch (error) {
+        return stageErrorResult(
+          'provider_error',
+          `could not write the rendered prompt artifact: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
       const credential =
         deps.credentialEnvValue ?? process.env['ANTHROPIC_API_KEY'];
       const backendEnv: Record<string, string> = { ...commitIdentityEnv() };
@@ -261,13 +298,15 @@ export function createProductionStageRunner(
         backendEnv['ANTHROPIC_API_KEY'] = credential;
       }
 
-      const agentBackend = claudeCodeBackend({
-        ...(deps.claudeBinary !== undefined
-          ? { binary: deps.claudeBinary }
-          : {}),
-        path: deps.claudeCliPath ?? process.env['PATH'] ?? '',
-        env: backendEnv,
-      });
+      const agentBackend =
+        deps.agentBackend ??
+        claudeCodeBackend({
+          ...(deps.claudeBinary !== undefined
+            ? { binary: deps.claudeBinary }
+            : {}),
+          path: deps.claudeCliPath ?? process.env['PATH'] ?? '',
+          env: backendEnv,
+        });
 
       const controller = new AbortController();
       let firstError: AgentErrorEvent | undefined;
