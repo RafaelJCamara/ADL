@@ -77,3 +77,23 @@ export function windowsOnly(
 ): PlatformGate {
   return requirePlatform('win32', reason, requirementId, currentPlatform);
 }
+
+/**
+ * The inverse of {@link windowsOnly} — for an assertion whose subject only
+ * exists off Windows (e.g. POSIX file-mode bits, T-3-04's owner-only
+ * `.adl/daemon.json` permissions). `requirePlatform` gates to a single
+ * platform, so this composes it against every non-`win32` platform this
+ * project ever runs on rather than a bespoke inverse check.
+ */
+export function posixOnly(
+  reason: string,
+  requirementId: string,
+  currentPlatform: NodeJS.Platform = process.platform,
+): PlatformGate {
+  if (currentPlatform === 'win32') {
+    const stated = `${SKIP_PREFIX}[${requirementId}] ${reason} (platform: ${currentPlatform})`;
+    process.stderr.write(`${stated}\n`);
+    return { kind: 'skip', reason: stated };
+  }
+  return { kind: 'run' };
+}

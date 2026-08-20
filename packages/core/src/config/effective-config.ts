@@ -107,6 +107,133 @@ const DaemonAgentBlockSchema = z.strictObject({
 
 export type DaemonAgentBlock = z.infer<typeof DaemonAgentBlockSchema>;
 
+// ---------------------------------------------------------------------------
+// Phase 3 daemon-only fields (03-06): concurrency, API, GC, watched repos
+// ---------------------------------------------------------------------------
+
+/**
+ * Concurrency caps (D-15). `global` protects the host; `per_repo` is the
+ * additive escape hatch that stops one busy repository starving the others.
+ * Neither has a repo-side counterpart in `adl.yml` — `mergeConfig` never
+ * folds these, they are read straight off the parsed daemon config.
+ */
+export const ConcurrencySchema = z
+  .strictObject({
+    global: z
+      .int()
+      .min(1)
+      .default(1)
+      .describe(
+        'The global cap on features in flight at once. Default: 1, matching the intended ' +
+          'v1 behaviour while making scale-up a config change.',
+      ),
+    per_repo: z
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        'An optional per-repository cap, stopping one busy repository starving the others. ' +
+          'Default: unset (no per-repo limit beyond the global cap).',
+      ),
+  })
+  .meta({ id: 'Concurrency' });
+
+export type Concurrency = z.infer<typeof ConcurrencySchema>;
+
+/** A TCP port, 1-65535. Local to this module — `adl-yml.ts`'s own `TcpPortSchema` is not exported. */
+const ApiTcpPortSchema = z.int().min(1).max(65_535);
+
+/**
+ * The HTTP API's bind address, port, and bearer token (D-19). `host`
+ * defaults to loopback; a daemon config may widen it, which this schema
+ * accepts — the daemon records and warns on a non-loopback value rather
+ * than rejecting it, so widening the bind is a deliberate, visible act
+ * (T-3-30). `token` is optional here: the daemon mints one with
+ * `crypto.randomBytes(32)` on first run when the config carries none
+ * (03-06's `daemon-config.ts`), so a fresh install is zero-config.
+ */
+export const ApiConfigSchema = z
+  .strictObject({
+    host: z
+      .string()
+      .min(1)
+      .default('127.0.0.1')
+      .describe(
+        'The address the HTTP API binds. Default: 127.0.0.1 (loopback). A non-loopback ' +
+          'value parses but is recorded so the daemon can warn (T-3-30) — the bearer token ' +
+          'means a widened bind is not an unauthenticated control plane.',
+      ),
+    port: ApiTcpPortSchema.default(4173).describe(
+      'The port the HTTP API binds. Default: 4173.',
+    ),
+    token: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'The bearer token every non-exempt route requires. No default: the daemon mints ' +
+          'one with crypto.randomBytes(32) on first run when absent, so first run is ' +
+          'zero-config (D-19).',
+      ),
+  })
+  .meta({ id: 'ApiConfig' });
+
+export type ApiConfig = z.infer<typeof ApiConfigSchema>;
+
+/**
+ * The GC sweep's cadence (D-34). Deliberately a separate, much longer
+ * interval than the lease reaper's — the two sweeps share a scheduling
+ * mechanism (Phase 3's manager owns both timers), not a cadence.
+ */
+export const GcConfigSchema = z
+  .strictObject({
+    interval_ms: z
+      .int()
+      .positive()
+      .default(30 * 60 * 1000)
+      .describe(
+        'How often the worktree/scratch-home GC backstop sweeps, in milliseconds. ' +
+          'Default: 1800000 (30 minutes) — orders of magnitude longer than the reaper’s ' +
+          'lease-expiry cadence; the two sweeps share a scheduling mechanism, not a cadence.',
+      ),
+  })
+  .meta({ id: 'GcConfig' });
+
+export type GcConfig = z.infer<typeof GcConfigSchema>;
+
+/**
+ * One watched repository, declared in the daemon config and reconciled into
+ * the `repos` table at startup (D-35). Fields correspond to `ReposTable`'s
+ * columns, minus `created_at`/`updated_at` — those are the table's own
+ * bookkeeping, not something a config file declares.
+ */
+export const WatchedRepoSchema = z
+  .strictObject({
+    id: z
+      .string()
+      .min(1)
+      .describe('The repository identifier, unique across watched repos.'),
+    remote_url: z
+      .string()
+      .min(1)
+      .describe('The git remote URL to clone/fetch from.'),
+    default_branch: z
+      .string()
+      .min(1)
+      .describe('The branch ADL treats as the target for pull requests.'),
+    forge: z
+      .string()
+      .min(1)
+      .describe('The forge adapter id (e.g. "github") this repository uses.'),
+    features_dir: RepoRelativePathSchema.default('features').describe(
+      'The directory, relative to the repo root, ADL watches for feature folders. ' +
+        'Default: "features", matching adl.yml’s own default (D-16).',
+    ),
+  })
+  .meta({ id: 'WatchedRepo' });
+
+export type WatchedRepo = z.infer<typeof WatchedRepoSchema>;
+
 /**
  * What a daemon administrator may configure.
  *
@@ -115,6 +242,13 @@ export type DaemonAgentBlock = z.infer<typeof DaemonAgentBlockSchema>;
  * field absent falls back to {@link DEFAULT_CONFIG}'s ceiling. `agents` is
  * the daemon's own backend/model selection per role, optional per role for
  * the same reason — absence falls back to {@link DEFAULT_CONFIG}.
+ *
+ * The Phase 3 fields below (`lease_ttl_ms` through `repos`) are daemon-only
+ * in a different sense: they have **no repo-side counterpart at all** —
+ * `adl.yml` never mentions concurrency, API ports, or watched repositories —
+ * so `mergeConfig`'s clamp-and-reject fold does not touch them; they are
+ * read straight off the parsed daemon config. Do not go looking for the fold
+ * that is deliberately absent (03-RESEARCH.md Pitfall 4).
  */
 export const DaemonConfigSchema = z
   .strictObject({
@@ -126,8 +260,64 @@ export const DaemonConfigSchema = z
         tester: DaemonAgentBlockSchema.optional(),
       })
       .default({}),
+    lease_ttl_ms: z
+      .int()
+      .positive()
+      .default(30_000)
+      .describe(
+        'Lease TTL in milliseconds — how long a worker may go without heartbeating before ' +
+          'the reaper reclaims its lease. Default: 30000 (D-02). Must be at least 3x ' +
+          'heartbeat_interval_ms.',
+      ),
+    heartbeat_interval_ms: z
+      .int()
+      .positive()
+      .default(10_000)
+      .describe(
+        'How often a worker heartbeats over IPC, in milliseconds. Default: 10000 (D-02).',
+      ),
+    worker_stop_grace_ms: z
+      .int()
+      .positive()
+      .default(10_000)
+      .describe(
+        'How long a worker gets to react to a soft_stop IPC message before the manager ' +
+          'escalates to SIGKILL. Default: 10000 (D-28).',
+      ),
+    // `.default(Schema.parse({}))`, not `.default({})`: zod v4 requires the
+    // default value to match the schema's fully-resolved *output* shape
+    // rather than deriving it through the nested schema's own per-field
+    // defaults, so the empty-object literal is parsed once here to produce
+    // the concrete default instead of duplicating each field's value.
+    concurrency: ConcurrencySchema.default(ConcurrencySchema.parse({})),
+    api: ApiConfigSchema.default(ApiConfigSchema.parse({})),
+    gc: GcConfigSchema.default(GcConfigSchema.parse({})),
+    repos: z
+      .array(WatchedRepoSchema)
+      .default([])
+      .describe(
+        'Watched repositories, reconciled into the repos table at startup (D-35). ' +
+          'Default: [] (no repositories watched).',
+      ),
   })
-  .meta({ id: 'DaemonConfig' });
+  .meta({ id: 'DaemonConfig' })
+  .superRefine((value, ctx) => {
+    // D-02: 3x headroom absorbs a GC pause or a slow disk without a false
+    // expiry; a config that violates it produces spurious lease expiries
+    // that look exactly like worker crashes. One issue naming both fields
+    // and both values, matching adl-yml.ts's `.superRefine()` convention.
+    if (value.lease_ttl_ms < 3 * value.heartbeat_interval_ms) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['lease_ttl_ms'],
+        message:
+          `lease_ttl_ms (${value.lease_ttl_ms}) must be at least 3x ` +
+          `heartbeat_interval_ms (${value.heartbeat_interval_ms}): a config that ` +
+          'violates the 3x rule produces spurious lease expiries indistinguishable ' +
+          'from worker crashes.',
+      });
+    }
+  });
 
 export type DaemonConfig = z.infer<typeof DaemonConfigSchema>;
 
