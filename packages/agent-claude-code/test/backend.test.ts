@@ -327,4 +327,77 @@ describe('claudeCodeBackend', () => {
     const probe = await backend.probe();
     expect(probe.expectedVersion).toBe('2.1.237');
   });
+
+  it('probe() without a runVersionCheck answers honestly that nothing was checked, rather than guessing usable', async () => {
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+    const probe = await backend.probe();
+    expect(probe.usable).toBe(true);
+    expect(probe.installedVersion).toBeNull();
+    expect(probe.detail).toContain('runVersionCheck');
+  });
+
+  it('probe() delegates to preflightClaudeCode for the pinned version (ok)', async () => {
+    const backend = claudeCodeBackend({
+      runVersionCheck: () =>
+        Promise.resolve({ stdout: '2.1.237 (Claude Code)', exitCode: 0 }),
+    });
+    const probe = await backend.probe();
+    expect(probe.usable).toBe(true);
+    expect(probe.installedVersion).toBe('2.1.237');
+    expect(probe.detail).toBeUndefined();
+  });
+
+  it('probe() delegates to preflightClaudeCode for a missing binary (exit non-zero)', async () => {
+    const backend = claudeCodeBackend({
+      runVersionCheck: () => Promise.resolve({ stdout: '', exitCode: 1 }),
+    });
+    const probe = await backend.probe();
+    expect(probe.usable).toBe(false);
+    expect(probe.installedVersion).toBeNull();
+    expect(probe.detail).toContain('broken');
+  });
+
+  it('probe() delegates to preflightClaudeCode for unparseable output', async () => {
+    const backend = claudeCodeBackend({
+      runVersionCheck: () =>
+        Promise.resolve({ stdout: 'garbage', exitCode: 0 }),
+    });
+    const probe = await backend.probe();
+    expect(probe.usable).toBe(false);
+    expect(probe.installedVersion).toBeNull();
+  });
+
+  it('probe() delegates to preflightClaudeCode for a version mismatch', async () => {
+    const backend = claudeCodeBackend({
+      runVersionCheck: () =>
+        Promise.resolve({ stdout: '9.9.9 (Claude Code)', exitCode: 0 }),
+    });
+    const probe = await backend.probe();
+    expect(probe.usable).toBe(false);
+    expect(probe.installedVersion).toBe('9.9.9');
+  });
+
+  it('run() performs exactly one exec — the version-check is never invoked from the run path', async () => {
+    let runVersionCheckCalls = 0;
+    const { workspace, execCalls } = fakeWorkspace(async () => ({
+      exitCode: 0,
+      durationMs: 1,
+    }));
+    const backend = claudeCodeBackend({
+      path: '/usr/bin',
+      runVersionCheck: () => {
+        runVersionCheckCalls++;
+        return Promise.resolve({ stdout: '2.1.237', exitCode: 0 });
+      },
+    });
+
+    await backend.run(baseTask(), {
+      workspace,
+      onEvent: () => undefined,
+      signal: new AbortController().signal,
+    });
+
+    expect(execCalls).toHaveLength(1);
+    expect(runVersionCheckCalls).toBe(0);
+  });
 });

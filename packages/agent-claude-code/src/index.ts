@@ -8,10 +8,11 @@
  * the `adl/no-direct-spawn` exemption count at exactly one
  * (`packages/workspace/**`; see `eslint.config.js`'s `WORKSPACE_EXEMPTION`).
  *
- * `04-06` (this plan) adds the `AgentRunner` implementation (`claudeCodeBackend`)
- * and the stream-json-to-event translator (`translateLine`). `04-07` and
- * `04-09` add the parts named in `04-01-PLAN.md`'s artifact list this plan
- * does not touch — the reconnect contract and the real preflight check.
+ * `04-06` added the `AgentRunner` implementation (`claudeCodeBackend`) and
+ * the stream-json-to-event translator (`translateLine`). `04-07` (this plan)
+ * adds the version preflight (`preflightClaudeCode`, `parseClaudeVersion`) —
+ * the real startup-gate mechanism named in `04-01-PLAN.md`'s artifact list.
+ * The reconnect contract remains a later plan's addition.
  */
 
 // The pin this whole package is built and tested against (D-01). Exported
@@ -32,3 +33,16 @@ export {
 // The `AgentRunner` implementation itself — the one thing `@adl/manager`'s
 // stage runner imports from this package.
 export { claudeCodeBackend, type ClaudeCodeBackendOptions } from './backend.js';
+
+// The version preflight (04-07, D-01/D-02, OBS-08). Exported so the
+// manager's startup gate (`packages/manager/src/boot/backend-preflight.ts`)
+// — the real caller, which constructs the version-check invocation through
+// the ADL-owned exec boundary — and a later `adl doctor` can both call it
+// directly, without going through a full `AgentRunner`.
+export {
+  parseClaudeVersion,
+  preflightClaudeCode,
+  type PreflightFailureKind,
+  type PreflightResult,
+  type VersionCheckResult,
+} from './preflight.js';

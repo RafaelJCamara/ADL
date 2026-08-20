@@ -43,6 +43,7 @@ import type {
 } from '@adl/core/stage';
 import type { StageErrorKind } from '@adl/core/stage';
 import { translateLine } from './events.js';
+import { preflightClaudeCode, type VersionCheckResult } from './preflight.js';
 import { PINNED_CLAUDE_CODE_VERSION } from './version.js';
 
 /** The pinned CLI's own name on the process table — the default argv[0]. */
@@ -84,6 +85,15 @@ export interface ClaudeCodeBackendOptions {
   readonly path?: string;
   /** Wall-clock ceiling for the one exec this backend performs. Passed through to `ExecSpec.timeoutMs`; defaults to `task.limits.maxWallClockMs`. */
   readonly timeoutMs?: number;
+  /**
+   * The version-check invocation `probe()` delegates to (04-07, D-01/D-02).
+   * Optional because this module is I/O-free and cannot construct one
+   * itself (see the module docblock) — the manager's startup gate
+   * (`packages/manager/src/boot/backend-preflight.ts`) is the real caller
+   * that supplies it, via the ADL-owned exec boundary. Absent, `probe()`
+   * answers honestly that nothing was checked rather than guessing.
+   */
+  readonly runVersionCheck?: () => Promise<VersionCheckResult>;
 }
 
 /**
@@ -201,19 +211,35 @@ export function claudeCodeBackend(
 
   return {
     async probe() {
-      // A real version probe (running `claude --version` through a
-      // workspace) needs a `Workspace` this port's `probe()` signature does
-      // not receive — `04-09` is where the preflight check (named in
-      // `04-01-PLAN.md`'s artifact list) actually invokes the CLI. This
-      // backend answers honestly from what it can say without one: the
-      // version it is pinned and tested against.
+      // Delegates to `preflightClaudeCode` (04-07) rather than the tracer's
+      // former inline placeholder. `AgentRunner.probe()`'s own signature
+      // carries no `Workspace`, so this module still cannot invoke `claude
+      // --version` itself — the manager's startup gate
+      // (`backend-preflight.ts`) is the caller that constructs a real
+      // `runVersionCheck` through the ADL-owned exec boundary and is what
+      // this plan's `must_haves` are actually verified against
+      // (`runBackendPreflight`, not this method). This method exists so a
+      // FUTURE caller that already holds a `Workspace`-free version-check
+      // runner (e.g. a later `adl doctor`) gets a real answer through the
+      // standard `AgentRunner` port instead of a second bespoke path.
+      if (options.runVersionCheck === undefined) {
+        return {
+          usable: true,
+          installedVersion: null,
+          expectedVersion: PINNED_CLAUDE_CODE_VERSION,
+          detail:
+            'claudeCodeBackend.probe() was not given a version-check runner ' +
+            '(ClaudeCodeBackendOptions.runVersionCheck) — nothing was verified. ' +
+            "The manager's startup gate (backend-preflight.ts) is what performs " +
+            'the real check at daemon start.',
+        };
+      }
+      const preflight = await preflightClaudeCode(options.runVersionCheck);
       return {
-        usable: true,
-        installedVersion: null,
-        expectedVersion: PINNED_CLAUDE_CODE_VERSION,
-        detail:
-          'claudeCodeBackend.probe() reports the pinned version only; a real ' +
-          "binary/version check requires a Workspace and is 04-09's preflight.",
+        usable: preflight.ok,
+        installedVersion: preflight.installedVersion,
+        expectedVersion: preflight.expectedVersion,
+        ...(preflight.detail !== undefined ? { detail: preflight.detail } : {}),
       };
     },
 
