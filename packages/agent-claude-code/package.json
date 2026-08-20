@@ -1,14 +1,11 @@
 {
-  "name": "@adl/cli",
+  "name": "@adl/agent-claude-code",
   "version": "0.0.0",
   "type": "module",
-  "description": "ADL CLI — status, logs, pause, kill. Talks to the manager over HTTP only (D-18, D-21); structurally cannot resolve @adl/db or @adl/manager.",
+  "description": "The Claude Code headless AgentBackend adapter. It translates the pinned Claude Code CLI's stream-json output into ADL's agent event shape and never re-drives the agent's own loop, and it reaches a subprocess only through the Workspace instance a caller passes in — it constructs no Workspace of its own.",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "adl": "./dist/index.js"
-  },
   "files": [
     "dist",
     "README.md"
@@ -21,13 +18,13 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "pretypecheck": "tsc -b ../core",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "pretest": "tsc -b ../core",
     "test": "vitest run"
   },
   "dependencies": {
-    "commander": "15.0.0",
-    "eventsource-parser": "4.0.0",
-    "picocolors": "1.1.1",
+    "@adl/core": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {
