@@ -4,6 +4,7 @@ import { ulid } from 'ulid';
 import {
   featuresRepository,
   nowIso,
+  reposRepository,
   type Database,
   type FeaturesTable,
 } from '@adl/db';
@@ -18,8 +19,11 @@ import {
   type FeatureState,
   type TransitionCtx,
 } from '@adl/core/state';
+import type { WorkspaceBackendId } from '@adl/workspace';
 import type { AssignMessage } from '../ipc/protocol.js';
 import { isDispatchPaused, type ControlState } from '../control/state.js';
+import { openAttempt } from '../bookkeeping/attempt.js';
+import { pipelineFromEffectiveConfig } from '../stage-name.js';
 
 /**
  * One dispatch attempt (D-15..17): pick the oldest admissible queued
@@ -70,6 +74,25 @@ export interface DispatcherDeps {
    * called without re-deriving how it gets there.
    */
   readonly resolveAdlYml: (feature: FeaturesTable) => AdlYml;
+  /**
+   * Absolute path to the repository ADL is running against (04-04). Received
+   * as a resolved value rather than derived here, matching this file's
+   * existing discipline for `resolveAdlYml`/`daemonConfig` — `daemon.ts` is
+   * the one place that knows it, via `workerCwd ?? process.cwd()`.
+   */
+  readonly mainRepo: string;
+  /**
+   * The directory a workspace backend may create a per-feature workspace
+   * under (04-04). Must already exist — `daemon.ts` creates it at startup.
+   */
+  readonly scratchRoot: string;
+  /**
+   * Which registered workspace backend the assign message names. Optional so
+   * every earlier plan's tests keep constructing `DispatcherDeps` without
+   * one — absent, it defaults to `'worktree'`, matching v1's only real
+   * backend.
+   */
+  readonly workspaceBackendId?: WorkspaceBackendId;
   readonly spawnWorker: (call: SpawnCall) => void;
   readonly actor?: string;
   readonly now?: () => string;
@@ -139,6 +162,22 @@ export async function dispatchOnce(
     return { dispatched: false };
   }
 
+  // The base ref a worker's workspace branches from comes from the
+  // repository row's own `default_branch` — never a defaulted branch name.
+  // A feature whose repo row is missing (D-35's reconciliation did not run,
+  // or a config edit dropped it) fails the dispatch rather than guessing:
+  // a wrong base ref would silently branch a feature off the wrong history,
+  // which is worse than not dispatching (04-04 Task 1).
+  const repoRow = await reposRepository(deps.db).findById(feature.repo_id);
+  if (repoRow === undefined) {
+    deps.logger?.error(
+      { featureId: feature.id, repoId: feature.repo_id },
+      'dispatch: no repos row for this feature repo_id — refusing to dispatch rather than guess a base ref',
+    );
+    return { dispatched: false };
+  }
+  const baseRef = repoRow.default_branch;
+
   const now = (deps.now ?? nowIso)();
   const leaseToken = ulid();
   const leaseExpiresAt = new Date(
@@ -185,8 +224,10 @@ export async function dispatchOnce(
   // already has one (recovered from a crash by the reaper, which never
   // clears `workspace_handle`) attaches to that exact value instead; nothing
   // here derives a fresh one or asks `@adl/workspace` to create anything.
-  // Actual worktree creation is a later plan's job — this plan's contract is
-  // only that a recovered feature's handle survives dispatch unchanged.
+  // The `assign` message built below is now sufficient on its own for a
+  // worker to build its workspace (04-04) — creation happens in the worker,
+  // never here; this function's contract is only that a recovered feature's
+  // handle survives dispatch unchanged.
   const isFirstAttempt = feature.workspace_handle === null;
   const workspaceHandle = feature.workspace_handle ?? feature.path;
 
@@ -276,6 +317,34 @@ export async function dispatchOnce(
     return { dispatched: false };
   }
 
+  // Every agent invocation gets a round and a stage attempt before it
+  // starts (04-04 Task 2's must_have), so the transcript path and the spend
+  // ledger have real join keys rather than synthesised ones. The stage
+  // index/id come from the pipeline this dispatch just snapshotted, not a
+  // second read of it — a recovery dispatch (isFirstAttempt === false)
+  // resolves to the same stage index it was already at, so openAttempt's
+  // own ordinal logic makes that a second attempt in history (D-13), not a
+  // fresh round.
+  const stageIndex =
+    feature.current_stage_index + outcome.counters.currentStageIndex;
+  const pipeline = pipelineFromEffectiveConfig(effectiveConfigJson) ?? [];
+  const stageId = pipeline[stageIndex];
+  if (stageId === undefined) {
+    // Structurally shouldn't happen: `ctx.pipelineLength` above is this same
+    // pipeline's length, and transition() only ever advances the index
+    // within it. An invariant violation, not an ordinary dispatch outcome —
+    // daemon.ts's tick() already wraps this whole call and logs it.
+    throw new Error(
+      `dispatch: resolved stage index ${stageIndex} has no entry in the ` +
+        `snapshotted pipeline (length ${pipeline.length}) for feature ${feature.id}`,
+    );
+  }
+
+  const attempt = await openAttempt(
+    { db: deps.db, now: deps.now },
+    { featureId: feature.id, stageId, stageIndex },
+  );
+
   const assign: AssignMessage = {
     t: 'assign',
     featureId: feature.id,
@@ -283,6 +352,14 @@ export async function dispatchOnce(
     workspaceHandle,
     effectiveConfigJson,
     heartbeatIntervalMs: deps.heartbeatIntervalMs,
+    mainRepo: deps.mainRepo,
+    scratchRoot: deps.scratchRoot,
+    baseRef,
+    workspaceBackendId: deps.workspaceBackendId ?? 'worktree',
+    roundId: attempt.roundId,
+    stageAttemptId: attempt.stageAttemptId,
+    stageId: attempt.stageId,
+    stageIndex: attempt.stageIndex,
   };
 
   deps.spawnWorker({

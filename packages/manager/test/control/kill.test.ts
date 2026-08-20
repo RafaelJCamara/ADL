@@ -161,6 +161,14 @@ async function spawnInFlight(
     workspaceHandle: feature.path,
     effectiveConfigJson: '{}',
     heartbeatIntervalMs: 1000,
+    mainRepo: '/main/repo',
+    scratchRoot: '/main/repo/.adl/scratch',
+    baseRef: 'main',
+    workspaceBackendId: 'worktree',
+    roundId: 'round-1',
+    stageAttemptId: 'attempt-1',
+    stageId: 'develop',
+    stageIndex: 0,
   });
   await waitUntil(() => supervisor.get(featureId) !== undefined);
 }
@@ -188,6 +196,14 @@ describe('stopWorker', () => {
         workspaceHandle: feature.path,
         effectiveConfigJson: '{}',
         heartbeatIntervalMs: 1000,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
+        baseRef: 'main',
+        workspaceBackendId: 'worktree',
+        roundId: 'round-1',
+        stageAttemptId: 'attempt-1',
+        stageId: 'develop',
+        stageIndex: 0,
       });
       await waitUntil(() => supervisor.get(feature.id) !== undefined);
       const entry = supervisor.get(feature.id)!;
@@ -226,6 +242,14 @@ describe('stopWorker', () => {
       workspaceHandle: feature.path,
       effectiveConfigJson: '{}',
       heartbeatIntervalMs: 1000,
+      mainRepo: '/main/repo',
+      scratchRoot: '/main/repo/.adl/scratch',
+      baseRef: 'main',
+      workspaceBackendId: 'worktree',
+      roundId: 'round-1',
+      stageAttemptId: 'attempt-1',
+      stageId: 'develop',
+      stageIndex: 0,
     });
     await waitUntil(() => supervisor.get(feature.id) !== undefined);
     const entry = supervisor.get(feature.id)!;
@@ -269,6 +293,14 @@ describe('stopWorker', () => {
         workspaceHandle: feature.path,
         effectiveConfigJson: '{}',
         heartbeatIntervalMs: 1000,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
+        baseRef: 'main',
+        workspaceBackendId: 'worktree',
+        roundId: 'round-1',
+        stageAttemptId: 'attempt-1',
+        stageId: 'develop',
+        stageIndex: 0,
       });
       await waitUntil(() => supervisor.get(feature.id) !== undefined);
       const entry = supervisor.get(feature.id)!;

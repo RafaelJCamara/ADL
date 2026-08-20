@@ -251,6 +251,14 @@ describe('the child-exit fast path', () => {
             workspaceHandle: `features/${featureId}`,
             effectiveConfigJson: '{}',
             heartbeatIntervalMs: 50,
+            mainRepo: '/main/repo',
+            scratchRoot: '/main/repo/.adl/scratch',
+            baseRef: 'main',
+            workspaceBackendId: 'worktree',
+            roundId: 'round-1',
+            stageAttemptId: 'attempt-1',
+            stageId: 'develop',
+            stageIndex: 0,
           },
         );
 
@@ -319,6 +327,14 @@ describe('the child-exit fast path', () => {
             workspaceHandle: `features/${featureId}`,
             effectiveConfigJson: '{}',
             heartbeatIntervalMs: 50,
+            mainRepo: '/main/repo',
+            scratchRoot: '/main/repo/.adl/scratch',
+            baseRef: 'main',
+            workspaceBackendId: 'worktree',
+            roundId: 'round-1',
+            stageAttemptId: 'attempt-1',
+            stageId: 'develop',
+            stageIndex: 0,
           },
         );
 
@@ -374,6 +390,14 @@ describe('the child-exit fast path', () => {
             workspaceHandle: `features/${featureId}`,
             effectiveConfigJson: '{}',
             heartbeatIntervalMs: 30,
+            mainRepo: '/main/repo',
+            scratchRoot: '/main/repo/.adl/scratch',
+            baseRef: 'main',
+            workspaceBackendId: 'worktree',
+            roundId: 'round-1',
+            stageAttemptId: 'attempt-1',
+            stageId: 'develop',
+            stageIndex: 0,
           },
         );
 

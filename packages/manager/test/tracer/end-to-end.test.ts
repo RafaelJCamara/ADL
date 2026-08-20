@@ -210,6 +210,8 @@ describe('dispatchOnce', () => {
         heartbeatIntervalMs: 50,
         daemonConfig: DAEMON_CONFIG,
         resolveAdlYml: () => ADL_YML_FIXTURE,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
         spawnWorker: (call) => spawnCalls.push(call),
       });
 
@@ -230,6 +232,8 @@ describe('dispatchOnce', () => {
         heartbeatIntervalMs: 50,
         daemonConfig: DAEMON_CONFIG,
         resolveAdlYml: () => ADL_YML_FIXTURE,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
         spawnWorker: (call) => spawnCalls.push(call),
       });
 
@@ -274,6 +278,8 @@ describe('dispatchOnce', () => {
         heartbeatIntervalMs: 50,
         daemonConfig: DAEMON_CONFIG,
         resolveAdlYml: () => ADL_YML_FIXTURE,
+        mainRepo: '/main/repo',
+        scratchRoot: '/main/repo/.adl/scratch',
         spawnWorker: () => {
           /* no-op */
         },

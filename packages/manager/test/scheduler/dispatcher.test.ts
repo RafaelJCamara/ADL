@@ -108,6 +108,8 @@ function baseDeps(
     heartbeatIntervalMs: 5_000,
     daemonConfig,
     resolveAdlYml: () => ADL_YML_FIXTURE,
+    mainRepo: '/main/repo',
+    scratchRoot: '/main/repo/.adl/scratch',
     spawnWorker: () => {
       /* no-op — this file never forks a real worker */
     },

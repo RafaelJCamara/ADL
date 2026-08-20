@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { WORKSPACE_BACKEND_IDS } from '@adl/workspace';
 
 /**
  * The manager <-> worker IPC contract, carried over the `fork()` channel
@@ -15,6 +16,16 @@ import * as z from 'zod';
  * `Exclude<>` exhaustiveness assertion, exactly like `FEATURE_EVENT_KINDS`
  * (`@adl/core/state`) does: a kind added to either union but missing from the
  * list fails the **build**, not a test.
+ *
+ * `assign` carries the full workspace spec (`mainRepo`, `scratchRoot`,
+ * `baseRef`, `workspaceBackendId`) and the round/attempt addressing a worker
+ * needs (`roundId`, `stageAttemptId`, `stageId`, `stageIndex`) — 04-04's
+ * point. A forked worker cannot read the daemon's own configuration file (it
+ * holds no handle to it) and must not read the database
+ * (`adl/worker-entry-no-db`), so this message is the only channel it has.
+ * Every one of these fields is required for exactly that reason: an
+ * optional one would be a worker that has to guess, and a guessed workspace
+ * root is a process running somewhere nobody chose (T-4-14).
  */
 
 const LeaseTokenSchema = z.string().min(1);
@@ -87,6 +98,20 @@ export const AssignMessageSchema = z
     workspaceHandle: z.string(),
     effectiveConfigJson: z.string(),
     heartbeatIntervalMs: z.number().int().positive(),
+    /** Absolute path to the repository ADL is running against — `WorkspaceSpec.mainRepo`. */
+    mainRepo: z.string().min(1),
+    /** The directory the backend may create the per-feature workspace under — `WorkspaceSpec.scratchRoot`. Must already exist. */
+    scratchRoot: z.string().min(1),
+    /** The commit-ish the feature's work branches from — `WorkspaceSpec.baseRef`. */
+    baseRef: z.string().min(1),
+    /** Constrained against the registry's own id list, not a free string — a typo is a validation failure here, not a registry miss inside a forked child. */
+    workspaceBackendId: z.enum(WORKSPACE_BACKEND_IDS),
+    /** The round this attempt belongs to (04-04 Task 2's `openAttempt`). */
+    roundId: z.string().min(1),
+    /** This stage attempt's own id — the join key the transcript path and usage events address through. */
+    stageAttemptId: z.string().min(1),
+    stageId: z.string().min(1),
+    stageIndex: z.number().int().nonnegative(),
   })
   .meta({ id: 'ManagerAssignMessage' });
 

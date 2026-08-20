@@ -230,6 +230,8 @@ describe('the failed write (G-03-3): the in-memory brake and the persisted row n
           heartbeatIntervalMs: 5_000,
           daemonConfig: daemonConfigFixture(),
           resolveAdlYml: () => ADL_YML_FIXTURE,
+          mainRepo: '/main/repo',
+          scratchRoot: '/main/repo/.adl/scratch',
           controlState,
           spawnWorker: () => {
             /* no-op */
@@ -275,6 +277,8 @@ describe('the failed write (G-03-3): the in-memory brake and the persisted row n
           heartbeatIntervalMs: 5_000,
           daemonConfig: daemonConfigFixture(),
           resolveAdlYml: () => ADL_YML_FIXTURE,
+          mainRepo: '/main/repo',
+          scratchRoot: '/main/repo/.adl/scratch',
           controlState,
           spawnWorker: () => {
             /* no-op */
