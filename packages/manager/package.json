@@ -8,6 +8,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "src/prompt/templates",
     "README.md"
   ],
   "exports": {
@@ -17,13 +18,14 @@
     }
   },
   "scripts": {
-    "build": "tsc -b",
-    "pretypecheck": "tsc -b ../core ../db ../workspace",
+    "build": "tsc -b && node -e \"require('fs').cpSync('src/prompt/templates','dist/prompt/templates',{recursive:true})\"",
+    "pretypecheck": "tsc -b ../core ../db ../workspace ../agent-claude-code",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "pretest": "tsc -b ../core ../db ../workspace",
+    "pretest": "tsc -b ../core ../db ../workspace ../agent-claude-code",
     "test": "vitest run"
   },
   "dependencies": {
+    "@adl/agent-claude-code": "workspace:*",
     "@adl/core": "workspace:*",
     "@adl/db": "workspace:*",
     "@adl/workspace": "workspace:*",

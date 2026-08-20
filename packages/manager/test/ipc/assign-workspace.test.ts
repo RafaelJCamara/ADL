@@ -69,6 +69,7 @@ const VALID_ASSIGN = {
   stageAttemptId: 'attempt-1',
   stageId: 'develop',
   stageIndex: 0,
+  logsRoot: '/main/repo/.adl/logs',
 } as const;
 
 function omit<T extends object, K extends keyof T>(obj: T, key: K): Omit<T, K> {
@@ -216,6 +217,10 @@ describe('dispatchOnce — the assign message is self-sufficient', () => {
       expect(assign.stageAttemptId).toBeTruthy();
       expect(assign.stageId).toBe('develop');
       expect(assign.stageIndex).toBe(0);
+      // 04-06: absent from DispatcherDeps, dispatchOnce defaults logsRoot to
+      // the scratchRoot-colocated path — always a real, non-empty string on
+      // the assign message, never left for the worker to guess.
+      expect(assign.logsRoot).toBeTruthy();
     });
   });
 

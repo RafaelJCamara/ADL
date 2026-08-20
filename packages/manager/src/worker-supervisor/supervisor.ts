@@ -50,6 +50,19 @@ export interface SupervisorDeps {
   readonly entryPath: string;
   readonly cwd: string;
   readonly execArgv?: readonly string[];
+  /**
+   * Explicit environment values every forked worker receives, merged over
+   * `forkWorker`'s own small platform allowlist (04-06). This is the ONLY
+   * channel anything reaches a worker's `process.env` through — `daemon.ts`
+   * uses it to forward the model credential (`ANTHROPIC_API_KEY`) it read
+   * once from its own environment, so `worker-entry/stage-runner.ts` can
+   * hand it to the agent backend without the worker ever having to read the
+   * daemon's ambient environment itself (WORK-06's discipline, extended to
+   * this seam). Optional so every earlier plan's `createSupervisor` call
+   * site keeps compiling unchanged — absent, a worker gets exactly what it
+   * always did.
+   */
+  readonly workerEnv?: Readonly<Record<string, string>>;
   readonly logger: Logger;
   readonly leaseTtlMs: number;
   readonly renewLease: RenewLease;
@@ -156,6 +169,7 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
     const worker = forkWorker(deps.entryPath, {
       cwd: deps.cwd,
       execArgv: deps.execArgv,
+      ...(deps.workerEnv !== undefined ? { env: deps.workerEnv } : {}),
     });
     const log = deps.logger.child({ featureId: feature.id, leaseToken });
     expectingExit.set(feature.id, false);

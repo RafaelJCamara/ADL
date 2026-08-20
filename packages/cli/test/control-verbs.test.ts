@@ -45,6 +45,14 @@ function recordingClient(): DaemonClient & { readonly calls: string[] } {
     postShutdown: async () => {
       calls.push('shutdown');
     },
+    postDevRun: async (featureId) => {
+      calls.push(`dev-run:${featureId}`);
+      return { featureId, stageAttemptId: 'attempt-1' };
+    },
+
+    streamStageLogs: async function* () {
+      calls.push('logs');
+    },
   };
 }
 

@@ -38,6 +38,7 @@ import {
   startReaper,
 } from './scheduler/reaper.js';
 import { resolveStageCell } from './stage-name.js';
+import { logsRootFor } from './store/transcript-path.js';
 import {
   createSupervisor,
   type WorkerReady,
@@ -93,13 +94,40 @@ export interface StartDaemonOptions {
   readonly migrationsDir?: string;
   /** Defaults to this package's own compiled worker entry. */
   readonly workerEntryPath?: string;
+  /**
+   * The forked worker CHILD PROCESS's own `cwd` — where `execArgv`'s loader
+   * (e.g. `--import tsx`, used by every scripted test double) resolves from.
+   * Defaults to this daemon process's own `process.cwd()`.
+   *
+   * Deliberately NOT the same option as {@link StartDaemonOptions.mainRepo}
+   * (04-06): a test daemon commonly needs its worker's `cwd` to stay inside
+   * the real package (so `tsx` resolves) while `mainRepo` points at an
+   * unrelated temp repository — coupling the two, as this option alone used
+   * to, made that combination impossible to express.
+   */
   readonly workerCwd?: string;
+  /**
+   * Absolute path to the repository ADL is running against — `WorkspaceSpec.mainRepo`,
+   * `dispatchOnce`'s `mainRepo`, and `POST /dev-run/:featureId`'s repository
+   * root, all in one place (04-06). Defaults to {@link StartDaemonOptions.workerCwd}
+   * (or, if that is also absent, `process.cwd()`) — the pre-04-06 behaviour,
+   * unchanged for every caller that never needed the two decoupled.
+   */
+  readonly mainRepo?: string;
   readonly workerExecArgv?: readonly string[];
   /** How often `dispatchOnce` is called. Default: 25ms. */
   readonly dispatchIntervalMs?: number;
   readonly logger?: Logger;
   /** Test/observability seam: fires whenever a forked worker reports `ready`. */
   readonly onWorkerReady?: (ready: WorkerReady) => void;
+  /**
+   * Explicit environment values every forked worker receives (04-06), merged
+   * over `SupervisorDeps.workerEnv`'s own platform allowlist. `ANTHROPIC_API_KEY`
+   * — read once from the daemon's own environment below — always travels
+   * this way; a caller may add test-only overrides (e.g. a scripted agent
+   * CLI's path) on top of it.
+   */
+  readonly workerEnv?: Readonly<Record<string, string>>;
 }
 
 export interface DaemonHandle {
@@ -170,6 +198,9 @@ export async function startDaemon(
   const logger = options.logger ?? pino({ level: 'info' });
   const host = options.host ?? '127.0.0.1';
   const migrationsDir = options.migrationsDir ?? resolveMigrationsDir();
+  // 04-06: decoupled from the worker child process's own `cwd` — see
+  // `StartDaemonOptions.mainRepo`'s docblock.
+  const mainRepo = options.mainRepo ?? options.workerCwd ?? process.cwd();
 
   // D-37's fixed order: schema gate (refuse newer, copy-then-migrate an
   // older or unseeded database) before any other database access beyond
@@ -215,10 +246,23 @@ export async function startDaemon(
   const initialGlobalPause = await restoreGlobalPause({ db, logger });
   const controlState = createControlState({ db, initialGlobalPause });
 
+  // 04-06: the model credential, read once from the daemon's own environment
+  // and forwarded to every forked worker — the one place `process.env` is
+  // read for this purpose, so `worker-entry/stage-runner.ts` never has to
+  // (WORK-06's discipline, extended to the manager<->worker seam). Absent
+  // when unset, matching every other optional credential path in this
+  // codebase — a missing key surfaces as an honest `auth` StageError from
+  // the agent's own invocation, never a silent skip.
+  const workerEnv: Record<string, string> = { ...options.workerEnv };
+  if (process.env['ANTHROPIC_API_KEY'] !== undefined) {
+    workerEnv['ANTHROPIC_API_KEY'] = process.env['ANTHROPIC_API_KEY'];
+  }
+
   const supervisor = createSupervisor({
     entryPath: options.workerEntryPath ?? DEFAULT_WORKER_ENTRY_PATH,
     cwd: options.workerCwd ?? process.cwd(),
     execArgv: options.workerExecArgv,
+    workerEnv,
     logger,
     leaseTtlMs: options.leaseTtlMs,
     renewLease: (params) => featuresRepository(db).renewLease(params),
@@ -262,7 +306,7 @@ export async function startDaemon(
   // separate, much longer cadence than the reaper's, sharing only the
   // scheduling mechanism (croner) — never the interval.
   const gcSchedule = startGcSchedule({
-    mainRepo: options.workerCwd ?? process.cwd(),
+    mainRepo,
     db,
     logger,
     intervalMs: options.daemonConfig.gc.interval_ms,
@@ -301,6 +345,35 @@ export async function startDaemon(
   // stays a `const` — only `.current` ever changes.
   const shutdownRef: { current?: () => void } = {};
 
+  // 04-06: the directory transcripts live under — computed once, beside the
+  // database file, and threaded onto every assign message (`DispatcherDeps.logsRoot`)
+  // so the worker (which cannot import `@adl/db` and therefore cannot see
+  // `dbFilePath` itself) resolves the IDENTICAL root the manager's own
+  // `GET /stages/:id/logs` route reads from below — real regardless of
+  // whether `scratchRoot` happens to be colocated with the database file.
+  const logsRoot = logsRootFor(options.dbFilePath);
+
+  // 04-06: one dispatch attempt, built once so `tick()`'s background timer
+  // and `POST /dev-run/:featureId`'s synchronous call are the SAME function
+  // — never two assemblies of `DispatcherDeps` that could drift apart.
+  async function runDispatchOnce() {
+    return dispatchOnce({
+      db,
+      leaseTtlMs: options.leaseTtlMs,
+      heartbeatIntervalMs: options.heartbeatIntervalMs,
+      daemonConfig: options.daemonConfig,
+      resolveAdlYml: options.resolveAdlYml,
+      controlState,
+      logger,
+      mainRepo,
+      scratchRoot,
+      logsRoot,
+      spawnWorker: ({ feature, leaseToken, assign }) => {
+        supervisor.spawn(feature, leaseToken, assign);
+      },
+    });
+  }
+
   const app = createApi({
     apiToken: options.apiToken,
     schemaVersion: DAEMON_SCHEMA_VERSION,
@@ -310,8 +383,10 @@ export async function startDaemon(
     supervisor,
     workerStopGraceMs: options.daemonConfig.worker_stop_grace_ms,
     logger,
-    mainRepo: options.workerCwd ?? process.cwd(),
+    mainRepo,
     onShutdownRequested: () => shutdownRef.current?.(),
+    dispatchOnce: runDispatchOnce,
+    logsRoot,
   });
 
   const server: ServerType = await new Promise((resolve) => {
@@ -328,20 +403,7 @@ export async function startDaemon(
 
   async function tick(): Promise<void> {
     try {
-      await dispatchOnce({
-        db,
-        leaseTtlMs: options.leaseTtlMs,
-        heartbeatIntervalMs: options.heartbeatIntervalMs,
-        daemonConfig: options.daemonConfig,
-        resolveAdlYml: options.resolveAdlYml,
-        controlState,
-        logger,
-        mainRepo: options.workerCwd ?? process.cwd(),
-        scratchRoot,
-        spawnWorker: ({ feature, leaseToken, assign }) => {
-          supervisor.spawn(feature, leaseToken, assign);
-        },
-      });
+      await runDispatchOnce();
     } catch (error) {
       logger.error({ err: error }, 'dispatch tick failed');
     }

@@ -292,7 +292,31 @@ export {
   type TranscriptWriter,
 } from './store/ndjson-log-store.js';
 
-// The worker entry module's internals (`runWorker`, `StageRunner`, ...) are
-// deliberately NOT exported here — same reasoning as `env.ts` being
-// unexported from `@adl/workspace`'s barrel: it is an implementation detail
-// of the one caller that forks it by path, not something that is imported.
+// The worker entry module's internals (`runWorker`, `StageRunner`,
+// `createProductionStageRunner`, ...) are deliberately NOT exported here —
+// same reasoning as `env.ts` being unexported from `@adl/workspace`'s
+// barrel: they are implementation details of the one caller that forks the
+// module by path, not something that is imported.
+
+// `PromptBuilder` (04-06) — the one module that renders a developer prompt;
+// adapters never build prompts (`ARCHITECTURE.md` §4). Published so a test
+// (and `04-09`'s persisted-artefact/byte-identity proof) can call it
+// directly without going through a full stage run.
+export {
+  buildDeveloperPrompt,
+  DEVELOPER_SYSTEM_PROMPT,
+  type DeveloperPromptInput,
+  type RenderedPrompt,
+} from './prompt/build.js';
+
+// `POST /dev-run/:featureId` (04-06, D-03) — published so a test can mount
+// it directly, matching every other route module's own export.
+export {
+  DevRunResultSchema,
+  registerDevRunRoutes,
+  type DevRunResult,
+  type DevRunRoutesDeps,
+} from './api/routes/dev-run.js';
+
+// `GET /stages/:id/logs` (04-06) — published for the same reason.
+export { registerLogsRoute, type LogsRouteDeps } from './api/routes/logs.js';

@@ -293,6 +293,7 @@ describe("dispatchOnce's workspace_handle branch", () => {
         resolveAdlYml: () => ADL_YML_FIXTURE,
         mainRepo: '/main/repo',
         scratchRoot: '/main/repo/.adl/scratch',
+        logsRoot: '/main/repo/.adl/logs',
         spawnWorker: (call) => spawnCalls.push(call),
       });
       expect(first.dispatched).toBe(true);
@@ -318,6 +319,7 @@ describe("dispatchOnce's workspace_handle branch", () => {
         resolveAdlYml: () => ADL_YML_FIXTURE,
         mainRepo: '/main/repo',
         scratchRoot: '/main/repo/.adl/scratch',
+        logsRoot: '/main/repo/.adl/logs',
         spawnWorker: (call) => spawnCalls.push(call),
       });
       expect(second.dispatched).toBe(true);
@@ -413,6 +415,7 @@ describe('a feature killed mid-round', () => {
           heartbeatIntervalMs: 50,
           mainRepo: '/main/repo',
           scratchRoot: '/main/repo/.adl/scratch',
+          logsRoot: '/main/repo/.adl/logs',
           baseRef: 'main',
           workspaceBackendId: 'worktree',
           roundId: 'round-1',

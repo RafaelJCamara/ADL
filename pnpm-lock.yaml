@@ -150,6 +150,9 @@ importers:
 
   packages/manager:
     dependencies:
+      '@adl/agent-claude-code':
+        specifier: workspace:*
+        version: link:../agent-claude-code
       '@adl/core':
         specifier: workspace:*
         version: link:../core

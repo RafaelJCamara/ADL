@@ -4,6 +4,7 @@ import {
   type AssignMessage,
   type WorkerToManagerMessage,
 } from '../ipc/protocol.js';
+import { createProductionStageRunner } from './stage-runner.js';
 
 /**
  * The forked worker's own main (D-30).
@@ -169,23 +170,6 @@ export function runWorker(deps: WorkerDeps): void {
   });
 }
 
-/**
- * The production stage runner: a real implementation that reports a named
- * "no agent backend configured in this phase" outcome. This is a
- * functionality gap, not an architectural one — Phase 4 replaces this one
- * function.
- */
-function productionStageRunner(): StageRunner {
-  return async () =>
-    Promise.resolve({
-      verdictJson: JSON.stringify({
-        outcome: 'skip',
-        summary: 'no agent backend configured in this phase',
-        findings: [],
-      }),
-    });
-}
-
 function isEntryPoint(): boolean {
   const argvPath = process.argv[1];
   if (argvPath === undefined) return false;
@@ -193,7 +177,7 @@ function isEntryPoint(): boolean {
 }
 
 function main(): void {
-  runWorker({ stageRunner: productionStageRunner() });
+  runWorker({ stageRunner: createProductionStageRunner() });
 }
 
 if (isEntryPoint()) {

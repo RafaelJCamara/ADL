@@ -4,8 +4,10 @@ import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import { ScopeUsageError } from './confirm.js';
 import { daemonStartCommand, daemonStopCommand } from './commands/daemon.js';
+import { devRunCommand } from './commands/dev-run.js';
 import { gcCommand } from './commands/gc.js';
 import { killCommand } from './commands/kill.js';
+import { logsCommand } from './commands/logs.js';
 import { pauseCommand } from './commands/pause.js';
 import { resumeCommand } from './commands/resume.js';
 import { statusCommand, type WriteSink } from './commands/status.js';
@@ -220,6 +222,40 @@ export function buildProgram(deps: BuildProgramDeps): Command {
       const config = resolveConfig();
       const client = buildClient(config);
       await runVerb(() => gcCommand({ client, stdout: deps.stdout }));
+    });
+
+  program
+    .command('dev-run')
+    .description(
+      'Exercise a real developer-agent commit against a real features/<id>/ folder (D-03)',
+    )
+    .argument('<feature-id>', 'The feature folder to dispatch')
+    .action(async (featureId: string) => {
+      const config = resolveConfig();
+      const client = buildClient(config);
+      await runVerb(() =>
+        devRunCommand({ featureId }, { client, stdout: deps.stdout }),
+      );
+    });
+
+  program
+    .command('logs')
+    .description("Stream a stage attempt's transcript")
+    .argument('<stage-attempt-id>', 'The stage attempt to stream logs for')
+    .option(
+      '-f, --follow',
+      'Keep polling for new records as the run continues',
+      false,
+    )
+    .action(async (stageAttemptId: string, options: { follow?: boolean }) => {
+      const config = resolveConfig();
+      const client = buildClient(config);
+      await runVerb(() =>
+        logsCommand(
+          { stageAttemptId, follow: Boolean(options.follow) },
+          { client, stdout: deps.stdout },
+        ),
+      );
     });
 
   const daemonProgram = program
