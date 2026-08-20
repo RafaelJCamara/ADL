@@ -191,7 +191,7 @@ Plans:
   3. The backend's CLI version is pinned and preflight-checked at startup, so an unexpected version is reported as a broken installation rather than discovered mid-run.
   4. Repository-level agent-CLI config auto-discovery is disabled and system prompts are set explicitly, so the same feature on the same commit receives the same prompt twice running.
 
-**Plans**: 5/10 plans executed
+**Plans**: 6/10 plans executed
 
 Plans:
 **Wave 1**
@@ -207,7 +207,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 04-06-PLAN.md — Tracer: `adl dev-run` makes a real commit through a real agent, streamed live
+- [x] 04-06-PLAN.md — Tracer: `adl dev-run` makes a real commit through a real agent, streamed live
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -480,7 +480,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
 | 3. Manager Skeleton | 10/10 | Complete    | 2026-08-20 |
-| 4. First Agent Backend & Live Transcripts | 5/10 | In Progress|  |
+| 4. First Agent Backend & Live Transcripts | 6/10 | In Progress|  |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
 | 7. Code Reviewer on the Gate Plugin Interface | 0/TBD | Not started | - |
