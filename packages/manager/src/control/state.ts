@@ -127,9 +127,9 @@ export async function applyControlEvent(
     return false;
   }
 
-  await db.transaction().execute(async (trx) => {
+  const casApplied = await db.transaction().execute(async (trx) => {
     const trxRepo = featuresRepository(trx);
-    await trxRepo.compareAndSwapState({
+    const applied = await trxRepo.compareAndSwapState({
       id: feature.id,
       expectedVersion: outcome.expectedStateVersion,
       state: outcome.next,
@@ -138,6 +138,13 @@ export async function applyControlEvent(
         feature.current_stage_index + outcome.counters.currentStageIndex,
       updatedAt: now,
     });
+    if (!applied) {
+      // Lost the race — the row moved (another control event, a dispatch,
+      // or a reap) between the read this call started from and this write.
+      // Do not append an audit event and do not release a lease that may no
+      // longer be the one this call read.
+      return false;
+    }
 
     const [effect] = outcome.effects;
     if (effect !== undefined) {
@@ -159,9 +166,10 @@ export async function applyControlEvent(
         leaseToken: feature.lease_token,
       });
     }
+    return true;
   });
 
-  return true;
+  return casApplied;
 }
 
 /**
