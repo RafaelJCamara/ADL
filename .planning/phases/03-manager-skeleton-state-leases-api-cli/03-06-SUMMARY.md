@@ -230,3 +230,7 @@ None - no external service configuration required.
 ---
 *Phase: 03-manager-skeleton-state-leases-api-cli*
 *Completed: 2026-08-20*
+
+## Self-Check: PASSED
+
+All key files and all task/summary commits verified present on `worktree-agent-a8034238f19f3ca02`.
