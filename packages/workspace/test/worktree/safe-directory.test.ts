@@ -1,4 +1,4 @@
-import { access, readFile, stat } from 'node:fs/promises';
+import { access, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExecSpec, LogChunk, Workspace } from '@adl/core/stage';
@@ -10,7 +10,7 @@ import {
   writeScratchGitConfig,
 } from '../../src/exec/scratch-home.js';
 import { worktreeWorkspace } from '../../src/worktree/backend.js';
-import { posixOnly } from '../helpers/platform.js';
+import { linuxOnly, posixOnly } from '../helpers/platform.js';
 import { withTempRepo } from '../helpers/temp-repo.js';
 
 /**
@@ -23,10 +23,10 @@ import { withTempRepo } from '../helpers/temp-repo.js';
  * repository `safe.directory` in the scratch HOME's global git config before
  * any child is launched.
  *
- * These describe blocks prove the writer and the wiring in isolation and
- * end-to-end (runs everywhere). The actual `dubious ownership` reproduction —
- * which needs a real uid mismatch, and therefore the Linux privilege drop — is
- * a separate, linux-only-gated describe block (plan `04-02` task 2).
+ * Three describe blocks: the first two prove the writer and the wiring in
+ * isolation and end-to-end (run everywhere); the third reproduces the defect
+ * itself, which requires the Linux privilege drop to create the uid mismatch
+ * that makes the failing condition exist at all (linux-only, D-21-gated).
  */
 
 const exists = async (path: string): Promise<boolean> => {
@@ -273,4 +273,69 @@ describe('safe-directory: worktreeWorkspace wiring', () => {
       }
     });
   });
+});
+
+describe('safe-directory: the D-2-08-1 reproduction under a real privilege drop', () => {
+  it('lets a dropped worker run git inside its own worktree, and fails without the marking', async (ctx) => {
+    const gate = linuxOnly(
+      'D-2-08-1 only reproduces when the child running git has a different uid ' +
+        'than the worktree owner, which requires the Linux privilege drop (D-05) ' +
+        'to actually create the mismatch',
+      'D-2-08-1',
+    );
+    if (gate.kind === 'skip') {
+      ctx.skip(gate.reason);
+      return;
+    }
+
+    // ── Positive: the marking is in place, git proceeds ──────────────────
+    await withTempRepo(async ({ mainRepo, scratchRoot }) => {
+      const workspace = await worktreeWorkspace({
+        mainRepo,
+        scratchRoot,
+        featureId: 'safe-dir-positive',
+        baseRef: 'HEAD',
+      });
+
+      try {
+        const positive = await runIn(workspace, [
+          'git',
+          'status',
+          '--porcelain',
+        ]);
+        expect(positive.exitCode, positive.output).toBe(0);
+        expect(positive.output).not.toMatch(/dubious ownership/i);
+      } finally {
+        await workspace.destroy();
+      }
+    });
+
+    // ── Negative control: remove the marking, git refuses ────────────────
+    //
+    // Without this half, a green positive assertion is indistinguishable from
+    // git never having cared on this host at all — the negative control is
+    // what makes the positive assertion mean something.
+    await withTempRepo(async ({ mainRepo, scratchRoot }) => {
+      const workspace = await worktreeWorkspace({
+        mainRepo,
+        scratchRoot,
+        featureId: 'safe-dir-negative',
+        baseRef: 'HEAD',
+      });
+
+      try {
+        await rm(join(workspace.scratchHome, SCRATCH_GITCONFIG_FILENAME));
+
+        const negative = await runIn(workspace, [
+          'git',
+          'status',
+          '--porcelain',
+        ]);
+        expect(negative.exitCode, negative.output).not.toBe(0);
+        expect(negative.output).toMatch(/dubious ownership/i);
+      } finally {
+        await workspace.destroy();
+      }
+    });
+  }, 180_000);
 });
