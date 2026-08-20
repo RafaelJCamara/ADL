@@ -1,0 +1,34 @@
+// WR-03: the program `test/**/*.ts` is checked under.
+//
+// `tsconfig.json` deliberately includes only `src/**/*.ts`: it is the build
+// program, it emits to `dist/`, and pulling `test/` into it would ship the
+// suite (and a `vitest` type dependency) to consumers. But `vitest` only
+// strips types — it does not typecheck — so a test-only object literal
+// whose shape has drifted from the real interface (e.g. a stale
+// `FeatureView` fixture) can pass every runtime assertion it wrote itself
+// while silently no longer matching the type it claims to satisfy. This
+// program is what makes `pnpm --filter @adl/manager typecheck` actually
+// compile `test/`, mirroring `packages/db/tsconfig.test.json`'s rationale:
+// an assertion that is never compiled asserts nothing.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    // The build program's `rootDir` is `src` (this package has no
+    // `migrations/`-style sibling to hoist for), but `test/**/*.ts` needs a
+    // wider root than the package itself: several suites reach across
+    // package boundaries by relative path to reuse sibling packages' own
+    // test helpers and, for the in-process tracer, `@adl/cli`'s source
+    // directly (`../../../db/test/helpers/temp-db.js`,
+    // `../../../workspace/test/helpers/temp-repo.js`,
+    // `../../../cli/src/http-client.js`) — every one of those lives under
+    // the workspace's `packages/` directory, one level above this package,
+    // so that is the narrowest `rootDir` that contains every file this
+    // non-emitting program actually pulls in.
+    "rootDir": ".."
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

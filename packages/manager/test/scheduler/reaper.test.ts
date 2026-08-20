@@ -201,7 +201,7 @@ describe('reapExpiredLeases', () => {
 
   it('ReaperDeps declares no clock member', () => {
     const keys: readonly (keyof ReaperDeps)[] = ['db', 'logger', 'actor'];
-    expect(keys.sort()).toEqual(['actor', 'db', 'logger']);
+    expect([...keys].sort()).toEqual(['actor', 'db', 'logger']);
     expect(keys).not.toContain('now');
     expect(keys).not.toContain('clock');
   });

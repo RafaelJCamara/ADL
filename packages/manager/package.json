@@ -18,8 +18,8 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "pretypecheck": "tsc -b ../core",
-    "typecheck": "tsc --noEmit",
+    "pretypecheck": "tsc -b ../core ../db ../workspace",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "pretest": "tsc -b ../core ../db ../workspace",
     "test": "vitest run"
   },

@@ -26,6 +26,7 @@ import {
   startDaemon,
   UNAUTHENTICATED_PATHS,
   type FeatureView,
+  type StageCell,
   type WorkerReady,
 } from '../../src/index.js';
 import { withEphemeralPort } from '../helpers/ephemeral-port.js';
@@ -291,14 +292,21 @@ describe('dispatchOnce', () => {
 // createApi — health, auth, the loopback bind
 // ---------------------------------------------------------------------------
 
+const FIXTURE_STAGE_CELL: StageCell = {
+  state: 'leased',
+  position: 1,
+  pipelineLength: 3,
+  name: 'develop',
+  label: 'leased 1/3 (develop)',
+};
+
 const FIXTURE_FEATURE_VIEW: FeatureView = {
   id: 'feature-1',
   repoId: 'repo-1',
   path: 'features/feature-1',
   state: 'leased',
+  stage: FIXTURE_STAGE_CELL,
   round: 0,
-  stageIndex: 0,
-  pipelineLength: 3,
   ageMs: 1234,
   worker: { pid: 4242 },
   staleRejections: 0,
@@ -351,9 +359,8 @@ describe('createApi', () => {
           'repoId',
           'path',
           'state',
+          'stage',
           'round',
-          'stageIndex',
-          'pipelineLength',
           'ageMs',
           'worker',
           'staleRejections',

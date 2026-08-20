@@ -24,6 +24,7 @@ import {
   type ActiveWorker,
   type FeatureView,
   type SpawnCall,
+  type StageCell,
 } from '../../src/index.js';
 import {
   MIGRATIONS_DIR,
@@ -197,14 +198,20 @@ describe('the SQL predicate half of the fence, called directly', () => {
 
 describe('GET /features', () => {
   it('response objects contain a staleRejections numeric field', async () => {
+    const stage: StageCell = {
+      state: 'developing',
+      position: 1,
+      pipelineLength: 3,
+      name: 'develop',
+      label: 'developing 1/3 (develop)',
+    };
     const featureView: FeatureView = {
       id: 'feature-1',
       repoId: 'repo-1',
       path: 'features/feature-1',
       state: 'developing',
+      stage,
       round: 0,
-      stageIndex: 0,
-      pipelineLength: 3,
       ageMs: 10,
       worker: null,
       staleRejections: 2,
