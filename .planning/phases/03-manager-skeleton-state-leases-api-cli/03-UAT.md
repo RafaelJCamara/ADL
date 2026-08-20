@@ -24,9 +24,10 @@ decision: "Ratified: acquire-then-fork ordering (dispatcher) and the per-feature
 
 ### 3. Resolve the OBS-03 flagged assumption — should global pause survive a daemon restart?
 expected: A decision recorded either accepting the in-memory-only behaviour (a restart silently resumes dispatch) or requiring persistence via a `meta` row.
-result: issue
+result: pass
 reported: "require persistence via a meta row"
 severity: major
+resolution: "Gap G-03-3 closed by 03-10-PLAN.md (03-10-SUMMARY.md) — global pause now persists to a `meta` row (write-then-flip, `GlobalPausePersistError` on failure) and restores at boot after the schema-version gate. Verified live: pause-persistence.test.ts (2 real startDaemon processes across a restart) plus a manual full test-suite run showing the boot-time restore log line. OBS-03 marked Complete in REQUIREMENTS.md."
 
 ### 4. Resolve the OBS-04 flagged assumption — scope of `adl kill --all`
 expected: A decision recorded on which of the two equally-consistent readings of "kill everything" is correct: stop every leased feature AND park every queued one (implemented), vs. stopping only what is in flight.
@@ -41,8 +42,8 @@ decision: "Daemon-down message verified correct as-is (live run against a stoppe
 ## Summary
 
 total: 5
-passed: 4
-issues: 1
+passed: 5
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
@@ -51,10 +52,12 @@ blocked: 0
 
 - gap_id: G-03-3
   truth: "A decision recorded either accepting the in-memory-only behaviour (a restart silently resumes dispatch) or requiring persistence via a `meta` row."
-  status: failed
+  status: resolved
+  resolved_by: 03-10-PLAN.md
+  resolved_at: 2026-08-20
   reason: "User reported: require persistence via a meta row"
   severity: major
   test: 3
   root_cause: "03-07-PLAN.md's own flagged_assumptions block already named this: 'This plan holds the global pause flag in memory only, so a restart resumes dispatch... A persisted pause would be a `meta` row and a boot-time read.' control/state.ts's createControlState() never touches the database; the global pause flag lives only in a JS closure. No investigation needed — the fix direction was already specified by the plan author, just never implemented."
   artifacts: [packages/manager/src/control/state.ts, packages/manager/src/boot/startup.ts, packages/db/src/repository/meta.ts]
-  missing: [persisted global-pause meta row, boot-time read/restore of that row, write-through on pause/resume]
+  missing: []
