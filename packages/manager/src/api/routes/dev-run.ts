@@ -17,6 +17,7 @@ import {
   loadGherkinSpec,
   LoadError,
 } from '@adl/core/spec';
+import { ContainmentError, resolveWithinRoot } from '@adl/workspace';
 import type { DispatchDecision } from '../../scheduler/dispatcher.js';
 
 /**
@@ -67,12 +68,23 @@ export interface DevRunRoutesDeps {
   readonly logger?: Logger;
 }
 
-/** Load and validate the spec at `features/<featureId>/` directly off disk — the same loader the worker later re-runs from inside the worktree. */
+/**
+ * Load and validate the spec at `features/<featureId>/` directly off disk —
+ * the same loader the worker later re-runs from inside the worktree.
+ *
+ * `featureId` arrives as a raw URL path segment and is untrusted: resolved
+ * naively via `join(mainRepo, 'features', featureId)`, a value like
+ * `../../../etc` would let a caller read arbitrary files off the host
+ * outside `features/`. `resolveWithinRoot` refuses any component containing
+ * `..`, a path separator, a drive-letter/UNC prefix, or a NUL byte before
+ * this ever touches the filesystem — the same containment primitive
+ * `transcript-path.ts` uses for the identical class of caller-supplied id.
+ */
 async function loadSpecOrThrow(
   mainRepo: string,
   featureId: string,
 ): Promise<{ readonly specHash: string }> {
-  const featureDir = join(mainRepo, 'features', featureId);
+  const featureDir = resolveWithinRoot(join(mainRepo, 'features'), featureId);
   const filenames = await readdir(featureDir);
   const detected = detectFormat(filenames);
   const entryPath = join(featureDir, detected.entryFile);
@@ -104,6 +116,9 @@ export function registerDevRunRoutes(app: Hono, deps: DevRunRoutesDeps): void {
       const loaded = await loadSpecOrThrow(deps.mainRepo, featureId);
       specHash = loaded.specHash;
     } catch (error) {
+      if (error instanceof ContainmentError) {
+        return c.json({ error: 'invalid featureId' }, 400);
+      }
       if (isEnoent(error)) {
         return c.json(
           { error: `no feature folder at features/${featureId}` },

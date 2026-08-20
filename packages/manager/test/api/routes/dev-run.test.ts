@@ -116,6 +116,43 @@ describe('POST /dev-run/:featureId', () => {
     });
   });
 
+  it('for a featureId containing a parent-directory escape responds 400 and calls dispatchOnce zero times', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      await withTempMainRepo(async (mainRepo) => {
+        let calls = 0;
+        const app = createApi({
+          apiToken: API_TOKEN,
+          schemaVersion: 1,
+          listFeatureViews: async () => [],
+          db,
+          mainRepo,
+          dispatchOnce: async () => {
+            calls += 1;
+            return { dispatched: false };
+          },
+        });
+
+        await withEphemeralPort(app, async ({ port }) => {
+          // Encoded so fetch/Hono route the traversal segments through to
+          // the handler as the literal featureId param, rather than the
+          // HTTP client normalizing "../" out of the request URL itself.
+          const response = await fetch(
+            `http://127.0.0.1:${port}/dev-run/..%2F..%2F..%2Fetc`,
+            {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${API_TOKEN}` },
+            },
+          );
+          expect(response.status).toBe(400);
+          const body = (await response.json()) as { error: string };
+          expect(body.error).toBe('invalid featureId');
+        });
+        expect(calls).toBe(0);
+      });
+    });
+  });
+
   it('without a bearer token responds 401', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
