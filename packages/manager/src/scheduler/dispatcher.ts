@@ -201,9 +201,9 @@ export async function dispatchOnce(
     return { dispatched: false };
   }
 
-  await deps.db.transaction().execute(async (trx) => {
+  const casApplied = await deps.db.transaction().execute(async (trx) => {
     const trxRepo = featuresRepository(trx);
-    await trxRepo.compareAndSwapState({
+    const applied = await trxRepo.compareAndSwapState({
       id: feature.id,
       expectedVersion: outcome.expectedStateVersion,
       state: outcome.next,
@@ -212,6 +212,14 @@ export async function dispatchOnce(
         feature.current_stage_index + outcome.counters.currentStageIndex,
       updatedAt: now,
     });
+    if (!applied) {
+      // Lost the race: a concurrent writer (pause/kill/another dispatch)
+      // already moved this row's state_version past what we read. Do not
+      // append an event, do not write the config snapshot, and do not
+      // treat the acquired lease as ours to keep — the caller rolls it
+      // back below.
+      return false;
+    }
     const [effect] = outcome.effects;
     if (effect !== undefined) {
       await trxRepo.appendEvent({
@@ -236,7 +244,18 @@ export async function dispatchOnce(
       })
       .where('id', '=', feature.id)
       .execute();
+    return true;
   });
+
+  if (!casApplied) {
+    // The CAS lost the race after acquireLease() already succeeded (which
+    // never checks `state`, only `lease_token`/`lease_expires_at` — see
+    // FeaturesRepository.acquireLease). Release the lease we just took so a
+    // feature a concurrent pause/kill moved out of `queued` is not left
+    // holding a stray lease until it times out.
+    await repo.releaseLease({ id: feature.id, leaseToken });
+    return { dispatched: false };
+  }
 
   const assign: AssignMessage = {
     t: 'assign',
