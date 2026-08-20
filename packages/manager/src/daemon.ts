@@ -9,11 +9,21 @@ import {
   type Database,
   type FeaturesTable,
 } from '@adl/db';
-import type { AdlYml, DaemonConfig } from '@adl/core/config';
+import {
+  DEFAULT_CONFIG,
+  type AdlYml,
+  type DaemonConfig,
+} from '@adl/core/config';
 import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
+import {
+  BackendUnavailableError,
+  runBackendPreflight,
+  SUPPORTED_BACKEND_ID,
+  type BackendVersionCheckResult,
+} from './boot/backend-preflight.js';
 import {
   encodeLeaseOwner,
   killBootOrphans,
@@ -55,8 +65,10 @@ import {
  * `runStartupGate`), then the scratch root a workspace backend creates
  * per-feature workspaces under (04-04), then repository reconciliation
  * (`reconcileRepos`, D-35), then lease expiry and the boot orphan kill
- * (D-13, `./boot/orphans.js`), then dispatch. A refusal from the gate exits
- * before the API server binds —
+ * (D-13, `./boot/orphans.js`), then the backend preflight gate (04-07,
+ * D-01/D-02 — `runBackendPreflight`, when `options.agentBackendVersionCheck`
+ * is supplied), then dispatch. A refusal from either gate exits before the
+ * API server binds —
  * `startDaemon` throws {@link SchemaVersionRefusalError} rather than returning
  * a handle.
  */
@@ -128,6 +140,24 @@ export interface StartDaemonOptions {
    * CLI's path) on top of it.
    */
   readonly workerEnv?: Readonly<Record<string, string>>;
+  /**
+   * The version-check invocation for the configured agent backend (04-07,
+   * D-01/D-02) — invoked exactly once, before the dispatch timer starts and
+   * before the API server binds. `runBackendPreflight` (`./boot/backend-preflight.js`)
+   * turns a refusal into a thrown {@link BackendUnavailableError}, exactly as
+   * a schema refusal already becomes {@link SchemaVersionRefusalError}.
+   *
+   * **Absent means the backend preflight gate is skipped entirely** — every
+   * `startDaemon()` call site that predates this plan (none of which is in
+   * this plan's own file list) continues to start exactly as it did before,
+   * with no dependency on a real, pinned `claude` CLI being on the daemon's
+   * `PATH`. A caller that wants D-02's hard-block behaviour supplies this
+   * explicitly; `claudeVersionCheckRunner` (also `./boot/backend-preflight.js`)
+   * is the real, production constructor — a `claude --version` invocation
+   * through the ADL-owned exec boundary — for the future `adl daemon start`
+   * entry point (not yet built) to wire unconditionally.
+   */
+  readonly agentBackendVersionCheck?: () => Promise<BackendVersionCheckResult>;
 }
 
 export interface DaemonHandle {
@@ -256,6 +286,32 @@ export async function startDaemon(
   const workerEnv: Record<string, string> = { ...options.workerEnv };
   if (process.env['ANTHROPIC_API_KEY'] !== undefined) {
     workerEnv['ANTHROPIC_API_KEY'] = process.env['ANTHROPIC_API_KEY'];
+  }
+
+  // 04-07 (D-01, D-02): the backend startup gate. Runs exactly once, after
+  // the schema gate and repo reconciliation, and — the one placement
+  // constraint that actually matters — strictly BEFORE the supervisor is
+  // created, the API server binds, or `dispatchTimer` starts, so a refused
+  // daemon never leases and forks a feature against a backend that cannot
+  // work. `options.agentBackendVersionCheck` absent skips this gate
+  // entirely (see the option's own docblock for why that is the safe
+  // default rather than an unconditional real `claude --version` call).
+  const configuredBackendId =
+    options.daemonConfig.agents.developer?.backend ??
+    DEFAULT_CONFIG.agents.developer.backend;
+  if (options.agentBackendVersionCheck !== undefined) {
+    const backendPreflight = await runBackendPreflight({
+      backendId: configuredBackendId,
+      runVersionCheck:
+        configuredBackendId === SUPPORTED_BACKEND_ID
+          ? options.agentBackendVersionCheck
+          : undefined,
+      logger,
+    });
+    if (backendPreflight.kind === 'refused') {
+      await db.destroy();
+      throw new BackendUnavailableError(backendPreflight.refusal);
+    }
   }
 
   const supervisor = createSupervisor({
