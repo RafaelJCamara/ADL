@@ -75,9 +75,11 @@ export {
 export {
   applyControlEvent,
   createControlState,
+  GlobalPausePersistError,
   isDispatchPaused,
   parkOnRoundBoundary,
   type ControlState,
+  type ControlStateDeps,
   type PauseScope,
 } from './control/state.js';
 
@@ -204,9 +206,11 @@ export {
   DAEMON_SCHEMA_VERSION,
   reconcileRepos,
   resolveMigrationsDir,
+  restoreGlobalPause,
   runStartupGate,
   SchemaVersionRefusalError,
   type ReconcileReposDeps,
+  type RestoreGlobalPauseDeps,
   type SchemaVersionRefusal,
   type StartupGateDeps,
   type StartupGateProceeded,

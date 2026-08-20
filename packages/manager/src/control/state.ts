@@ -2,6 +2,7 @@ import { ulid } from 'ulid';
 import type { Kysely } from 'kysely';
 import {
   featuresRepository,
+  metaRepository,
   nowIso,
   type Database,
   type FeaturesTable,
@@ -19,10 +20,20 @@ import {
  * (`api/routes/control.ts`, `api/routes/features.ts`, and the supervisor's
  * round-boundary hook).
  *
- * The pause flag is held **in memory only**. See 03-07-PLAN.md's flagged
- * OBS-03 assumption: a global pause does not survive a daemon restart — a
- * restart resumes dispatch. A persisted pause would be a `meta` row and a
- * boot-time read; not built here.
+ * The **global** pause flag is persisted (G-03-3, `03-10-PLAN.md`): it is
+ * written to a `meta` row before it is flipped in memory
+ * ({@link createControlState}'s `setGlobalPause`), and restored at boot by
+ * `boot/startup.ts`'s `restoreGlobalPause`, read before the API binds and
+ * before the first dispatch tick. `isGlobalPaused` itself stays a
+ * synchronous in-memory read — `dispatchOnce` calls `isDispatchPaused`
+ * inside a synchronous predicate on every tick, and putting a database read
+ * on that path would put SQLite in the dispatch hot loop for no gain. This
+ * is a deliberate read-sync/write-async asymmetry, not an oversight.
+ *
+ * The **repo-scoped** pause (`setRepoPause`/`isRepoPaused`) is unchanged and
+ * stays process-lifetime only — G-03-3's ratified scope is the global flag
+ * only; see `packages/manager/README.md` for the asymmetry stated to the
+ * operator.
  */
 
 /**
@@ -35,19 +46,68 @@ export type PauseScope = 'global' | 'repo';
 
 export interface ControlState {
   readonly isGlobalPaused: () => boolean;
-  readonly setGlobalPause: (paused: boolean) => void;
+  /**
+   * Persists before it flips the in-memory flag (G-03-3 design decision 3):
+   * if the write rejects, the in-memory flag is left untouched and the
+   * caller sees a {@link GlobalPausePersistError}. The alternative — flip
+   * memory, then persist — recreates the exact defect G-03-3 reports: a
+   * brake engaged in this process and absent from the database.
+   */
+  readonly setGlobalPause: (paused: boolean) => Promise<void>;
   readonly isRepoPaused: (repoId: string) => boolean;
   readonly setRepoPause: (repoId: string, paused: boolean) => void;
 }
 
-/** A fresh, unpaused brake — one per daemon process (`daemon.ts` owns the instance). */
-export function createControlState(): ControlState {
-  let globalPaused = false;
+/**
+ * Thrown by {@link ControlState.setGlobalPause} when the persistence write
+ * fails. Carries the underlying cause (via the standard `Error` `cause`
+ * option) so a caller can log or report the real failure, in the shape
+ * `boot/startup.ts`'s `SchemaVersionRefusalError` already establishes for a
+ * named, catchable error class. `api/routes/control.ts` catches this
+ * specifically to answer `POST /control/pause|resume` with a `500` that
+ * names dispatch as unchanged, rather than a false `200`.
+ */
+export class GlobalPausePersistError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `failed to persist the global pause flag: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      { cause },
+    );
+    this.name = 'GlobalPausePersistError';
+  }
+}
+
+export interface ControlStateDeps {
+  readonly db: Kysely<Database>;
+  /**
+   * Required, not optional: a constructor that can be built without a
+   * database is a constructor that can silently reintroduce G-03-3 (the
+   * global pause flag would have nowhere to persist to).
+   */
+  readonly initialGlobalPause?: boolean;
+}
+
+/**
+ * A brake — one per daemon process (`daemon.ts` owns the instance). Seeded
+ * from `initialGlobalPause` (the boot-time restore's result, `false` by
+ * default for a database that has never paused); every subsequent
+ * `setGlobalPause` call persists to `deps.db` before flipping the seeded
+ * value.
+ */
+export function createControlState(deps: ControlStateDeps): ControlState {
+  let globalPaused = deps.initialGlobalPause ?? false;
   const pausedRepos = new Set<string>();
 
   return {
     isGlobalPaused: () => globalPaused,
-    setGlobalPause: (paused) => {
+    setGlobalPause: async (paused) => {
+      try {
+        await metaRepository(deps.db).setGlobalPause(paused, nowIso());
+      } catch (error) {
+        throw new GlobalPausePersistError(error);
+      }
       globalPaused = paused;
     },
     isRepoPaused: (repoId) => pausedRepos.has(repoId),

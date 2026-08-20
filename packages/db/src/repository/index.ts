@@ -48,5 +48,7 @@ export {
   metaRepository,
   type MetaRepository,
   type SchemaVersionResult,
+  type GlobalPauseResult,
   SCHEMA_VERSION_KEY,
+  GLOBAL_PAUSE_KEY,
 } from './meta.js';

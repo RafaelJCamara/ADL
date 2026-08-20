@@ -5,10 +5,18 @@ import type { Database } from '../schema.js';
  * The daemon's single key/value row set. `schema_version` gates startup
  * (D-37): `03-06`'s startup gate reads it before any other database access
  * and refuses to run against a schema newer than the running binary.
+ *
+ * `global_pause` (G-03-3) is the second key: `03-10`'s boot-time restore
+ * reads it before the API binds and before the first dispatch tick, so a
+ * maintainer's `adl pause` survives a daemon restart rather than silently
+ * resuming dispatch.
  */
 
 /** The one key `03-06`'s startup gate reads. */
 export const SCHEMA_VERSION_KEY = 'schema_version';
+
+/** The key `03-10`'s boot-time restore reads (G-03-3). */
+export const GLOBAL_PAUSE_KEY = 'global_pause';
 
 /**
  * The three ways `getSchemaVersion` can end.
@@ -24,6 +32,20 @@ export type SchemaVersionResult =
   | { kind: 'valid'; version: number }
   | { kind: 'invalid'; rawValue: string };
 
+/**
+ * The three ways `getGlobalPause` can end — the same discriminated shape as
+ * {@link SchemaVersionResult}, and for the same reason: a bare
+ * `boolean | undefined` would collapse "never written" (every database from
+ * before G-03-3) into the same falsy signal as "written false", and a
+ * coerced garbage value would compare as something. The stored value is
+ * exactly the string `'true'` or `'false'`; anything else is `invalid`,
+ * carried verbatim rather than coerced.
+ */
+export type GlobalPauseResult =
+  | { kind: 'absent' }
+  | { kind: 'valid'; paused: boolean }
+  | { kind: 'invalid'; rawValue: string };
+
 export interface MetaRepository {
   get(key: string): Promise<string | undefined>;
   /** Idempotent: writing the same key twice leaves one row with the later `updated_at`. */
@@ -35,6 +57,13 @@ export interface MetaRepository {
    */
   getSchemaVersion(): Promise<SchemaVersionResult>;
   setSchemaVersion(version: number, updatedAt: string): Promise<void>;
+  /**
+   * The stored `global_pause` flag (G-03-3), discriminated (see
+   * {@link GlobalPauseResult}). Absent against a database that has never
+   * had a global pause set — every database written before this change.
+   */
+  getGlobalPause(): Promise<GlobalPauseResult>;
+  setGlobalPause(paused: boolean, updatedAt: string): Promise<void>;
 }
 
 /** A value parses as the schema version's integer form: optional `-`, then only digits. */
@@ -81,6 +110,24 @@ export function metaRepository(db: Kysely<Database>): MetaRepository {
 
     async setSchemaVersion(version, updatedAt) {
       await set(SCHEMA_VERSION_KEY, String(version), updatedAt);
+    },
+
+    async getGlobalPause() {
+      const rawValue = await get(GLOBAL_PAUSE_KEY);
+      if (rawValue === undefined) {
+        return { kind: 'absent' };
+      }
+      if (rawValue === 'true') {
+        return { kind: 'valid', paused: true };
+      }
+      if (rawValue === 'false') {
+        return { kind: 'valid', paused: false };
+      }
+      return { kind: 'invalid', rawValue };
+    },
+
+    async setGlobalPause(paused, updatedAt) {
+      await set(GLOBAL_PAUSE_KEY, paused ? 'true' : 'false', updatedAt);
     },
   };
 }
