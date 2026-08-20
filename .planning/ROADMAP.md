@@ -136,7 +136,7 @@ Plans:
   4. Feature state, rounds, spend, and transcripts are all present and consistent after a daemon restart.
   5. Maintainer can pause work and kill one feature, everything in one repository, or everything; concurrency is configurable and defaults to one feature in flight.
 
-**Plans**: 7/9 plans executed
+**Plans**: 8/9 plans executed
 
 Plans:
 **Wave 1**
@@ -166,7 +166,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 03-08-PLAN.md — The `adl` verb set and the GC schedule
+- [x] 03-08-PLAN.md — The `adl` verb set and the GC schedule
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
@@ -449,7 +449,7 @@ Phases 1-5 are strictly serial — `core` has no I/O and everything depends on i
 |-------|----------------|--------|-----------|
 | 1. Core Contracts | 10/10 | Complete    | 2026-08-17 |
 | 2. Workspace & the Exec Boundary | 8/8 | In Progress|  |
-| 3. Manager Skeleton | 7/9 | In Progress|  |
+| 3. Manager Skeleton | 8/9 | In Progress|  |
 | 4. First Agent Backend & Live Transcripts | 0/TBD | Not started | - |
 | 5. The Loop Closes | 0/TBD | Not started | - |
 | 6. Accountant | 0/TBD | Not started | - |
