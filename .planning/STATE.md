@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 04
 current_phase_name: first-agent-backend-live-transcripts
 status: executing
-stopped_at: Phase 4 fully executed — awaiting UAT (04-UAT.md) before phase completion
-last_updated: "2026-08-21T04:40:42Z"
+stopped_at: Phase 4 EXECUTED; its credentialed UAT (04-UAT.md) deferred to the end-of-project credentialed verification pass
+last_updated: "2026-08-21T05:30:18Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 04 all 10 plans executed and merged; 2 critical review findings fixed; verification routed 1 item to human UAT
 progress:
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-08-17)
 
 ## Current Position
 
-Phase: 04 (first-agent-backend-live-transcripts) — EXECUTED, pending one human-verification item
+Phase: 04 (first-agent-backend-live-transcripts) — EXECUTED, not COMPLETE — same shape of hold as Phase 02, below
 Plan: 10 of 10 — all executed, merged to main
-Status: Awaiting UAT (04-UAT.md) — see "Phase 04 — what's left of testing" below
+Status: 04-UAT.md deferred to the end-of-project credentialed verification pass — not a live blocker; see "Phase 04 — what's left of testing" below
 Last activity: 2026-08-20 — all 10 plans executed; 04-REVIEW.md found 2 Critical findings, both fixed with regression tests (commit aa29fd3); 04-VERIFICATION.md scored 8/9, routed 1 item to human verification
 
-Progress: [██████████] 100% (plans) — phase completion blocked on UAT, not on remaining work
+Progress: [██████████] 100% (plans) — the COMPLETE checkbox is deliberately unticked; nothing downstream waits on it
 
 ## Performance Metrics
 
@@ -81,13 +81,22 @@ None yet.
 - **Research flagged for Phases 4, 8, 11, 14** — unattended agentic-CLI behaviour; code-blind tester prompt design; owned-loop tool implementation over `Workspace`; GitLab API specifics.
 - **Phase 17 is UI-bearing** — `/gsd-ui-phase` should be offered before planning it.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260821-a90 | Defer all credentialed-CLI UAT tests to a single end-of-project pass | 2026-08-21 | 3d7f884 | [260821-a90-defer-all-credentialed-cli-uat-tests-to-](./quick/260821-a90-defer-all-credentialed-cli-uat-tests-to-/) |
+
 ## Deferred Items
 
-Items acknowledged and carried forward from previous milestone close:
+Items acknowledged and carried forward from previous milestone close, and
+items deferred to the end-of-project credentialed verification pass:
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| Credentialed UAT | `04-UAT.md` test 1 — one real `ANTHROPIC_API_KEY` plus an unshadowed `@anthropic-ai/claude-code@2.1.237` run of `adl dev-run` and `adl logs -f`; closes rows 2-4 of the Phase 04 gap table | Deferred to the end-of-project credentialed verification pass | 2026-08-21 (Phase 04) |
+| Credentialed fixtures | `04-01` Task 3 — capture real CLI transcript fixtures into `packages/agent-claude-code/test/fixtures/`; rides along with the run above but is a separate deliverable | Deferred to the end-of-project credentialed verification pass | 2026-08-21 (Phase 04) |
+| Linux-host repro | `D-2-08-1` and `.planning/todos/pending/reproduce-d-2-r-1-on-linux.md` | Deferred, host-bound rather than credential-bound — needs a Linux host, independent of the credential gap | 2026-08-19 (Phase 02) |
 
 ## Session Continuity
 
@@ -137,6 +146,22 @@ blocks nothing in WORK-01..07 but lands squarely on Phase 4's "makes a real
 commit through the workspace".
 
 ## Phase 04 — what's left of testing before COMPLETE
+
+**Deferred, not blocking — maintainer decision, 2026-08-21.** This phase stays
+`executed` rather than `complete` for the same shape of reason as Phase 02
+above, but a different specific one — Phase 02 lacks a Linux *host*, Phase 04
+lacks a *credential* (a live `ANTHROPIC_API_KEY` plus the pinned Claude Code
+CLI resolving unshadowed on `PATH`).
+
+Every credentialed item in the project now accumulates into a single
+end-of-project credentialed verification pass instead of gating the phase
+that surfaced it, per PROJECT.md's Key Decisions table.
+
+`04-UAT.md` is that pass's first entry and stays `pending` — deferred is not
+passed, and Phase 04 does not earn a COMPLETE checkbox from this decision.
+
+The gap inventory below is unchanged and is what the end-of-project pass
+works from.
 
 All 10 plans executed and merged to `main` (`228baf3..b67aa22`). Full monorepo
 suite green (cli 33/33, core 446/446, plugin-sdk 28/28, agent-claude-code
