@@ -188,6 +188,7 @@ A feature folder goes in, and a green, human-approvable PR comes out — with th
 | GitLab is the second forge, interface designed around Gitea | GitLab is genuinely different so it forces the abstraction honest; Gitea is the narrowest API so it sets the interface floor | — Pending |
 | Kysely with hand-written SQL migrations | Drizzle's stable release is still pre-1.0 with an RC pending; choosing it would schedule a known breaking migration into a nights-and-weekends project | — Pending |
 | SQLite plus a hand-rolled lease table; no Redis, no queue library | Concurrency defaults to 1 and jobs run for hours, so throughput is irrelevant — and Redis would be a hard install prerequisite for a tool pitched as "drop a daemon on your box" | — Pending |
+| Credentialed agentic-CLI tests batch into one end-of-project credentialed verification pass | A live API key plus an unshadowed pinned CLI is an environment precondition, not project work, so gating each phase on it stalls the roadmap on setup while finished code sits on `main`; batching buys one honest reconciliation against real billed usage instead of many partial ones; deferred is not passed — the items stay tracked in STATE.md's Deferred Items table and no phase receives a COMPLETE checkbox it did not earn | — Pending |
 
 ## Evolution
 
