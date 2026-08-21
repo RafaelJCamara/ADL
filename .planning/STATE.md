@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 04
 current_phase_name: first-agent-backend-live-transcripts
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-08-20T13:27:10.494Z"
+stopped_at: Phase 4 fully executed — awaiting UAT (04-UAT.md) before phase completion
+last_updated: "2026-08-21T04:40:42Z"
 last_activity: 2026-08-20
-last_activity_desc: Phase 03 execution resumed (wave continue)
+last_activity_desc: Phase 04 all 10 plans executed and merged; 2 critical review findings fixed; verification routed 1 item to human UAT
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 38
-  completed_plans: 28
+  completed_plans: 38
 ---
 
 # Project State
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-08-17)
 
 ## Current Position
 
-Phase: 04 (first-agent-backend-live-transcripts) — EXECUTING
-Plan: 1 of 10
-Status: Executing Phase 04
-Last activity: 2026-08-20 — Phase 04 execution started
+Phase: 04 (first-agent-backend-live-transcripts) — EXECUTED, pending one human-verification item
+Plan: 10 of 10 — all executed, merged to main
+Status: Awaiting UAT (04-UAT.md) — see "Phase 04 — what's left of testing" below
+Last activity: 2026-08-20 — all 10 plans executed; 04-REVIEW.md found 2 Critical findings, both fixed with regression tests (commit aa29fd3); 04-VERIFICATION.md scored 8/9, routed 1 item to human verification
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100% (plans) — phase completion blocked on UAT, not on remaining work
 
 ## Performance Metrics
 
@@ -135,3 +135,53 @@ can be closed together.
 agent cannot run git inside its own worktree (`safe.directory`, exit 128). It
 blocks nothing in WORK-01..07 but lands squarely on Phase 4's "makes a real
 commit through the workspace".
+
+## Phase 04 — what's left of testing before COMPLETE
+
+All 10 plans executed and merged to `main` (`228baf3..b67aa22`). Full monorepo
+suite green (cli 33/33, core 446/446, plugin-sdk 28/28, agent-claude-code
+59/59, db 75/75, workspace 222/228 + 6 platform-gated skips, manager 263/263,
+root architecture suite 65/65), lint/typecheck/format clean. `04-REVIEW.md`
+found 2 Critical defects during code review — both fixed with regression
+tests before verification (commit `aa29fd3`; see that file's "Post-Review
+Fixes" section). `04-VERIFICATION.md` scored 8/9 must-haves, status
+`human_needed`.
+
+**One root cause behind every open item below:** no session across this
+entire phase (04-01 through 04-10) ever invoked the real, pinned Claude Code
+CLI (`2.1.237`) against a real `ANTHROPIC_API_KEY`. This execution
+environment has neither — no credential configured, and the host's `claude`
+on `PATH` resolves to an older WinGet-installed `2.1.227` that shadows the
+correctly npm-installed `2.1.237` (confirmed correct via direct path
+invocation, never used for a real capture). Every gap traces back to this one
+missing precondition, not to a code defect — each was hit, recorded honestly,
+and left open rather than faked, across five separate plans.
+
+**What running one real, credentialed `adl dev-run` + `adl logs -f` closes:**
+
+| # | Gap | Where recorded | Closed by the UAT run? |
+|---|-----|-----------------|-------------------------|
+| 1 | `04-01` Task 3: capture real CLI fixtures (`packages/agent-claude-code/test/fixtures/` — does not exist on disk) | `04-01-SUMMARY.md`, `04-VERIFICATION.md` truth #3 | Partially — a real invocation proves the code path works, but capturing the fixture files themselves is a separate follow-up task |
+| 2 | `04-06` Task 1 human-check: watch a real transcript stream live, confirm the commit | `04-06-SUMMARY.md` | Yes — this is exactly `04-UAT.md`'s test |
+| 3 | `04-07`: `claudeVersionCheckRunner` never exercised against the real pinned binary | `WINDOWS.md` #2 | Yes, once the PATH shadowing is fixed so the daemon actually resolves `2.1.237` |
+| 4 | `04-10` Task 3 human-check: reconcile a real `usage_events` row against the Anthropic Console's billed usage — the cost-accounting spike is narrowed, not closed | `WINDOWS.md` #5, this file's Blockers/Concerns above | Yes — this is the other half of `04-UAT.md`'s test |
+| 5 | `D-2-08-1`: Linux privilege-drop reproduction | `WINDOWS.md` #1, carried from Phase 2 | No — needs a Linux host, independent of the credential gap |
+
+**Single UAT item that covers rows 2-4:** `04-UAT.md` — run `adl dev-run
+<feature-id>` and `adl logs -f <stage-attempt-id>` with `@anthropic-ai/claude-code@2.1.237`
+resolving correctly on the daemon's `PATH` (not shadowed) and a real
+`ANTHROPIC_API_KEY` set. Confirm: the transcript scrolls live, not all at
+once; `adl logs -f` exits on its own once the run ends (no Ctrl-C needed —
+this is the CR-01 fix, proven in code but not yet against the real CLI); the
+commit is authored `ADL (claude-code) <...>`, never the operator's identity;
+the resulting `usage_events` row has `cost_source: 'reported'` and a cost
+that reconciles against the Console. Then `/gsd-verify-work 4`.
+
+**Non-blocking, tracked as follow-up only** (none exploitable, none block a
+success criterion, per `04-REVIEW.md`'s own severity classification):
+
+- **WR-01** — the 10-minute wall-clock timeout is a hardcoded placeholder, not wired to `effectiveConfig`; risks misclassifying a legitimate long agent run as a timeout.
+- **WR-02** — `loadSpecFromWorktree` builds a path via plain `join()` with no `resolveWithinRoot` containment check; not reachable with untrusted input today, but inconsistent with the containment discipline used everywhere else in this phase.
+- **WR-03** — the rendered prompt is passed to the `claude` CLI as a trailing positional argument with no `--` end-of-options separator; safe today only because the template can never start with `-`.
+- **IN-01/02/03** — a same-name/different-type placeholder field on `stage_result`, an unused `AgentTask.contextFiles`, and an untested-on-any-platform ENOENT fallback branch. Documentation/clarity notes, not functional defects.
+- **`WINDOWS.md` #3, #4** — two accepted deviations (a lighter test harness for the kill/reattach reconnect proof; a dropped capability-reconciliation error event that would have hijacked unrelated runs into false failures). Both are deliberate, documented design decisions, not open test debt.
