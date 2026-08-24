@@ -1,4 +1,22 @@
-<!-- GSD:project-start source:PROJECT.md -->
+# ▶ Start here
+
+**The live plan is [`docs/plan/STATUS.md`](../docs/plan/STATUS.md).** Read it before doing
+anything — it says where the project is, what the next step is, and how to build and run.
+
+| | |
+|---|---|
+| Where we are, what's next | [`docs/plan/STATUS.md`](../docs/plan/STATUS.md) |
+| All 18 milestones | [`docs/plan/ROADMAP.md`](../docs/plan/ROADMAP.md) |
+| The active milestone's steps | [`docs/plan/milestones/`](../docs/plan/milestones/) |
+| Settled decisions — read before proposing an architecture change | [`docs/plan/DECISIONS.md`](../docs/plan/DECISIONS.md) |
+| Known debt and accepted risks | [`docs/plan/DEBT.md`](../docs/plan/DEBT.md) |
+
+**Working rules:** one milestone at a time, in order · one step, one commit · anything found
+and not fixed goes in `DEBT.md` with an owner milestone · update `STATUS.md` when you stop.
+
+`.planning/` is an **archived** GSD corpus — historical reference only, never update it.
+
+---
 
 ## Project
 
@@ -344,46 +362,131 @@ ADL is a self-hosted, open-source delivery framework that turns a written featur
 
 <!-- GSD:stack-end -->
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
+## Architecture
+
+Seven packages, bottom of the dependency graph first. `apps/` does not exist yet — the
+dashboard is milestone 17.
+
+| Package | Role | Depends on |
+|---------|------|------------|
+| `@adl/core` | The settled vocabulary: verdicts, findings, criterion IDs, normalized specs, `adl.yml`/`EffectiveConfig`, the lifecycle state machine, and the port *declarations* (`Workspace`, `AgentRunner`, `Stage`). **Pure and I/O-free — lint-enforced.** | nothing, deliberately |
+| `@adl/plugin-sdk` | The small published contract a third-party gate depends on. Re-exports `@adl/core` and **defines nothing of its own** (asserted by reference identity). | core |
+| `@adl/db` | Kysely schema, hand-written SQL migrations, migration runner, repositories, model pricing. The only package touching `better-sqlite3`. | core (dev only) |
+| `@adl/workspace` | **The exec boundary.** Worktree lifecycle, zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. The only package allowed to import `execa` / `simple-git` / `child_process`. | core |
+| `@adl/agent-claude-code` | Claude Code headless adapter. Receives a `Workspace`, never constructs one. | core |
+| `@adl/manager` | The control-plane daemon: lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **The only package that writes to the DB.** | core, db, workspace, agent-claude-code |
+| `@adl/cli` | The `adl` binary. Talks to the daemon **over HTTP only** — it structurally cannot resolve `@adl/db` or `@adl/manager`. | nothing, by design |
+
+**The shape:** a manager (control plane) owns everything singular — database, queue, config,
+credentials, accounting, forge *reads*. Workers are separate OS processes holding one lease
+each, giving crash isolation and creating the seam where a future sandbox backend slots in.
+
+**Two ports, not one:** `AgentBackend` for agentic CLIs that own their own loop and tools;
+`ModelBackend` for raw APIs where ADL owns the loop. Never conflate them.
+
+---
 
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
-<!-- GSD:conventions-end -->
+House rules, drawn from four completed milestones. Several are enforced by tests that fail
+the build — those are marked ⚙️.
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
+### Architectural rules
 
-## Architecture
+1. ⚙️ **Nothing spawns a process outside `packages/workspace`.** `adl/no-direct-spawn` bans
+   `node:child_process`, `child_process`, `execa` and `simple-git` in all three import forms
+   (static, `require()`, dynamic). There is exactly **one** exemption, and its count is
+   *measured* by `test/lint/no-restricted-imports.test.ts`, not argued in a comment. Only
+   two sanctioned launchers exist — `src/exec/run.ts` and `src/exec/fork.ts`; a third turns
+   the contract guard red.
+2. ⚙️ **`@adl/core` performs zero I/O.** No filesystem, no `child_process`, no `process.env`,
+   no sibling `@adl/*` imports. Inject at the purity boundary instead — a predicate, a
+   lookup, a precomputed registry, a runner.
+3. ⚙️ **Architecture rules are tested with deliberate-violation fixtures** under
+   `test/lint/fixtures/`, run through the *same* config CI loads. Assertions read the
+   **resolved** config via `calculateConfigForFile`, never the source — flat-config rule
+   replacement is invisible to a source-level read, and `pnpm lint` once stayed green while
+   a purity ban was silently deleted.
+4. ⚙️ **No `.refine()` / `.superRefine()` under `verdict/`** — they are silently dropped by
+   `z.toJSONSchema()`, which would weaken the published schema without a diff.
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
-<!-- GSD:architecture-end -->
+### How to write the code
 
-<!-- GSD:skills-start source:skills/ -->
+5. **Classify, don't throw.** Expected-but-notable failures return a discriminated result,
+   never an exception: `StageError`, `PreflightResult`, `FenceVerdict`, `TranscriptRead`,
+   `RecoveryDecision`, `parseWorkerMessage → {ok:false, reason}`, `transition() →
+   InvalidTransition`.
+6. **Errors are siblings, not subclasses, when the caller must tell them apart.**
+   `ContainmentError` is deliberately *not* a subclass of `WorkspaceError`, so "the
+   interface refused this path" and "the file wasn't there" stay distinguishable. Named
+   errors carry structured fields.
+7. ⚙️ **Frozen array → derived union → compile-time exhaustiveness.** `OUTCOMES`,
+   `FEATURE_STATES`, `IPC_MESSAGE_KINDS`, `AGENT_EVENT_KINDS`, `TABLE_COLUMNS`,
+   `NEUTRALISED_CONFIG` … each pairs its runtime list with its type via an
+   `Exclude<T, Arr[number]> extends never` assertion, so drift fails the *build*.
+8. **Derive, never restate.** `SEND_BACK_ROUND_DELTA` is computed by calling
+   `consumesRound()`. `DAEMON_SCHEMA_VERSION` is derived from the migrations directory.
+   `DEFAULT_CONFIG.limits` is `LimitsSchema.parse({})`. A transcribed constant is the exact
+   mistake these rules exist to prevent.
+9. **Prefer structural impossibility to a runtime check.** Enforce by *absence of an export*
+   (`buildChildEnv` is off the barrel so no second env-assembly site can exist), a *missing
+   manifest entry* (`@adl/cli` cannot resolve `@adl/db`), a *message with no field to spoof*
+   (the `usage` IPC carries no feature identity), or an *unrepresentable type*
+   (`DeveloperOutcome` has no `pass`; a bare string is not a `TranscriptAddress`).
+10. **Check a limit immediately before the state-changing action, never after.**
+    `dispatchOnce`'s concurrency cap is the template the budget gate must *extend*.
+    Lowering a limit **drains** — it governs future dispatch and never revokes.
+11. **Persist-then-flip** for any in-memory flag backed by a row: write first, update memory
+    only on success, throw a named error leaving memory untouched.
+12. **Zod discipline:** `z.strictObject` under `verdict/` and `agent/`; every schema and
+    union member carries `.meta({ id })` so `$defs` names are stable rather than positional.
 
-## Project Skills
+### How to verify it
 
-No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
-<!-- GSD:skills-end -->
+13. **Watched-failing guards.** Every load-bearing assertion is *observed failing* against
+    the exact defect it exists to catch, then restored, and the observation is written down.
+    **A guard that has never been seen red is not evidence.**
+14. **Tracer-slice execution.** Open a milestone with one thin, production-quality path
+    through every layer, verified end to end, before any widening. The tracer is a real
+    cross-process integration test, not a mock.
+15. **Empirical verification before implementation.** Confirm any non-obvious library or OS
+    fact with a throwaway probe against the *installed* package before encoding it. The
+    research prose in this file has been wrong more than once and is not taken on faith.
+16. ⚙️ **Platform gates are visible, never silent.** Go through `test/helpers/platform.ts`
+    (`linuxOnly`, `posixOnly`, `windowsOnly`), which prints
+    `[ADL][SKIPPED][<id>] <reason> (platform: <p>)` and **throws** rather than skips when
+    the platform matches but provisioning is missing — so a CI job that forgot provisioning
+    goes red, not green-and-empty. Bare `process.platform` / `skipIf` in a test fails
+    `test/platform-gate-discipline.test.ts`.
+17. **Supply-chain gate before installing anything new.** Confirm repository/org and version
+    against the public registry, with a human in the loop, *before* the install. Record the
+    exact pins; the installing step consumes them verbatim and performs no fresh resolution.
+18. **Documentation can be load-bearing.** `packages/workspace/README.md`'s neutralisation
+    table is drift-asserted by a test, because that table is the stated justification for an
+    accepted risk — and an accepted risk whose justification is absent is an *unaccepted*
+    risk.
 
-<!-- GSD:workflow-start source:GSD defaults -->
+### Tests and commits
 
-## GSD Workflow Enforcement
+19. **Tests live in `<pkg>/test/`, never beside source.** Each package has its own
+    `vitest.config.ts` naming its project. Type-level assertions go in `*.test-d.ts` or a
+    package-local `tsconfig.test.json` wired into that package's `typecheck` script — *an
+    assertion nothing compiles asserts nothing.*
+    ⚠️ `pnpm -r test` **silently skips the root project**; that's why the root `test` script
+    chains `vitest run --project root`.
+20. **One atomic commit per step**, conventional-commit scoped by milestone:
+    `feat(05-03): …`, `fix(04): …`, `test(02): …`, `docs(…)`. Formatting-only changes go in
+    a separate `style` commit so `git blame` still points at the commit that wrote the code.
+21. **Anything found but out of scope goes in `docs/plan/DEBT.md`** with a **reproduction**
+    (or an explicit statement that it is unreproduced and why), a proposed shape, and an
+    owning milestone. A prose "didn't touch this" note is explicitly not good enough.
 
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
+---
 
-Use these entry points:
+## Stale in the research above
 
-- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd-debug` for investigation and bug fixing
-- `/gsd-execute-phase` for planned phase work
+The Technology Stack section is a preserved research snapshot and has drifted in one place:
 
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-<!-- GSD:profile-start -->
-
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
+- **It recommends Drizzle ORM. That was reversed — Kysely with hand-written SQL migrations
+  is settled and shipped.** No Drizzle migration phase exists or should be added. See
+  `docs/plan/DECISIONS.md`.
