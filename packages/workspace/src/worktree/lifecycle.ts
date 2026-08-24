@@ -39,7 +39,14 @@ import { adlGit, type AdlGitOutcome } from '../git/adl-git.js';
  * D-13, and a one-way decision: this prefix is how GC tells its own worktrees
  * apart from a developer's, so changing it later strands every worktree
  * created before the change. Phase 5's reconciliation (DETECT-05) also matches
- * open pull requests back to feature ids through it.
+ * open pull requests back to feature ids through it — this module stays
+ * unaware of it, but the "feature id" a real dispatch passes down to
+ * {@link branchNameFor} is itself a composed `<folderName>--<ulid>` string
+ * (`@adl/manager`'s `branch-identity.ts`), because GC's own sweep
+ * (`gc.ts`'s `sweepOrphans`) and DETECT-05's restart reconciliation need
+ * different halves of the SAME branch back: GC needs the row's ULID, and
+ * DETECT-05 needs the folder name for exactly the case the row is gone and
+ * the ULID is the one thing lost with it.
  */
 const BRANCH_PREFIX = 'adl/';
 

@@ -20,6 +20,7 @@ import {
   transcriptPathFor,
   type AttemptAddress,
 } from '../../src/index.js';
+import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import { withTempRepo } from '../../../workspace/test/helpers/temp-repo.js';
 import {
   MIGRATIONS_DIR,
@@ -227,15 +228,20 @@ describe('tracer: adl dev-run makes a real commit through a real agent, streamed
             // A real commit exists in the feature's worktree that was not
             // there before — read WHILE the worktree still exists. The
             // production stage runner destroys the workspace (worktree AND
-            // its `adl/<id>` branch, by design — a leaked worktree is a
-            // defect, not a feature) the moment the stage completes, so this
-            // has to be observed before that teardown, not after. The
-            // worktree lives at `scratchRoot/<devRunBody.featureId>` —
+            // its `adl/<folder>--<id>` branch, by design — a leaked worktree
+            // is a defect, not a feature) the moment the stage completes, so
+            // this has to be observed before that teardown, not after. The
+            // worktree lives at `scratchRoot/<folderName>--<devRunBody.featureId>`
+            // (DETECT-05, 5.6, `../../src/branch-identity.js`) —
             // `devRunBody.featureId` is the `features` ROW's own ULID
-            // (`WorkspaceSpec.featureId`'s identity), NOT the human-readable
-            // `features/<id>/` folder name (this file's own `featureId`
-            // local, used only for the URL path and the folder on disk).
-            const worktreePath = join(scratchRoot, devRunBody.featureId);
+            // (`WorkspaceSpec.featureId`'s identity), composed with this
+            // file's own `featureId` local (the human-readable
+            // `features/<id>/` folder name, used for the URL path and the
+            // folder on disk) rather than either one alone.
+            const worktreePath = join(
+              scratchRoot,
+              composeBranchFeatureId(featureId, devRunBody.featureId),
+            );
             let commitSha = '';
             let authorLine = '';
             await waitUntil(

@@ -10,6 +10,7 @@ import {
   type ScratchHomeSweepFailure,
   type SweepFailure,
 } from '@adl/workspace';
+import { ulidOf } from '../branch-identity.js';
 
 /**
  * `src/scheduler/gc-schedule.ts` — discharging Phase 2's deferred D-15: a
@@ -28,13 +29,21 @@ import {
  * the {@link FeatureStateLookup} `sweepOrphans` needs, exported separately so
  * a test can drive it directly against a temp database without going through
  * a full `runGcOnce` call.
+ *
+ * `sweepOrphans` hands this whatever `featureIdFromBranch` extracted from a
+ * managed worktree's branch — for a real dispatch (DETECT-05, 5.6) that is
+ * the composed `<folderName>--<ulid>` identity `stage-runner.ts` builds
+ * (`../branch-identity.js`), not the bare row id. `ulidOf` recovers the
+ * ULID half, falling back to the whole value for a plain id with no `--`
+ * (every pre-5.6 fixture, and any branch this encoding never touched) —
+ * exactly what this lookup always did before 5.6.
  */
 export function createFeatureStateLookup(
   db: Kysely<Database>,
 ): FeatureStateLookup {
   const repo = featuresRepository(db);
   return async (featureId) => {
-    const feature = await repo.findById(featureId);
+    const feature = await repo.findById(ulidOf(featureId));
     return feature?.state;
   };
 }

@@ -10,6 +10,7 @@ import {
   startGcSchedule,
 } from '../../src/index.js';
 import type { GcRunSummary } from '../../src/index.js';
+import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import {
   MIGRATIONS_DIR,
   withTempDb,
@@ -126,6 +127,18 @@ describe('runGcOnce', () => {
       const lookup = createFeatureStateLookup(db);
       expect(await lookup(featureId)).toBe('gating');
       expect(await lookup(ulid())).toBeUndefined();
+
+      // DETECT-05 (5.6): a real dispatch's branch is `featureIdFromBranch`'d
+      // down to a composed `<folderName>--<ulid>` string, never the bare
+      // row id — the lookup must decode it back to the ULID half before
+      // asking the repository, or every real production worktree's GC
+      // sweep would treat a live feature's row as unknown and collect it.
+      expect(await lookup(composeBranchFeatureId('dark-mode', featureId))).toBe(
+        'gating',
+      );
+      expect(
+        await lookup(composeBranchFeatureId('dark-mode', ulid())),
+      ).toBeUndefined();
     });
   });
 });

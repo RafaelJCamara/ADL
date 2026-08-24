@@ -63,6 +63,7 @@ import {
   type AgentUsageRecord,
   type ClaudeCodeAgentRunner,
 } from '@adl/agent-claude-code';
+import { composeBranchFeatureId } from '../branch-identity.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import { writePromptArtifact } from '../prompt/artifact.js';
 import { buildDeveloperPrompt } from '../prompt/build.js';
@@ -224,10 +225,22 @@ export function createProductionStageRunner(
     const registry = workspaceRegistry();
     const backend = registry.resolve(assign.workspaceBackendId);
 
+    // DETECT-05 (5.6): the identity a real dispatch hands the backend is
+    // NOT the bare row ULID — it is the folder's basename and the ULID
+    // composed together, so the branch this creates can later answer both
+    // GC's "which row does this belong to" and DETECT-05's "which folder
+    // does this abandoned change request belong to, now that the row is
+    // gone" (see `../branch-identity.js`'s own docblock). `assign.featureId`
+    // itself is untouched everywhere else in this function — the transcript
+    // address, the usage/IPC messages — all of that stays keyed on the bare
+    // ULID exactly as before; only the workspace/branch identity changes.
     let workspace: Workspace | undefined;
     try {
       workspace = await backend.create({
-        featureId: assign.featureId,
+        featureId: composeBranchFeatureId(
+          basename(assign.workspaceHandle),
+          assign.featureId,
+        ),
         mainRepo: assign.mainRepo,
         scratchRoot: assign.scratchRoot,
         baseRef: assign.baseRef,

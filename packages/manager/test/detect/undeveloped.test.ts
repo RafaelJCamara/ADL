@@ -4,6 +4,7 @@ import { featuresRepository, migrateToLatest, nowIso } from '@adl/db';
 import type { Database } from '@adl/db';
 import type { Kysely } from 'kysely';
 import { githubForgeAdapter } from '@adl/forge-github';
+import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import { undevelopedFeatures } from '../../src/detect/undeveloped.js';
 import {
   MIGRATIONS_DIR,
@@ -79,7 +80,58 @@ describe('undevelopedFeatures', () => {
           disablePacingForTests: true,
         });
         // Simulates a features row lost since the change request was opened
-        // — the DB-loss reconciliation case, still not re-admitted.
+        // — the DB-loss reconciliation case, still not re-admitted. The
+        // branch is the REAL shape a dispatch actually creates (DETECT-05,
+        // 5.6): the folder's basename and the row's own (now-lost) ULID,
+        // composed together — never just the bare folder name, which is
+        // what production would have if a `features` row survived to tell
+        // it apart, exactly the case this test is not.
+        await forge.openChangeRequest({
+          repo: FORGE_REPO,
+          head: `adl/${composeBranchFeatureId('export-widgets', ulid())}`,
+          base: 'main',
+          title: 'Export widgets',
+          body: 'body',
+          draft: true,
+        });
+
+        const result = await undevelopedFeatures({
+          scannedFolders: ['dark-mode', 'export-widgets', 'new-feature'],
+          featuresDir: 'features',
+          repoId,
+          featuresRepo: featuresRepository(db),
+          forge,
+          forgeRepo: FORGE_REPO,
+        });
+
+        expect(result).toEqual(['new-feature']);
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
+  it('excludes a folder behind a bare, non-composed open change request branch too — never dropped for failing to decode', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+
+      const server = await startMockGithubServer();
+      try {
+        const forge = githubForgeAdapter({
+          appId: 'adl-test-app',
+          privateKey: throwawayPrivateKeyPem(),
+          installationId: 1,
+          baseUrl: server.url,
+          disablePacingForTests: true,
+        });
+        // A bare `adl/<folder>` branch, no composed `--<ulid>` suffix — the
+        // shape `test/tracer/detect-to-draft-cr-end-to-end.test.ts` still
+        // constructs (it builds its own workspace directly, bypassing
+        // `stage-runner.ts`'s compose call), and the shape every branch had
+        // before DETECT-05's encoding existed. `folderNameOf` must fall
+        // back to treating the whole remainder as the folder name here,
+        // never drop the entry outright.
         await forge.openChangeRequest({
           repo: FORGE_REPO,
           head: 'adl/export-widgets',
@@ -90,7 +142,7 @@ describe('undevelopedFeatures', () => {
         });
 
         const result = await undevelopedFeatures({
-          scannedFolders: ['dark-mode', 'export-widgets', 'new-feature'],
+          scannedFolders: ['export-widgets', 'new-feature'],
           featuresDir: 'features',
           repoId,
           featuresRepo: featuresRepository(db),

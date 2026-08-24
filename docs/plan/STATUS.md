@@ -24,15 +24,15 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
-seven of its steps (5.1, 5.2, 5.3, 5.4, 5.5, 5.8, 5.9) are done; groups A–D still have
-5.6–5.7, 5.10–5.12, and all of C and D ahead.**
+eight of its steps (5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.8, 5.9) are done; groups A–D still have
+5.7, 5.10–5.12, and all of C and D ahead.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.3/5.4/5.8/5.9 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.3/5.4/5.5/5.6/5.8/5.9 done
 M06–M18 ............................. not started
 ```
 
@@ -75,9 +75,28 @@ committed feature folder shows up via `GET /features` with no `adl dev-run` call
 wired in only when a caller supplies `StartDaemonOptions.forge` (a `ForgeAdapter` + repo
 ref) — absent, matching the backend preflight gate's own precedent, it does not start,
 since no live GitHub App credentials exist yet (`DEBT.md` item 1.7).
+And exclusive claim now demonstrably survives both re-detection and a daemon restart
+(DETECT-05, 5.6) — `packages/manager/test/scenario/detect-restart-reconciliation.test.ts`
+drives a feature through a real `startDaemon()`, lets the poll schedule re-scan it several
+times while it is still leased, stops the daemon, and boots a fresh one against the same
+database and repository: never a second `features` row for the same folder. Building that
+proof surfaced a real bug in the mechanism 5.2 shipped: a real dispatch's worktree branch
+was named from the `features` row's bare ULID (`assign.featureId`), but DETECT-05's
+lost-row reconciliation — and `@adl/workspace`'s own GC sweep — each need to recover a
+*different* identity back out of that same branch (GC needs the ULID, reconciliation needs
+the folder name, precisely when the row and its ULID are the thing that's gone). Fixed by
+composing both into the branch a real dispatch creates
+(`packages/manager/src/branch-identity.ts`'s `composeBranchFeatureId`, plus its
+fallback-aware readers `ulidOf`/`folderNameOf` — `adl/<folderName>--<ulid>`), read back by
+whichever of GC's `createFeatureStateLookup` and `undevelopedFeatures` needs which half.
+`@adl/workspace`'s own `branchNameFor`/`featureIdFromBranch` are untouched — this is a
+manager-package-local convention layered on top, and every pre-5.6 branch (a bare id, no
+`--`) still resolves exactly as before. (Code review caught a real asymmetry here first —
+`undevelopedFeatures` was dropping a non-composed branch instead of falling back to it,
+which would have made a real open change request invisible to reconciliation; centralising
+the fallback in `ulidOf`/`folderNameOf` is the fix.)
 
-**What does not exist yet:** exclusive-claim + restart reconciliation for the polling loop
-(5.6), an `adl daemon start` that actually boots the manager (5.7),
+**What does not exist yet:** an `adl daemon start` that actually boots the manager (5.7),
 promote-to-ready/sticky-comments/never-merge wiring (5.10–5.12), and the whole round loop —
 gates, send-back, protected-path enforcement (group C) — plus per-round accounting (group D).
 `dev-run` still fires a single synthetic `develop` stage by hand.
@@ -91,17 +110,17 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group A: **5.6**, exclusive claim + restart reconciliation (DETECT-05) — a feature is
-claimed exactly once across re-detection *and* a daemon restart mid-flight, reconciled
-against open ADL change requests. Build on the existing lease CAS in
-`packages/db/src/repository/features.ts` — don't invent a second claim mechanism — and reuse
-5.2's *undeveloped* predicate for the lost-row case, the same one 5.5's polling loop
-(`packages/manager/src/scheduler/poll-schedule.ts`) already calls in production.
+with group A's last step: **5.7** — make `adl daemon start` actually boot the manager
+in-process. 5.4 already unblocked this, and 5.5 shows the shape of a gated-by-credentials
+optional dependency `adl daemon start`'s own wiring will need to decide about for
+`StartDaemonOptions.forge`.
 
-After 5.6: **5.7** (make `adl daemon start` actually boot the manager in-process — 5.4
-already unblocked this, and 5.5 shows the shape of a gated-by-credentials optional
-dependency `adl daemon start`'s own wiring will need to decide about for `StartDaemonOptions.forge`).
-Then group B's remainder — **5.10**
+Step 5.7 closes a gap M03 shipped deliberately: **`adl daemon start`
+currently prints an honest gap message and exits 1**, because it needed a production
+`resolveAdlYml` that only detection could provide — 5.4 supplied that; 5.7 is now the
+CLI/manager package-boundary decision (D-21) that was the other half of the gap, still open.
+
+After 5.7, group B's remainder — **5.10**
 (draft-at-round-1/promote-when-green wiring),
 **5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
 exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
@@ -109,11 +128,6 @@ exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it
 5.12 is the assertion that reads its own shape and fails if one is ever added). Group C (the
 round loop itself) reuses `resolvePipeline` (`@adl/core/config`, still no caller). Group D
 (accounting) can run in parallel with C once a round exists to record against.
-
-Step 5.7 closes a gap M03 shipped deliberately: **`adl daemon start`
-currently prints an honest gap message and exits 1**, because it needed a production
-`resolveAdlYml` that only detection could provide — 5.4 supplied that; 5.7 is now the
-CLI/manager package-boundary decision (D-21) that was the other half of the gap, still open.
 
 **Before you plan M05 in detail, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled

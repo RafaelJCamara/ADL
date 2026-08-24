@@ -80,8 +80,11 @@ export interface ChangeRequest {
    * echoed back by the forge. DETECT-01's undeveloped predicate (5.2) and
    * DETECT-05's restart reconciliation (5.6) both match a change request
    * back to a feature folder by running `@adl/workspace`'s
-   * `featureIdFromBranch` against this field — that match happens at the
-   * call site, never here, so `@adl/core` stays dependency-free.
+   * `featureIdFromBranch` against this field, then `@adl/manager`'s
+   * `branch-identity.ts` (`decodeBranchFeatureId`) to recover the folder's
+   * basename from the composed `<folderName>--<ulid>` identity a real
+   * dispatch encodes there — that match happens at the call site, never
+   * here, so `@adl/core` stays dependency-free.
    */
   readonly head: string;
 }

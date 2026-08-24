@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -16,6 +16,7 @@ import {
   type TempRepo,
 } from '../../../workspace/test/helpers/temp-repo.js';
 import { posixOnly } from '../helpers/platform.js';
+import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import type { AssignMessage } from '../../src/ipc/protocol.js';
 import {
   createProductionStageRunner,
@@ -113,6 +114,20 @@ function buildAssign(overrides: {
   };
 }
 
+/**
+ * Where a real dispatch's worktree actually lands (DETECT-05, 5.6):
+ * `stage-runner.ts` no longer hands `backend.create()` the bare
+ * `assign.featureId` — it composes the folder's basename in alongside it
+ * (`composeBranchFeatureId`), so `assign.featureId` alone is no longer the
+ * worktree's directory name under `scratchRoot`.
+ */
+function workspaceDirFor(scratchRoot: string, assign: AssignMessage): string {
+  return join(
+    scratchRoot,
+    composeBranchFeatureId(basename(assign.workspaceHandle), assign.featureId),
+  );
+}
+
 async function readTranscript(
   assign: AssignMessage,
 ): Promise<TranscriptRecord[]> {
@@ -169,7 +184,7 @@ describe('createProductionStageRunner', () => {
       expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
 
       // The workspace was destroyed: the worktree directory no longer exists.
-      expect(existsSync(join(scratchRoot, featureId))).toBe(false);
+      expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
 
       // The commit's author names ADL and the backend, not the test's own
       // git identity (`withTempRepo`'s "tracer@adl.invalid" / "ADL Tracer").
@@ -209,7 +224,7 @@ describe('createProductionStageRunner', () => {
       if (verdict.kind === 'developer_outcome') {
         expect(verdict.outcome.kind).toBe('blocked');
       }
-      expect(existsSync(join(scratchRoot, featureId))).toBe(false);
+      expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
     });
   }, 20_000);
 
@@ -247,7 +262,7 @@ describe('createProductionStageRunner', () => {
       if (verdict.kind === 'stage_error') {
         expect(verdict.error.kind).toBe('binary_missing');
       }
-      expect(existsSync(join(scratchRoot, featureId))).toBe(false);
+      expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
     });
   }, 20_000);
 
@@ -272,7 +287,7 @@ describe('createProductionStageRunner', () => {
       // the gated test above), it is always the infrastructure-failure
       // channel, never a pass.
       expect(verdict.kind).toBe('stage_error');
-      expect(existsSync(join(scratchRoot, featureId))).toBe(false);
+      expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
     });
   }, 20_000);
 

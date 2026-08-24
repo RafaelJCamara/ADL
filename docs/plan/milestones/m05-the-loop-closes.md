@@ -153,10 +153,56 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       (`test/boot/poll-schedule-wiring.test.ts`: a feature folder committed to a real repo
       appears via `GET /features` with no `adl dev-run` call, and does not when
       `options.forge` is absent).
-- [ ] **5.6** — Exclusive claim + restart reconciliation (DETECT-05). A feature is claimed
+- [x] **5.6** — Exclusive claim + restart reconciliation (DETECT-05). A feature is claimed
       exactly once across re-detection *and* a daemon restart mid-flight, reconciled
       against open ADL change requests. Build on the existing lease CAS in
       `packages/db/src/repository/features.ts` — don't invent a second claim mechanism.
+      **Shipped:** the two mechanisms the milestone doc named — the lease CAS
+      (`FeaturesRepository.acquireLease` + `dispatchOnce`'s CAS write, M02/M03) and 5.2's
+      `undevelopedFeatures` (already 5.5's first production caller) — turned out to already
+      be sufficient in isolation; what this step actually built was the proof they compose
+      correctly under restart (`packages/manager/test/scenario/detect-restart-reconciliation.test.ts`):
+      a feature detected and dispatched for real is left alone by repeated re-detection while
+      still in flight, and by a fresh `startDaemon()` booted against the same database and
+      repository after the first is stopped — never a second `features` row for the same
+      folder, and the recovered row is re-leaseable, not stuck.
+      **The real finding, and the actual engineering work:** tracing `undevelopedFeatures`'s
+      lost-row reconciliation all the way through a *real* dispatch (`dispatchOnce` →
+      `createProductionStageRunner` → `@adl/workspace`'s `createWorktree`) surfaced that it was
+      built against a branch shape production never creates. `@adl/workspace`'s GC sweep
+      (`gc.ts`'s `sweepOrphans`, Phase 2) reads a managed worktree's branch back through
+      `featureIdFromBranch` and calls `FeaturesRepository.findById` with the result — it needs
+      the `features` row's own ULID. DETECT-05's reconciliation needs the opposite: the
+      folder's basename, recovered from an open change request whose row is gone — the ULID
+      is exactly what was lost with it. A real dispatch was handing `backend.create()` the bare
+      ULID (`assign.featureId`) as the worktree/branch identity, so `featureIdFromBranch` could
+      only ever return one of the two, never both, and the reconciliation this step exists to
+      prove would have silently never matched a real production branch. Fixed by composing both
+      into the branch a real dispatch creates — `adl/<folderName>--<ulid>`
+      (`packages/manager/src/branch-identity.ts`'s `composeBranchFeatureId`/`decodeBranchFeatureId`,
+      a manager-package-local convention; `@adl/workspace`'s `branchNameFor`/`featureIdFromBranch`
+      are unchanged and stay unaware of the compound shape, exactly as their own tests still
+      assume). `worker-entry/stage-runner.ts` composes it before `backend.create()`;
+      `scheduler/gc-schedule.ts`'s `createFeatureStateLookup` and `detect/undeveloped.ts`'s
+      `undevelopedFeatures` each call one of `branch-identity.ts`'s own fallback-aware readers —
+      `ulidOf`/`folderNameOf` — rather than `decodeBranchFeatureId(x)?.half` inline: a bare id
+      with no `--` (every pre-5.6 fixture, and the tracer's own non-composed branch) must fall
+      back to being treated as the answer whole, never be dropped, and the two real call sites
+      independently hand-rolled that fallback and disagreed until code review caught it —
+      `undevelopedFeatures` was silently dropping an unrecognised branch instead of falling
+      back, which would have made a real, still-open change request invisible to reconciliation
+      the moment production ever created one. Centralising the fallback in the two named
+      exports is what makes a third future call site copy the correct behaviour structurally
+      rather than reinvent the same bug a third time. A ULID never contains `-` (Crockford
+      base32), so splitting on the last `--` is unambiguous no matter what the folder name
+      itself contains. Watched failing against the exact defect before landing each fix
+      (`undevelopedFeatures`'s reconciliation test, the new restart scenario's lost-row case,
+      and — after the review round — a dedicated bare-branch case all reproduced the false
+      "not yet developed" verdict), per the house convention.
+      **Deviation:** `stage-runner.test.ts`'s and `dev-run-end-to-end.test.ts`'s own worktree-path
+      assertions were checking `scratchRoot/<bare-featureId>` — silently vacuous once the real
+      path became `scratchRoot/<folderName>--<ulid>` — updated to compute the same composition
+      the production code now does, rather than asserting against a path that was never created.
 - [ ] **5.7** — Make `adl daemon start` actually boot the manager in-process. This closes
       the honest gap M03 shipped deliberately; 5.4 is its blocker.
 

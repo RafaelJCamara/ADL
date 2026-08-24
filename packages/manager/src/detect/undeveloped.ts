@@ -15,6 +15,7 @@ import type { ForgeAdapter, ForgeRepoRef } from '@adl/core/forge';
 import { undevelopedFeatureFolders } from '@adl/core/detect';
 import type { FeaturesRepository } from '@adl/db';
 import { featureIdFromBranch } from '@adl/workspace';
+import { folderNameOf } from '../branch-identity.js';
 
 export interface UndevelopedFeaturesInput {
   /** `listFeatureFolders`'s output — every feature folder committed on the default branch right now. */
@@ -49,12 +50,23 @@ export async function undevelopedFeatures(
     )
   ).filter((folder): folder is string => folder !== undefined);
 
+  // DETECT-05 (5.6): a real dispatch's branch encodes the folder's basename
+  // AND the row's ULID (`../branch-identity.js`) — `featureIdFromBranch`
+  // strips the `adl/` prefix as before, and `folderNameOf` recovers the
+  // folder half, falling back to the whole value for a bare (pre-5.6-shaped)
+  // branch rather than dropping it — a dropped entry here would make a real,
+  // still-open change request invisible to this predicate and re-admit a
+  // folder that is already in flight, the exact double-dispatch this
+  // predicate exists to prevent. This is precisely the "features row is
+  // gone" case: there is no row left to ask, so the folder identity has to
+  // come back out of the branch itself rather than a database lookup.
   const openChangeRequests = await input.forge.listOpenChangeRequests(
     input.forgeRepo,
   );
   const openChangeRequestFolders = openChangeRequests
     .map((cr) => featureIdFromBranch(cr.head))
-    .filter((folder): folder is string => folder !== undefined);
+    .filter((id): id is string => id !== undefined)
+    .map((id) => folderNameOf(id));
 
   return undevelopedFeatureFolders({
     scannedFolders: input.scannedFolders,
