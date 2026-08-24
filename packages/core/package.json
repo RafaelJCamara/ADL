@@ -34,6 +34,10 @@
     "./state": {
       "types": "./dist/state/index.d.ts",
       "default": "./dist/state/index.js"
+    },
+    "./detect": {
+      "types": "./dist/detect/index.d.ts",
+      "default": "./dist/detect/index.js"
     }
   },
   "scripts": {

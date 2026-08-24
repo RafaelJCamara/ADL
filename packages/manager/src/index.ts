@@ -335,6 +335,11 @@ export {
   type DevRunRoutesDeps,
 } from './api/routes/dev-run.js';
 
+// The features/ scanner's I/O half (5.1, DETECT-01) — published so a test can
+// drive it directly against a real ManagerGitClient, and so 5.2's undeveloped
+// predicate (not yet built) has a stable import path.
+export { listFeatureFolders } from './detect/scanner.js';
+
 // `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow loop)
 // — published for the same reason every other route module is: so a test can
 // mount it directly. `TRANSCRIPT_POLL_INTERVAL_MS`/`LOG_STREAM_EVENTS` are
