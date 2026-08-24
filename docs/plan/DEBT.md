@@ -31,6 +31,7 @@ real billed usage instead of many partial ones.
 | 1.4 | Exercise `claudeVersionCheckRunner` against the real pinned binary | same, plus fixing PATH shadowing | M04 |
 | 1.5 | Run the D-2-08-1 privilege-drop reproduction (positive + negative control) | **a Linux host** — independent of the credential gap | M02 → M04 |
 | 1.6 | Run the D-2-R-1 cross-feature isolation reproduction | **a Linux host** | M02 |
+| 1.7 | One real draft change request opened on a real GitHub repo through a real installed GitHub App: `adl+forge-github`'s `openChangeRequest` exercised against `api.github.com`, not the local mock server the automated tracer uses | a GitHub App created and installed by the maintainer, its App ID + private key + installation id | M05 |
 
 **Why 1.1–1.4 are all one run.** No session across the whole of M04 ever invoked the real,
 pinned CLI against a real credential. The dev machine is Windows, has no key configured,

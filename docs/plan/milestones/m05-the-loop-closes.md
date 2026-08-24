@@ -45,16 +45,27 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 ### Openers — the house pattern
 
-- [ ] **5.0** — **Supply-chain gate.** `octokit` and `@octokit/auth-app` are the first new
+- [x] **5.0** — **Supply-chain gate.** `octokit` and `@octokit/auth-app` are the first new
       runtime dependencies since M04. Every prior milestone opened by confirming
       repository/org and version against the public registry *with a human in the loop*,
       **before** installing, and recorded the exact pins for the installing step to consume
       verbatim. Do that.
+      **Approved 2026-08-24:** `octokit@5.0.5` (`github.com/octokit/octokit.js`) and
+      `@octokit/auth-app@8.3.0` (`github.com/octokit/auth-app.js`) — both MIT, both
+      `node >=20`, both published by the official `octokit` org (`gr2m` / `octokitbot`),
+      matching `.claude/CLAUDE.md`'s existing research pins exactly. Consumed verbatim by
+      the `packages/forge-github` scaffold in 5.9.
 - [ ] **5.0b** — **Tracer, not a feature.** One thin, production-quality path all the way
       through before any widening: a committed feature folder is detected → a draft change
       request appears on a real GitHub repo. This touches 5.1, 5.8 and 5.9 at once. Every
       earlier milestone proved this ordering pays; it is how the layer that's wrong gets
       found on day one instead of at integration.
+      **Credential decision (2026-08-24, human-in-the-loop):** matches M04's precedent
+      exactly (see `DEBT.md` § 1) — no live GitHub App is wired up this session. The
+      production `ForgeAdapter`/GitHub-App code path is built and proven end to end in an
+      automated test against a local mock GitHub HTTP server (real `octokit` +
+      `@octokit/auth-app` wiring, zero network), and the one live-credentialed run against
+      a real GitHub App and a real test repo is added to the end-of-project batch.
 
 ### A · Detection — turn on the front door (AC1, AC5)
 
