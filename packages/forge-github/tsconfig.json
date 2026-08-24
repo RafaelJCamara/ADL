@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // This package's `src/` touches `node:crypto` (throwaway-key-free JWT
+    // signing lives inside `@octokit/auth-app` itself, but the adapter reads
+    // `process.env` nowhere — credentials arrive as constructor options) —
+    // "node" is declared regardless, matching `@adl/core`'s and
+    // `@adl/manager`'s reasoning rather than `@adl/agent-claude-code`'s: this
+    // package's public surface is the App-auth options object, and TypeScript
+    // needs Node's ambient types to resolve `octokit`'s and
+    // `@octokit/auth-app`'s own type declarations, which reference them.
+    "rootDir": "src",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

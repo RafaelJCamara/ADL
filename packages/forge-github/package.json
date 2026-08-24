@@ -1,0 +1,36 @@
+{
+  "name": "@adl/forge-github",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The GitHub ForgeAdapter — octokit + a GitHub App, never a PAT. Implements @adl/core/forge's port; constructs no Workspace and shells out to nothing.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "pretypecheck": "tsc -b ../core",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "pretest": "tsc -b ../core",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@adl/core": "workspace:*",
+    "@octokit/auth-app": "8.3.0",
+    "octokit": "5.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
