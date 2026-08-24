@@ -55,7 +55,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `node >=20`, both published by the official `octokit` org (`gr2m` / `octokitbot`),
       matching `.claude/CLAUDE.md`'s existing research pins exactly. Consumed verbatim by
       the `packages/forge-github` scaffold in 5.9.
-- [ ] **5.0b** — **Tracer, not a feature.** One thin, production-quality path all the way
+- [x] **5.0b** — **Tracer, not a feature.** One thin, production-quality path all the way
       through before any widening: a committed feature folder is detected → a draft change
       request appears on a real GitHub repo. This touches 5.1, 5.8 and 5.9 at once. Every
       earlier milestone proved this ordering pays; it is how the layer that's wrong gets
@@ -69,9 +69,13 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 ### A · Detection — turn on the front door (AC1, AC5)
 
-- [ ] **5.1** — `features/` scanner. A pure function over repository state that lists
+- [x] **5.1** — `features/` scanner. A pure function over repository state that lists
       feature folders on the default branch. Reads through `ManagerGitClient` (M02) so it
       inherits the config neutralisation for free.
+      **Shipped:** `@adl/core/detect`'s `scanFeatureFolders` (pure) +
+      `packages/manager/src/detect/scanner.ts`'s `listFeatureFolders` (the I/O half, through
+      a new `ManagerGitClient.listFiles`). The *undeveloped* predicate (5.2) is not built —
+      this step only proves detection, not enqueueing.
 - [ ] **5.2** — The *undeveloped* predicate. Cross-reference scanned folders against the
       `features` table and open ADL change requests. Pure and exhaustively testable —
       this is the heart of DETECT-01, and "evaluate state" rather than "remember events"
@@ -93,13 +97,20 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 ### B · Forge — the output side (AC1, AC4)
 
-- [ ] **5.8** — The `ForgeAdapter` port. **Forge-neutral vocabulary throughout —
+- [x] **5.8** — The `ForgeAdapter` port. **Forge-neutral vocabulary throughout —
       `ChangeRequest`, never `PullRequest`.** Design to Gitea's floor: top-level comments
       only, no line-level diff comments, no review updates, no PR-code-comment webhook.
       Operations needed: create branch, open draft CR, promote to ready, upsert a comment,
       list open CRs, read a file, read a diff.
-- [ ] **5.9** — GitHub adapter (`octokit` + `@octokit/auth-app`) implementing 5.8. A
+      **Shipped:** `packages/core/src/forge/forge.ts`. **Deviation, explained in the
+      docblock:** no `createBranch` method — that's `ManagerGitClient.push` (an ordinary
+      authenticated git push), not a forge REST call; no forge in scope has one either.
+- [x] **5.9** — GitHub adapter (`octokit` + `@octokit/auth-app`) implementing 5.8. A
       GitHub App, not a PAT — scoped, revocable, per-installation, higher rate limits.
+      **Shipped:** `packages/forge-github` — every 5.8 operation, `promoteToReady` via a
+      GraphQL `markPullRequestReadyForReview` mutation (REST has no "unset draft"). Tested
+      against a hand-rolled `node:http` mock GitHub server; the one live-credentialed run
+      is `DEBT.md` item 1.7.
 - [ ] **5.10** — Draft CR at round 1, promoted to ready only when every gate is green
       (FORGE-05).
 - [ ] **5.11** — Sticky per-role comments (FORGE-06). One comment per role, edited in
@@ -168,3 +179,6 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | A scheduled-sweep pattern to copy | `packages/manager/src/scheduler/gc-schedule.ts` |
 | Cost recording | `packages/db/src/repository/usage.ts` + the `usage` IPC message |
 | ADL's own git chokepoint | `packages/workspace/src/git/adl-git.ts` |
+| The `features/` scanner | `@adl/core/detect` (pure) + `packages/manager/src/detect/scanner.ts` (I/O) — done, 5.1 |
+| Branch push | `ManagerGitClient.push` (`packages/workspace/src/git/manager-git.ts`) — done, no credential-URL construction included |
+| The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. `upsertComment`'s sticky-marker find-or-create is already there for 5.11 to call. |

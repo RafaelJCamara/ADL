@@ -155,6 +155,32 @@ those directories group-writable with no beneficiary.
 `privilegeModeMismatch(creation, runtime)` **is shipped and tested — nothing calls it.**
 Two call sites need two lines. Belongs with whichever plan next touches `run()`'s signature.
 
+### D-5-R-1 — `ManagerGitClient.push`'s remote URL is an argv element, visible via `ps` 🟠
+
+`push(remoteUrl, refspec)` (`packages/workspace/src/git/manager-git.ts`, M05) has no
+credential parameter by design — `credential.helper` is neutralised to empty on every
+invocation, so the one git-native mechanism left for an authenticated HTTPS push is a
+`remoteUrl` carrying its own `https://<user>:<token>@host/...`. That URL is a plain argv
+element passed to the real `git` child, which means the short-lived forge token is visible
+to another process on the same host reading `/proc/<pid>/cmdline` (or `ps`) for the
+(typically sub-second) duration of the push.
+
+- **Not yet exploitable in shipped code** — nothing today constructs a real credentialed
+  URL; the M05 tracer's own push is against an unauthenticated local bare remote, and no
+  production call site exists yet.
+- **Becomes live** the moment a real GitHub App installation token is formatted into a
+  `push()` call — expected around 5.10 (draft-CR-at-round-1 wiring) or whenever the
+  round-loop runner first performs a real publish.
+- **Candidate mitigations, not evaluated yet:** a custom `credential.helper` appended via
+  `-c` *after* `NEUTRALISE_ARGS` reading the token from a caller-supplied env var outside
+  the `GIT_*` execution-vector ban (`packages/workspace/src/exec/env.ts`'s
+  `GIT_EXECUTION_ENV_PREFIXES` blocks `GIT_CONFIG_*`/`GIT_ASKPASS` outright, so this needs a
+  non-`GIT_`-prefixed variable name and a helper script written into ADL's own git home);
+  or simply accepting the argv-visibility window as bounded by the token's own short TTL
+  (GitHub installation tokens expire in ~1 hour) and the same-host trust boundary the
+  manager already operates inside.
+- **Owner:** whichever M05 step first constructs a real, credentialed push URL.
+
 ---
 
 ## 3 · Open code-review findings
@@ -190,6 +216,7 @@ classification.
 | **`adl status` prints a raw stack trace** | When `.adl/daemon.json` has *never* been created. ("Daemon down, config exists" is handled correctly.) Found during M03 UAT, ruled out of scope | 🟡 |
 | **Two `pnpm format` failures were logged to a file that doesn't exist** | M03 plan 10 recorded them in a phase-03 `deferred-items.md` that was never written. Re-check `packages/cli/src/render/status-table.ts` and `packages/manager/src/scheduler/dispatcher.ts` | 🟡 |
 | **`ADL_TEST_STAGE_DELAY_MS` never reaches a forked child** | No `env` override is passed through `createSupervisor.spawn`, which invalidates timing-based worker doubles | 🟡 |
+| **`@adl/forge-github`'s `upsertComment` does not paginate `issues.listComments`** | Finds its own sticky comment by scanning one page (30, GitHub's default) of comments. A change request with more than 30 comments — plausible once humans and other bots are commenting alongside ADL's own roles — could push ADL's prior marker off the first page, producing a duplicate comment instead of an edit-in-place. Not yet reachable: nothing calls `upsertComment` in production. **Owner: M05 step 5.11**, which wires this in for real | 🟡 |
 
 ---
 

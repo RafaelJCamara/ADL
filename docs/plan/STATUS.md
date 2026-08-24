@@ -23,26 +23,37 @@ weekends, no deadline.
 
 ## Where we are
 
-**4 of 18 milestones delivered. Milestone 5 is next and has not been started.**
+**4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
+three of its steps (5.1, 5.8, 5.9) are done; groups A–D still have 5.2–5.7, 5.10–5.12, and
+all of C and D ahead.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ NEXT — nothing written yet
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.8/5.9 done
 M06–M18 ............................. not started
 ```
 
 **What actually works today:** a real Claude Code agent, driven through a bounded workspace,
 makes a real commit in a per-feature git worktree, streamed live to `adl logs -f`, with its
-cost recorded — all supervised by a crash-surviving manager you can pause and kill. Every
-piece of that is tested and merged to `main`.
+cost recorded — all supervised by a crash-surviving manager you can pause and kill. On top
+of that, as of this session: a `features/` folder committed to a repo is *detected* by
+evaluating real repository state (`@adl/core/detect` + `ManagerGitClient.listFiles`); a
+branch can be *pushed* to a remote (`ManagerGitClient.push`); and a real `ForgeAdapter`
+(`@adl/forge-github`, a real GitHub App auth flow via `octokit` + `@octokit/auth-app`) opens
+a real draft change request, proven end to end in
+`packages/manager/test/tracer/detect-to-draft-cr-end-to-end.test.ts` against a local mock
+GitHub server (live GitHub credentials are deliberately deferred — see `DEBT.md` § 1 item 1.7).
 
-**What does not exist yet:** anything that reaches a forge. No GitHub adapter, no feature
-detection, no round loop, no gates. `dev-run` fires a single synthetic `develop` stage by
-hand. **That gap is exactly what M05 closes**, and closing it is the moment ADL first
-becomes a product rather than machinery.
+**What does not exist yet:** the *undeveloped* predicate and enqueueing (5.2), the trusted-
+path filter (5.3), a production `resolveAdlYml` and the polling loop (5.4–5.7), promote-to-
+ready/sticky-comments/never-merge wiring (5.10–5.12), and the whole round loop — gates,
+send-back, protected-path enforcement (group C) — plus per-round accounting (group D). None
+of the new pieces above are wired into `daemon.ts`'s automatic dispatch yet; they were
+proven to compose by calling each directly, matching the milestone's own tracer-then-widen
+discipline. `dev-run` still fires a single synthetic `develop` stage by hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -52,23 +63,25 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 
 ## What to do next
 
-Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md). It has 19
-small steps in four groups, and the acceptance criteria that define done.
+Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
+with group A: **5.2**, the *undeveloped* predicate — cross-reference `listFeatureFolders`'s
+output (5.1, done) against the `features` table and open ADL change requests
+(`listOpenChangeRequests`, 5.8/5.9, done) to decide what's actually new. Pure and
+exhaustively testable, per the milestone file's own description.
 
-**Suggested opening, matching this repo's own convention of starting a milestone with a
-supply-chain gate and then a tracer:**
+After 5.2: **5.3** (trusted-path filter, SPEC-06), **5.4** (production `resolveAdlYml` —
+also unblocks **5.7**, `adl daemon start`), **5.5** (the polling loop, reusing
+`gc-schedule.ts`'s shape), **5.6** (exclusive claim + restart reconciliation, DETECT-05).
+Then group B's remainder — **5.10** (draft-at-round-1/promote-when-green wiring),
+**5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
+exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
+**5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge method;
+5.12 is the assertion that reads its own shape and fails if one is ever added). Group C (the
+round loop itself) needs 5.4's `resolveAdlYml` and reuses `resolvePipeline`
+(`@adl/core/config`, still no caller). Group D (accounting) can run in parallel with C once a
+round exists to record against.
 
-1. **Supply-chain gate.** M05 needs `octokit` and `@octokit/auth-app` — the first new
-   runtime dependencies since M04. Every prior milestone opened by confirming
-   repository/org and version against the public registry *before* installing, with a human
-   in the loop. Do that first, and record the exact pins.
-2. **Then a tracer, not a feature.** One thin, production-quality path all the way through:
-   a committed feature folder is detected → a draft change request appears on a real
-   GitHub repo. That touches detection, the forge port and the adapter at once, and every
-   earlier milestone proved this ordering pays.
-3. **Then widen** through groups A → B → C → D.
-
-Steps 5.1, 5.4 and 5.7 also close a gap M03 shipped deliberately: **`adl daemon start`
+Steps 5.4 and 5.7 close a gap M03 shipped deliberately: **`adl daemon start`
 currently prints an honest gap message and exits 1**, because it needs a production
 `resolveAdlYml` that only detection can provide.
 
@@ -131,7 +144,8 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 | `packages/db` | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`. | core (dev) |
 | `packages/workspace` | **The exec boundary.** Worktree lifecycle, zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
-| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** | core, db, workspace, agent-claude-code |
+| `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Not yet wired into the manager's automatic dispatch; proven by the M05 tracer calling it directly. | core |
+| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** | core, db, workspace, agent-claude-code (forge-github: test-only so far) |
 | `packages/cli` | The `adl` binary. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`. | nothing, by design |
 
 No `apps/` directory — the dashboard is M17 and unbuilt.
