@@ -128,9 +128,31 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `AdlYml` and returns it for every feature regardless of `repo_id` — matching
       `dispatchOnce`'s and `gc-schedule.ts`'s own existing single-repo assumption, not a new
       one. This unblocks 5.7.
-- [ ] **5.5** — Polling loop (DETECT-03). A croner job that re-runs detection on an
+- [x] **5.5** — Polling loop (DETECT-03). A croner job that re-runs detection on an
       interval and enqueues what's new. Reuse the `gc-schedule.ts` shape — `protect: true`,
       one pass per tick, each step in its own try/catch.
+      **Shipped:** `packages/manager/src/scheduler/poll-schedule.ts`'s `runPollOnce` +
+      `startPollSchedule` — the first production caller of 5.1's `listFeatureFolders`, 5.2's
+      `undevelopedFeatures`, and 5.3's `evaluateFeatureTrust` together: scan → undeveloped
+      filter → trust filter → enqueue (a `queued` `features` row, the same shape
+      `POST /dev-run/:featureId` already inserts, `spec_hash` computed the same way). Each
+      pipeline step runs through a `gc-schedule.ts`-style `step()` wrapper (catch, log,
+      fall back to empty rather than crash the tick); each trusted folder is enqueued in
+      its own try/catch so one folder's spec-load failure doesn't stop the rest.
+      `daemonConfig.poll.interval_ms` (new, default 60s) is `startGcSchedule`'s exact
+      croner shape at a much shorter cadence.
+      **Deviation:** the forge dependency (`ForgeAdapter` + `ForgeRepoRef`) is injected via
+      `StartDaemonOptions.forge`, matching the backend preflight gate's own "absent means
+      skip" precedent — no live GitHub App credentials exist yet (`DEBT.md` item 1.7), so
+      the poll schedule does not start unless a caller supplies one. **Scope note (matching
+      5.4's):** v1 watches exactly one physical repository, so this reads
+      `reposRepository(db).list()[0]`, the same single-configured-repository assumption
+      `dispatchOnce` and `resolveProductionAdlYml` already make. Proven both in isolation
+      (`test/scheduler/poll-schedule.test.ts`, against a real committed git repo + the mock
+      GitHub server) and wired for real through `startDaemon`
+      (`test/boot/poll-schedule-wiring.test.ts`: a feature folder committed to a real repo
+      appears via `GET /features` with no `adl dev-run` call, and does not when
+      `options.forge` is absent).
 - [ ] **5.6** — Exclusive claim + restart reconciliation (DETECT-05). A feature is claimed
       exactly once across re-detection *and* a daemon restart mid-flight, reconciled
       against open ADL change requests. Build on the existing lease CAS in

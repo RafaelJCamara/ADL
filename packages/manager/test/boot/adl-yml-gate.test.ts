@@ -74,6 +74,7 @@ function daemonConfigFixture(
     concurrency: { global: 1 },
     api: { host: '127.0.0.1', port: 0, token: API_TOKEN },
     gc: { interval_ms: 1_800_000 },
+    poll: { interval_ms: 60_000 },
     repos: [],
     ...overrides,
   };

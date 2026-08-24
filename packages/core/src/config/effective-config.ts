@@ -202,6 +202,29 @@ export const GcConfigSchema = z
 export type GcConfig = z.infer<typeof GcConfigSchema>;
 
 /**
+ * The polling detection loop's cadence (DETECT-03, M05 step 5.5) — the
+ * fallback path for when M10's webhooks are unreachable. Deliberately a much
+ * shorter interval than {@link GcConfigSchema}'s: a feature folder a human
+ * just committed is the thing this cadence exists to notice quickly, where
+ * the GC backstop can tolerate minutes between sweeps.
+ */
+export const PollConfigSchema = z
+  .strictObject({
+    interval_ms: z
+      .int()
+      .positive()
+      .default(60_000)
+      .describe(
+        'How often the polling detection loop re-scans watched repositories for new ' +
+          'feature folders, in milliseconds. Default: 60000 (1 minute) — a fallback for ' +
+          'when webhooks (M10) are unreachable, not the only detection path.',
+      ),
+  })
+  .meta({ id: 'PollConfig' });
+
+export type PollConfig = z.infer<typeof PollConfigSchema>;
+
+/**
  * One watched repository, declared in the daemon config and reconciled into
  * the `repos` table at startup (D-35). Fields correspond to `ReposTable`'s
  * columns, minus `created_at`/`updated_at` — those are the table's own
@@ -292,6 +315,7 @@ export const DaemonConfigSchema = z
     concurrency: ConcurrencySchema.default(ConcurrencySchema.parse({})),
     api: ApiConfigSchema.default(ApiConfigSchema.parse({})),
     gc: GcConfigSchema.default(GcConfigSchema.parse({})),
+    poll: PollConfigSchema.default(PollConfigSchema.parse({})),
     repos: z
       .array(WatchedRepoSchema)
       .default([])

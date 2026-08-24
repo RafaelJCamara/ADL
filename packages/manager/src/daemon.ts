@@ -19,6 +19,7 @@ import {
 import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
 import { hostGitWorkspace } from '@adl/workspace';
+import type { ForgeAdapter, ForgeRepoRef } from '@adl/core/forge';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
 import { closeAttempt } from './bookkeeping/attempt.js';
@@ -51,6 +52,7 @@ import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import { startGcSchedule } from './scheduler/gc-schedule.js';
+import { startPollSchedule } from './scheduler/poll-schedule.js';
 import {
   createFastPathRecovery,
   reapOne,
@@ -183,6 +185,23 @@ export interface StartDaemonOptions {
    * entry point (not yet built) to wire unconditionally.
    */
   readonly agentBackendVersionCheck?: () => Promise<BackendVersionCheckResult>;
+  /**
+   * The forge dependency the polling detection loop (05-05, DETECT-03) uses
+   * to call `ForgeAdapter.listOpenChangeRequests` (5.2's `undevelopedFeatures`)
+   * and `ForgeAdapter.authorPermission` (5.3's `evaluateFeatureTrust`) —
+   * both read-only calls; the credentialed push a real draft CR needs is a
+   * later step's concern (`docs/plan/DEBT.md` D-5-R-1).
+   *
+   * **Absent means the poll schedule does not start at all** — the same
+   * "absent means skip" shape {@link StartDaemonOptions.agentBackendVersionCheck}
+   * already uses. No live GitHub App credentials exist in this project yet
+   * (`docs/plan/DEBT.md` item 1.7); a caller with real (or, in a test,
+   * mock-server-backed) forge credentials supplies this explicitly.
+   */
+  readonly forge?: {
+    readonly adapter: ForgeAdapter;
+    readonly repo: ForgeRepoRef;
+  };
 }
 
 export interface DaemonHandle {
@@ -467,6 +486,25 @@ export async function startDaemon(
     intervalMs: options.daemonConfig.gc.interval_ms,
   });
 
+  // 05-05 (DETECT-03): the polling detection loop, on a schedule of its own
+  // — a much shorter cadence than the GC sweep's, sharing only the
+  // scheduling mechanism (croner), never the interval. Skipped entirely when
+  // `options.forge` is absent — see that option's own docblock for why that
+  // is the safe default rather than requiring live GitHub App credentials
+  // every `startDaemon()` call site would otherwise need.
+  const pollSchedule =
+    options.forge !== undefined
+      ? startPollSchedule({
+          mainRepo,
+          scratchRoot,
+          db,
+          logger,
+          forge: options.forge.adapter,
+          forgeRepo: options.forge.repo,
+          intervalMs: options.daemonConfig.poll.interval_ms,
+        })
+      : undefined;
+
   async function listFeatureViews(): Promise<readonly FeatureView[]> {
     // One clock read for the whole request (D-24) — every row's `ageMs` in
     // this response is computed against the exact same instant, so a
@@ -570,6 +608,7 @@ export async function startDaemon(
 
   async function stop(): Promise<void> {
     gcSchedule.stop();
+    pollSchedule?.stop();
     // D-37: stop dispatch, then every worker with a real grace window
     // (soft_stop over IPC, SIGKILL after worker_stop_grace_ms — Pattern 2,
     // never an OS SIGTERM), then close the server, then flush.

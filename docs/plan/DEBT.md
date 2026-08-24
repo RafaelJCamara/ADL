@@ -234,6 +234,11 @@ a cleanup.
   asymmetry is deliberate and documented.
 - **The backend preflight gate is opt-in.** Defaulting it on would make 200+ green tests
   depend on an exactly-pinned `claude` on PATH.
+- **The poll schedule (5.5) requires an explicit `ForgeAdapter` (`StartDaemonOptions.forge`)
+  and does not start without one**, the same "absent means skip" shape as the backend
+  preflight gate above. Defaulting it on would need real (or mock-server-backed) GitHub App
+  credentials wired into every `startDaemon()` call site, and no live GitHub App exists yet
+  (item 1.7 above). → whichever step first gives `adl daemon start` a real credential source.
 - **The context-file cascade is not wired into `mergeConfig`'s output.**
   `effectiveConfig.context.files` stays exactly what `adl.yml` declared.
 - **No capability-reconciliation error event.** Implemented per its plan's literal wording,

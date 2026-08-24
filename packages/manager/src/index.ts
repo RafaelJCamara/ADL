@@ -105,6 +105,21 @@ export {
   type GcScheduleHandle,
 } from './scheduler/gc-schedule.js';
 
+// The polling detection loop (DETECT-03, M05 step 5.5) — the first
+// production caller of 5.2's `undevelopedFeatures` and 5.3's
+// `evaluateFeatureTrust`. `runPollOnce` is published so a test can drive one
+// pass directly against a temp database, the same way `runGcOnce` already is.
+export {
+  runPollOnce,
+  startPollSchedule,
+  type PollFailure,
+  type PollRejection,
+  type PollRunDeps,
+  type PollRunSummary,
+  type PollScheduleDeps,
+  type PollScheduleHandle,
+} from './scheduler/poll-schedule.js';
+
 // `POST /control/gc`'s route registrar (03-08 Task 3) — published so a test
 // can mount it directly, matching every other route module's own export.
 export { registerGcRoute, type GcRouteDeps } from './api/routes/gc.js';

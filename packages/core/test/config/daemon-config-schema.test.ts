@@ -21,6 +21,7 @@ describe('DaemonConfigSchema — Phase 3 fields, defaults', () => {
     expect(result.api.port).toBe(4173);
     expect(result.api.token).toBeUndefined();
     expect(result.gc.interval_ms).toBe(30 * 60 * 1000);
+    expect(result.poll.interval_ms).toBe(60_000);
     expect(result.repos).toEqual([]);
   });
 

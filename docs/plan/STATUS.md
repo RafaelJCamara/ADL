@@ -24,8 +24,8 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
-six of its steps (5.1, 5.2, 5.3, 5.4, 5.8, 5.9) are done; groups A–D still have 5.5–5.7,
-5.10–5.12, and all of C and D ahead.**
+seven of its steps (5.1, 5.2, 5.3, 5.4, 5.5, 5.8, 5.9) are done; groups A–D still have
+5.6–5.7, 5.10–5.12, and all of C and D ahead.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -64,17 +64,23 @@ production `resolveAdlYml` (`packages/manager/src/config/resolve-adl-yml.ts`'s
 (`AdlYmlUnavailableError`) rather than dispatch a single feature when the file is missing or
 invalid — the same refuse-before-the-API-binds shape the schema and backend-preflight gates
 already use. It is the default now, used whenever a caller doesn't inject its own
-`resolveAdlYml` (every pre-5.4 test still does, unchanged).
+`resolveAdlYml` (every pre-5.4 test still does, unchanged). And the polling loop
+(`packages/manager/src/scheduler/poll-schedule.ts`'s `runPollOnce` + `startPollSchedule`)
+is now the first production caller of 5.1's scanner, 5.2's *undeveloped* predicate, and
+5.3's trust filter, composed together: on a croner cadence (`daemonConfig.poll.interval_ms`,
+default 60s, `startGcSchedule`'s exact shape), it scans the watched repository's default
+branch, filters to undeveloped and then trusted folders, and enqueues each as a `queued`
+`features` row — proven both in isolation and wired for real through `startDaemon`, where a
+committed feature folder shows up via `GET /features` with no `adl dev-run` call. It is
+wired in only when a caller supplies `StartDaemonOptions.forge` (a `ForgeAdapter` + repo
+ref) — absent, matching the backend preflight gate's own precedent, it does not start,
+since no live GitHub App credentials exist yet (`DEBT.md` item 1.7).
 
-**What does not exist yet:** enqueueing anything the *undeveloped* + trust predicates admit
-(still not called from anywhere but their own tests), the polling loop and restart
-reconciliation (5.5–5.6), an `adl daemon start` that actually boots the manager (5.7),
+**What does not exist yet:** exclusive-claim + restart reconciliation for the polling loop
+(5.6), an `adl daemon start` that actually boots the manager (5.7),
 promote-to-ready/sticky-comments/never-merge wiring (5.10–5.12), and the whole round loop —
 gates, send-back, protected-path enforcement (group C) — plus per-round accounting (group D).
-None of the new detection pieces above are wired into `daemon.ts`'s automatic dispatch yet;
-they were proven to compose by calling each directly, matching the milestone's own
-tracer-then-widen discipline. `dev-run` still fires a single synthetic `develop` stage by
-hand.
+`dev-run` still fires a single synthetic `develop` stage by hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -85,15 +91,17 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group A: **5.5**, the polling loop (DETECT-03) — a croner job that re-runs detection on
-an interval and enqueues what's new, reusing `gc-schedule.ts`'s shape (`protect: true`, one
-pass per tick, each step in its own try/catch). This is also the first production caller of
-5.2's `undevelopedFeatures` and 5.3's `evaluateFeatureTrust` — 5.1–5.4 all exist and are
-tested in isolation, but nothing yet calls them from `daemon.ts`'s automatic dispatch.
+with group A: **5.6**, exclusive claim + restart reconciliation (DETECT-05) — a feature is
+claimed exactly once across re-detection *and* a daemon restart mid-flight, reconciled
+against open ADL change requests. Build on the existing lease CAS in
+`packages/db/src/repository/features.ts` — don't invent a second claim mechanism — and reuse
+5.2's *undeveloped* predicate for the lost-row case, the same one 5.5's polling loop
+(`packages/manager/src/scheduler/poll-schedule.ts`) already calls in production.
 
-After 5.5: **5.6** (exclusive claim + restart reconciliation, DETECT-05 — reuses 5.2's
-predicate for the lost-row case), then **5.7** (make `adl daemon start` actually boot the
-manager in-process — 5.4 already unblocked this). Then group B's remainder — **5.10**
+After 5.6: **5.7** (make `adl daemon start` actually boot the manager in-process — 5.4
+already unblocked this, and 5.5 shows the shape of a gated-by-credentials optional
+dependency `adl daemon start`'s own wiring will need to decide about for `StartDaemonOptions.forge`).
+Then group B's remainder — **5.10**
 (draft-at-round-1/promote-when-green wiring),
 **5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
 exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
@@ -166,7 +174,7 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 | `packages/db` | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`. | core (dev) |
 | `packages/workspace` | **The exec boundary.** Worktree lifecycle, zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
-| `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Not yet wired into the manager's automatic dispatch; proven by the M05 tracer calling it directly. | core |
+| `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`); the credentialed publish side (push, open/promote a change request) is still 5.10's. | core |
 | `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** | core, db, workspace, agent-claude-code (forge-github: test-only so far) |
 | `packages/cli` | The `adl` binary. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`. | nothing, by design |
 
