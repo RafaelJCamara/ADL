@@ -209,6 +209,17 @@ soft_stop-then-`SIGKILL` mechanism above, closes the HTTP server, and exits.
 `adl daemon start` reads `.adl/daemon.json`, boots the sequence described
 above, and serves the API in the foreground.
 
+**The installed `adl` binary is this package, not `@adl/cli`** (M05 step 5.7).
+`@adl/cli` structurally cannot resolve `@adl/manager` (pnpm strict `node_modules`)
+and cannot spawn a subprocess either (`adl/no-direct-spawn`), so it can never
+boot the daemon on its own — `packages/manager/src/bin.ts` is the real,
+published `adl` executable, and it depends on `@adl/cli` as an ordinary
+library (never the reverse). Every verb except `daemon start` is `@adl/cli`'s
+own unmodified, HTTP-only command; `daemon start` alone gets this package's
+`createProductionDaemonStartRunner` (`src/boot/cli-entry.ts`) injected into
+it. The backend preflight gate above is always wired from this entry point —
+a real `claude --version` probe, never skipped.
+
 **A global pause survives a restart; a repo-scoped pause does not.**
 `adl pause` (scope `all`) is written to the daemon's database as a `meta`
 row before the in-memory brake is flipped — a `200` from `POST

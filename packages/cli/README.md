@@ -1,9 +1,17 @@
 # `@adl/cli` — the `adl` command
 
-`adl` is the one binary that talks to a running manager daemon. It never
-touches the database and never imports `@adl/manager` — every verb below
-reaches the daemon over HTTP only, the same surface a future dashboard would
-use.
+`@adl/cli` builds every `adl` verb below — the command that talks to a running
+manager daemon. It never touches the database and never imports
+`@adl/manager` — every verb reaches the daemon over HTTP only, the same
+surface a future dashboard would use.
+
+**This package is a library, not the installed `adl` binary itself** (M05
+step 5.7). `@adl/cli` structurally cannot resolve `@adl/manager`, so it
+cannot boot the daemon on its own — the real, published `adl` executable is
+`@adl/manager`'s `bin.ts`, which depends on this package and reuses its
+`buildProgram` unchanged for six of the seven verbs. `daemon start` is the
+one exception: `@adl/manager` injects its own real boot sequence into it
+(`BuildProgramDeps.startDaemon`) — see `packages/manager/README.md`.
 
 ---
 

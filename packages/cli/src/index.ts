@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import { ScopeUsageError } from './confirm.js';
-import { daemonStartCommand, daemonStopCommand } from './commands/daemon.js';
+import {
+  daemonStartCommand,
+  daemonStopCommand,
+  type DaemonStartDeps,
+  type DaemonStartRunner,
+} from './commands/daemon.js';
 import { devRunCommand } from './commands/dev-run.js';
 import { gcCommand } from './commands/gc.js';
 import { killCommand } from './commands/kill.js';
@@ -18,11 +23,21 @@ import {
   type DaemonClient,
 } from './http-client.js';
 
+// Re-exported so `@adl/manager`'s bin (5.7) can type its own real
+// `DaemonStartRunner` against the exact same interface `buildProgram`
+// injects into, rather than a second, hand-restated shape.
+export type { DaemonStartDeps, DaemonStartRunner };
+
 /**
  * `@adl/cli` — the full `adl` verb set over HTTP (D-18, D-20, D-21, D-29):
  * `status`, `pause`, `resume`, `kill`, `gc`, `daemon`. Structurally cannot
  * resolve `@adl/db` or `@adl/manager` — every verb reaches the daemon over
- * HTTP only.
+ * HTTP only. This package no longer ships the installed `adl` binary itself
+ * (5.7): `@adl/manager` depends on this package as a library and owns the
+ * real executable (`packages/manager/src/bin.ts`), injecting its own real
+ * `startDaemon` runner into {@link buildProgram} — the one place `daemon
+ * start` needs anything past HTTP, and the one dependency this package still
+ * never carries.
  *
  * The daemon config file's shape and loader are `@adl/manager`'s
  * (`packages/manager/src/config/daemon-config.ts`, which `@adl/cli` cannot
@@ -79,6 +94,13 @@ export interface BuildProgramDeps {
    * already is for the config file.
    */
   readonly createClient?: (config: CliConfig) => DaemonClient;
+  /**
+   * `daemon start`'s behaviour (D-21, 5.7). Defaults to `daemonStartCommand`'s
+   * honest gap — `@adl/cli` alone cannot boot the manager. The real `adl`
+   * binary (`@adl/manager`'s `bin.ts`) injects its own real runner
+   * (`createProductionDaemonStartRunner`) here; a test injects a spy.
+   */
+  readonly startDaemon?: DaemonStartRunner;
 }
 
 /**
@@ -276,11 +298,10 @@ export function buildProgram(deps: BuildProgramDeps): Command {
   daemonProgram
     .command('start')
     .description('Start the manager daemon in the foreground')
-    .action(() => {
-      const config = resolveConfig();
-      daemonStartCommand({
-        host: config.host,
-        port: config.port,
+    .action(async () => {
+      const configPath = program.opts<{ config?: string }>().config;
+      await (deps.startDaemon ?? daemonStartCommand)({
+        configPath,
         stderr: deps.stderr,
       });
     });

@@ -374,8 +374,8 @@ dashboard is milestone 17.
 | `@adl/db` | Kysely schema, hand-written SQL migrations, migration runner, repositories, model pricing. The only package touching `better-sqlite3`. | core (dev only) |
 | `@adl/workspace` | **The exec boundary.** Worktree lifecycle, zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. The only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `@adl/agent-claude-code` | Claude Code headless adapter. Receives a `Workspace`, never constructs one. | core |
-| `@adl/manager` | The control-plane daemon: lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **The only package that writes to the DB.** | core, db, workspace, agent-claude-code |
-| `@adl/cli` | The `adl` binary. Talks to the daemon **over HTTP only** — it structurally cannot resolve `@adl/db` or `@adl/manager`. | nothing, by design |
+| `@adl/manager` | The control-plane daemon: lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **The only package that writes to the DB.** Ships the real, installed `adl` binary (M05 step 5.7 — `src/bin.ts`); depends on `@adl/cli` as a library, never the reverse. | core, db, workspace, agent-claude-code, cli |
+| `@adl/cli` | The `adl` verb set — `status`/`pause`/`resume`/`kill`/`gc`/`dev-run`/`logs`/`daemon`. Talks to the daemon **over HTTP only** — it structurally cannot resolve `@adl/db` or `@adl/manager`. A library consumed by `@adl/manager`'s binary, not the installed executable itself (5.7): every verb is this package's own `buildProgram`, except `daemon start`, which `@adl/manager` fills in via the `BuildProgramDeps.startDaemon` injection seam. | nothing, by design |
 
 **The shape:** a manager (control plane) owns everything singular — database, queue, config,
 credentials, accounting, forge *reads*. Workers are separate OS processes holding one lease

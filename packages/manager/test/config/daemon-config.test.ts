@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DaemonConfigSchema } from '@adl/core/config';
@@ -162,6 +170,37 @@ describe('ensureDaemonConfig — zero-config first run', () => {
 
     const dirStat = await stat(join(dir, '.adl'));
     expect(dirStat.mode & 0o777).toBe(0o700);
+  });
+
+  it('a provisioning write failure (e.g. an unwritable directory) is the invalid variant, never a thrown error', async () => {
+    // 5.7's real production caller (`createProductionDaemonStartRunner`)
+    // has no try/catch around this call — it relies entirely on this
+    // function's own contract (its return type carries no thrown-error
+    // variant) to keep `DaemonStartRunner`'s "never throws" promise. A code
+    // review of that step caught this: `mkdir`/`writeFile`/`chmod` above
+    // were unguarded, so a real filesystem failure on a fresh install
+    // (read-only mount, full disk, a permission error) would have thrown
+    // raw past every layer up to commander's own action handler.
+    const gate = posixOnly(
+      'chmod-based write-permission removal has no reliable Windows equivalent',
+      '05-07',
+    );
+    if (gate.kind === 'skip') return;
+
+    const readOnlyParent = join(dir, 'read-only');
+    await mkdir(readOnlyParent);
+    await chmod(readOnlyParent, 0o500); // read+execute, no write — mkdir(.adl) inside it fails
+
+    const path = join(readOnlyParent, '.adl', 'daemon.json');
+    const result = await ensureDaemonConfig(path);
+
+    expect(result.kind).toBe('invalid');
+    if (result.kind === 'invalid') {
+      expect(result.path).toBe(path);
+      expect(result.message).toContain('could not provision');
+    }
+
+    await chmod(readOnlyParent, 0o700); // restore, so afterEach's rm can clean up
   });
 });
 

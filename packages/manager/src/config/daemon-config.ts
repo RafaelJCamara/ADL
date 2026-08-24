@@ -175,6 +175,16 @@ export function mintApiToken(): string {
  * operator never has to pre-supply a token. If `path` already exists, this
  * is a pass-through to {@link loadDaemonConfig}: an existing file's token is
  * **never** regenerated, and every other configured value is preserved.
+ *
+ * Never throws, matching {@link loadDaemonConfig}'s own contract and this
+ * function's return type (no thrown-error variant exists in it): the
+ * provisioning write below (`mkdir`/`writeFile`/`chmod`) is real filesystem
+ * I/O that can fail for reasons outside this module's control — a read-only
+ * mount, a full disk, a permission error on a container's first real run —
+ * and `packages/manager/src/boot/cli-entry.ts`'s `createProductionDaemonStartRunner`
+ * is the real caller that turns an `invalid` result into a clean `stderr`
+ * message rather than an uncaught exception; a raw throw here would defeat
+ * that entirely.
  */
 export async function ensureDaemonConfig(
   path: string,
@@ -183,15 +193,25 @@ export async function ensureDaemonConfig(
   if (first.kind !== 'not-found') return first;
 
   const seed = { api: { token: mintApiToken() } };
-  await mkdir(dirname(path), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
-  await writeFile(path, `${JSON.stringify(seed, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: OWNER_ONLY_FILE_MODE,
-  });
-  // `mode` above only applies at file-creation time and is masked by the
-  // process umask — an explicit chmod makes the permission the actual
-  // result rather than a best-effort request (T-3-04).
-  await chmod(path, OWNER_ONLY_FILE_MODE);
+  try {
+    await mkdir(dirname(path), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+    await writeFile(path, `${JSON.stringify(seed, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: OWNER_ONLY_FILE_MODE,
+    });
+    // `mode` above only applies at file-creation time and is masked by the
+    // process umask — an explicit chmod makes the permission the actual
+    // result rather than a best-effort request (T-3-04).
+    await chmod(path, OWNER_ONLY_FILE_MODE);
+  } catch (error) {
+    return {
+      kind: 'invalid',
+      path,
+      message: `could not provision a fresh daemon config: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
 
   const second = await loadDaemonConfig(path);
   if (second.kind === 'loaded') return second;

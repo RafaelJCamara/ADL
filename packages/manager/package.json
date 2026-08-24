@@ -2,10 +2,13 @@
   "name": "@adl/manager",
   "version": "0.0.0",
   "type": "module",
-  "description": "The manager daemon — lease queue, worker supervision, HTTP API. Depends on @adl/core, @adl/db, @adl/workspace; the only package that writes to the database.",
+  "description": "The manager daemon — lease queue, worker supervision, HTTP API. Depends on @adl/core, @adl/db, @adl/workspace, @adl/cli; the only package that writes to the database. Ships the real, installed `adl` binary (5.7) — @adl/cli is a library dependency, never the reverse.",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "adl": "./dist/bin.js"
+  },
   "files": [
     "dist",
     "src/prompt/templates",
@@ -19,13 +22,14 @@
   },
   "scripts": {
     "build": "tsc -b && node -e \"require('fs').cpSync('src/prompt/templates','dist/prompt/templates',{recursive:true})\"",
-    "pretypecheck": "tsc -b ../core ../db ../workspace ../agent-claude-code ../forge-github",
+    "pretypecheck": "tsc -b ../core ../db ../workspace ../agent-claude-code ../forge-github ../cli",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "pretest": "tsc -b ../core ../db ../workspace ../agent-claude-code ../forge-github",
+    "pretest": "tsc -b ../core ../db ../workspace ../agent-claude-code ../forge-github ../cli",
     "test": "vitest run"
   },
   "dependencies": {
     "@adl/agent-claude-code": "workspace:*",
+    "@adl/cli": "workspace:*",
     "@adl/core": "workspace:*",
     "@adl/db": "workspace:*",
     "@adl/workspace": "workspace:*",

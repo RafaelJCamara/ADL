@@ -23,16 +23,16 @@ weekends, no deadline.
 
 ## Where we are
 
-**4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
-eight of its steps (5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.8, 5.9) are done; groups A–D still have
-5.7, 5.10–5.12, and all of C and D ahead.**
+**4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
+group A (5.1–5.7), and 5.8/5.9 from group B are done; group B still has 5.10–5.12 ahead, and
+groups C and D haven't started.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.3/5.4/5.5/5.6/5.8/5.9 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1–5.9 done
 M06–M18 ............................. not started
 ```
 
@@ -95,11 +95,36 @@ manager-package-local convention layered on top, and every pre-5.6 branch (a bar
 `undevelopedFeatures` was dropping a non-composed branch instead of falling back to it,
 which would have made a real open change request invisible to reconciliation; centralising
 the fallback in `ulidOf`/`folderNameOf` is the fix.)
+And `adl daemon start` now really boots the manager in-process (5.7), closing the last gap
+group A left open. The package-boundary question this needed — `@adl/cli` structurally
+cannot resolve `@adl/manager`, and the repo-wide `adl/no-direct-spawn` rule bans it from
+spawning one either — is resolved by moving the installed `adl` binary itself:
+`@adl/manager` now depends on `@adl/cli` as a library (never the reverse — `@adl/cli` is
+completely unchanged) and ships `packages/manager/src/bin.ts` as the real executable, which
+injects `@adl/manager`'s `createProductionDaemonStartRunner`
+(`packages/manager/src/boot/cli-entry.ts`) into `@adl/cli`'s own `buildProgram` for exactly
+one verb, `daemon start`. That runner turns `.adl/daemon.json` (zero-config first run,
+`ensureDaemonConfig`) into a real `startDaemon()` call — `.adl/adl.db`, the backend preflight
+gate wired unconditionally, every refusal reported cleanly. Proving that end to end
+(`packages/manager/test/boot/cli-entry.test.ts`) is the first time anything in this project
+has called `startDaemon` against a truly virgin database file, and it surfaced a real bug
+one layer down: `runStartupGate`'s first read assumed migration 0001 had already created the
+`meta` table, which every prior test's `migrateToLatest` call had silently guaranteed —
+against a real fresh install it threw a raw `SqliteError` instead of taking the
+already-correct "absent, migrate" path. Fixed at the source (`@adl/db`'s `metaRepository`)
+with a regression test that deliberately skips `migrateToLatest`, so a fresh `.adl/adl.db`
+now migrates itself exactly once, on the very first `adl daemon start`. Code review of this
+step caught two more real bugs before they shipped: `ensureDaemonConfig`'s first-run write
+could throw raw past the "never throws" `DaemonStartRunner` contract (fixed at the source,
+regression-tested on POSIX), and the SIGINT/SIGTERM handler could call an already-stopped
+`handle.stop()` a second time — unguarded, since `process.once` only deregisters the signal
+it fired on — crashing on the resulting unhandled rejection (fixed with an idempotency guard
+plus a caught `.catch()`, both watched failing against the exact defect first).
 
-**What does not exist yet:** an `adl daemon start` that actually boots the manager (5.7),
-promote-to-ready/sticky-comments/never-merge wiring (5.10–5.12), and the whole round loop —
-gates, send-back, protected-path enforcement (group C) — plus per-round accounting (group D).
-`dev-run` still fires a single synthetic `develop` stage by hand.
+**What does not exist yet:** promote-to-ready/sticky-comments/never-merge wiring
+(5.10–5.12), and the whole round loop — gates, send-back, protected-path enforcement
+(group C) — plus per-round accounting (group D). `dev-run` still fires a single synthetic
+`develop` stage by hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -110,18 +135,10 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group A's last step: **5.7** — make `adl daemon start` actually boot the manager
-in-process. 5.4 already unblocked this, and 5.5 shows the shape of a gated-by-credentials
-optional dependency `adl daemon start`'s own wiring will need to decide about for
-`StartDaemonOptions.forge`.
-
-Step 5.7 closes a gap M03 shipped deliberately: **`adl daemon start`
-currently prints an honest gap message and exits 1**, because it needed a production
-`resolveAdlYml` that only detection could provide — 5.4 supplied that; 5.7 is now the
-CLI/manager package-boundary decision (D-21) that was the other half of the gap, still open.
-
-After 5.7, group B's remainder — **5.10**
-(draft-at-round-1/promote-when-green wiring),
+with group B's remainder — **5.10**
+(draft-at-round-1/promote-when-green wiring; `StartDaemonOptions.forge` is still absent from
+`bin.ts`'s own wiring, matching 5.5's "no live GitHub App credentials yet" precedent —
+`DEBT.md` item 1.7 — so 5.10 is also where that gets decided for the real entry point),
 **5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
 exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
 **5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge method;
@@ -140,7 +157,7 @@ round loop itself) reuses `resolvePipeline` (`@adl/core/config`, still no caller
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm build            # required — the CLI bin points at dist/
+pnpm build            # required — @adl/manager's `adl` bin points at dist/bin.js (5.7)
 
 pnpm test             # pnpm -r test && vitest run --project root
 pnpm typecheck        # pnpm -r typecheck
@@ -155,10 +172,16 @@ pnpm vitest run --project core        # one package: core | manager | workspace
 > `vitest run --project root`, and why CI has a separate step for it. If you only run
 > `pnpm -r test` you skip every architecture guard.
 
-**Running the daemon.** There is no shipped daemon binary and `adl daemon start` does not
-work yet (see above). Call `startDaemon(options)` from `@adl/manager` programmatically. The
-working reference callers are the tests:
+**Running the daemon.** `adl daemon start` (5.7) really boots the manager in-process now,
+from `@adl/manager`'s own bin (`node packages/manager/dist/bin.js daemon start`, or the
+linked `adl` once the package is installed) — run it from the repository ADL should watch;
+it reads/mints `.adl/daemon.json` there and creates `.adl/adl.db` beside it. It has no live
+GitHub App wired up yet (`options.forge` is absent — `DEBT.md` item 1.7), so the polling
+detection loop (5.5) does not start from this entry point; `startDaemon(options)` called
+programmatically with a real `forge` is still how to exercise that. The working reference
+callers, still useful for anything the CLI entry point doesn't wire up yet:
 
+- `packages/manager/test/boot/cli-entry.test.ts` — the real `adl daemon start` chain, 5.7's own tracer
 - `packages/manager/test/tracer/dev-run-end-to-end.test.ts`
 - `packages/manager/test/scenario/concurrency-crash-restart.test.ts`
 
@@ -189,8 +212,8 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 | `packages/workspace` | **The exec boundary.** Worktree lifecycle, zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
 | `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`); the credentialed publish side (push, open/promote a change request) is still 5.10's. | core |
-| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** | core, db, workspace, agent-claude-code (forge-github: test-only so far) |
-| `packages/cli` | The `adl` binary. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`. | nothing, by design |
+| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
+| `packages/cli` | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`). | nothing, by design |
 
 No `apps/` directory — the dashboard is M17 and unbuilt.
 

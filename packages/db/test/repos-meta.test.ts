@@ -115,6 +115,26 @@ describe('metaRepository', () => {
     });
   });
 
+  it('getSchemaVersion reports the absent case against a truly virgin database file — zero tables, migration 0001 never applied', async () => {
+    // 5.7's own tracer surfaced this: `runStartupGate` is `startDaemon`'s
+    // very first database access, and every fixture in this repo (this
+    // file included, everywhere else) calls `migrateToLatest` before ever
+    // touching `metaRepository` — so `meta` (and every other table) has
+    // always already existed by the time `getSchemaVersion` runs, in every
+    // test that ever exercised this path. `adl daemon start` against a
+    // brand new `.adl/adl.db` is the first REAL caller that does not — and
+    // without this, the very first thing a fresh install did was throw a
+    // raw `SqliteError: no such table: meta` instead of reaching
+    // `runStartupGate`'s existing copy-then-migrate path. Deliberately NO
+    // `migrateToLatest` call here — that absence is the point.
+    await withTempDb(async ({ db }) => {
+      const meta = metaRepository(db);
+
+      const result = await meta.getSchemaVersion();
+      expect(result).toEqual({ kind: 'absent' });
+    });
+  });
+
   it('get returns undefined for a key never written', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);

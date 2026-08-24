@@ -148,6 +148,24 @@ GitLab is genuinely different, so it forces the abstraction honest. Gitea has th
 API, so it sets the interface floor — top-level comments only, no line-level diff comments,
 no review updates.
 
+**The installed `adl` binary is published by `@adl/manager`, not `@adl/cli` (5.7).**
+M03 fixed "two packages, one binary" (the historical `D-21`) but left *which* package
+carries the executable open — `@adl/cli`'s own package.json states it "structurally cannot
+resolve `@adl/db` or `@adl/manager`" (pnpm strict `node_modules`), and the repo-wide
+`adl/no-direct-spawn` lint rule has no carve-out for it either, so `@adl/cli` alone can
+neither import the manager nor shell out to it. `@adl/manager` now depends on `@adl/cli` as
+a library (never the reverse) and ships `packages/manager/src/bin.ts` as the real `adl`
+executable: every verb except `daemon start` is `@adl/cli`'s own unmodified, HTTP-only
+`buildProgram`; `daemon start` alone gets `@adl/manager`'s `createProductionDaemonStartRunner`
+injected into it as `BuildProgramDeps.startDaemon`, the same dependency-injection seam
+`loadConfig`/`createClient` already use for tests. `@adl/cli` itself is unchanged and
+untouched by this — still zero dependency on `@adl/manager`/`@adl/db`, still publishable and
+importable on its own as a library. The alternative (a third, thin dispatcher package
+depending on both) was rejected as unnecessary machinery for a solo project: it would only
+buy back the ability to install `@adl/cli` alone as a binary, which is not a documented v1
+requirement anywhere in the plan. **Reversibility: costly** — the package that owns the
+published executable's name is a distribution-facing choice.
+
 ---
 
 ## Stack

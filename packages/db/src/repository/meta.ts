@@ -69,14 +69,42 @@ export interface MetaRepository {
 /** A value parses as the schema version's integer form: optional `-`, then only digits. */
 const INTEGER_PATTERN = /^-?\d+$/;
 
+/**
+ * Whether `error` is SQLite's own "no such table" — better-sqlite3 has no
+ * distinguishable error *code* for this (it shares `SQLITE_ERROR` with
+ * every other query-compile failure), so the message text is the only
+ * signal, matching `daemon-config.ts`'s own `isEnoent()` precedent for
+ * classifying a raw driver error by its one stable, well-known shape.
+ */
+function isMissingTableError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === 'SQLITE_ERROR' &&
+    error.message.includes('no such table')
+  );
+}
+
 export function metaRepository(db: Kysely<Database>): MetaRepository {
   async function get(key: string): Promise<string | undefined> {
-    const row = await db
-      .selectFrom('meta')
-      .select('value')
-      .where('key', '=', key)
-      .executeTakeFirst();
-    return row?.value;
+    try {
+      const row = await db
+        .selectFrom('meta')
+        .select('value')
+        .where('key', '=', key)
+        .executeTakeFirst();
+      return row?.value;
+    } catch (error) {
+      // A truly virgin database file — zero tables, migration 0001 never
+      // applied — is a more extreme case of exactly what `absent` already
+      // means (`getSchemaVersion`'s own docblock: "a freshly migrated
+      // database"). Every caller of `metaRepository` up to and including
+      // `runStartupGate`'s first read treats `absent` as "take the
+      // pre-migration copy, then migrate" — the correct, self-healing
+      // action here too, regardless of whether the table is missing
+      // because this is a fresh install or because it was dropped.
+      if (isMissingTableError(error)) return undefined;
+      throw error;
+    }
   }
 
   async function set(

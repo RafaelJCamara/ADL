@@ -175,6 +175,9 @@ importers:
       '@adl/agent-claude-code':
         specifier: workspace:*
         version: link:../agent-claude-code
+      '@adl/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@adl/core':
         specifier: workspace:*
         version: link:../core

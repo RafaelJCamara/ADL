@@ -225,20 +225,20 @@ classification.
 **Do not "fix" these.** Each is a decision with reasoning; changing one is a decision, not
 a cleanup.
 
-- **`adl daemon start` prints a gap message and exits 1.** It cannot boot the daemon until
-  M05 supplies a production `resolveAdlYml`. Shipping it half-working would have been
-  undefended by any test. → **M05 step 5.7.**
 - **No single-instance guard** for two managers against one database. Accepted for v1,
   documented in `packages/manager/README.md`.
 - **Repo-scoped pause does not survive a restart** (only the global flag does). The
   asymmetry is deliberate and documented.
-- **The backend preflight gate is opt-in.** Defaulting it on would make 200+ green tests
-  depend on an exactly-pinned `claude` on PATH.
+- **The backend preflight gate is opt-in in `StartDaemonOptions`** — but `bin.ts` (5.7), the
+  real, installed `adl daemon start` entry point, wires it unconditionally. The option stays
+  opt-in only so the 300+ tests that call `startDaemon()` directly don't all need an
+  exactly-pinned `claude` on PATH.
 - **The poll schedule (5.5) requires an explicit `ForgeAdapter` (`StartDaemonOptions.forge`)
   and does not start without one**, the same "absent means skip" shape as the backend
-  preflight gate above. Defaulting it on would need real (or mock-server-backed) GitHub App
-  credentials wired into every `startDaemon()` call site, and no live GitHub App exists yet
-  (item 1.7 above). → whichever step first gives `adl daemon start` a real credential source.
+  preflight gate above. `packages/manager/src/boot/cli-entry.ts` (5.7), the real `adl daemon
+  start` entry point, does not supply one either — no live GitHub App exists yet (item 1.7
+  above). → whichever step first gives that entry point a real credential source (5.10 is
+  the natural candidate, since it's already where the credentialed forge-publish side lands).
 - **The context-file cascade is not wired into `mergeConfig`'s output.**
   `effectiveConfig.context.files` stays exactly what `adl.yml` declared.
 - **No capability-reconciliation error event.** Implemented per its plan's literal wording,

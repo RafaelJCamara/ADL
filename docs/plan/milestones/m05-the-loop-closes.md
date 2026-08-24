@@ -203,8 +203,61 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       assertions were checking `scratchRoot/<bare-featureId>` — silently vacuous once the real
       path became `scratchRoot/<folderName>--<ulid>` — updated to compute the same composition
       the production code now does, rather than asserting against a path that was never created.
-- [ ] **5.7** — Make `adl daemon start` actually boot the manager in-process. This closes
+- [x] **5.7** — Make `adl daemon start` actually boot the manager in-process. This closes
       the honest gap M03 shipped deliberately; 5.4 is its blocker.
+      **Shipped:** the package-boundary decision (D-21's "which package owns the binary",
+      left open by M03) is resolved: `@adl/manager` now depends on `@adl/cli` as a library
+      and ships `packages/manager/src/bin.ts` as the real, installed `adl` executable.
+      `@adl/cli` is completely unchanged in behaviour and dependency graph — still zero
+      resolution of `@adl/manager`/`@adl/db` — it only gained one new injection seam,
+      `BuildProgramDeps.startDaemon` (defaulting to its own honest-gap
+      `daemonStartCommand`), which `bin.ts` fills with `@adl/manager`'s new
+      `createProductionDaemonStartRunner` (`packages/manager/src/boot/cli-entry.ts`): loads
+      `.adl/daemon.json` (`ensureDaemonConfig` — zero-config first run, exactly as
+      `packages/manager/README.md` already documented), maps it into a real
+      `StartDaemonOptions` (`.adl/adl.db`, colocated `scratch/`, `mainRepo` all derived from
+      `cwd()`), wires `claudeVersionCheckRunner` unconditionally (04-07's real backend
+      preflight gate, never skipped from this entry point), and reports each of
+      `startDaemon`'s three named refusals (`SchemaVersionRefusalError`,
+      `AdlYmlUnavailableError`, `BackendUnavailableError`) to `stderr` with exit code 1
+      rather than a stack trace. `daemon stop` is untouched — still `@adl/cli`'s own
+      `POST /control/shutdown` over HTTP.
+      **The real finding:** the tracer test for this step (`packages/manager/test/boot/cli-entry.test.ts`,
+      real `startDaemon`, a scripted `claude --version` double) is the first thing in this
+      project ever to call `startDaemon` against a truly virgin `.adl/adl.db` — a file with
+      *zero tables*, not merely an unseeded-but-migrated one. Every prior test, and
+      `runStartupGate`'s own test suite, pre-ran `migrateToLatest` before ever touching
+      `metaRepository`, so `meta.getSchemaVersion()`'s very first read had always already
+      found the `meta` table (migration 0001's own work) waiting for it. Against a real fresh
+      install, that same read threw a raw `SqliteError: no such table: meta` instead of the
+      `{kind:'absent'}` `runStartupGate` already knows how to handle (copy, then migrate) —
+      the honest gap this step exists to close would have reproduced itself one layer down,
+      on literally the first real run. Watched failing for real (the raw `SqliteError` above,
+      captured verbatim) before the fix: `packages/db/src/repository/meta.ts`'s shared `get()`
+      now catches SQLite's "no such table" (no distinguishable error *code* exists for it —
+      message-text matching, mirroring `daemon-config.ts`'s own `isEnoent()` precedent) and
+      treats it exactly as the row-not-found case it already had a name for, self-healing
+      through `runStartupGate`'s existing, unmodified copy-then-migrate path regardless of
+      *why* the table is missing. A regression test for the exact defect —
+      `packages/db/test/repos-meta.test.ts`, deliberately with no `migrateToLatest` call —
+      is now permanent.
+      **Code review caught two more, both real.** (1) `ensureDaemonConfig`'s zero-config
+      first-run write (`mkdir`/`writeFile`/`chmod`) had no try/catch, so a real provisioning
+      failure (a read-only mount, a full disk) would have thrown raw past `cli-entry.ts`'s
+      own `DaemonStartRunner` — which has no `try` around loading config precisely because it
+      trusts this function's stated contract — breaking the "never throws" guarantee on
+      exactly the first-run path this step exists to make work. Fixed at the source, matching
+      `loadDaemonConfig`'s own established contract; a POSIX-only regression test
+      (`packages/manager/test/config/daemon-config.test.ts`, an unwritable parent directory)
+      proves it returns `{kind:'invalid'}` rather than throwing. (2) The SIGINT/SIGTERM
+      handler was neither idempotent nor guarded against a stop already in flight over HTTP
+      (`adl daemon stop`) — `process.once` only deregisters the listener for the event it
+      fired on, so SIGTERM's own listener survives after SIGINT already triggered shutdown,
+      and `gracefulShutdown` is not idempotent (a second `server.close()` rejects). Watched
+      failing for real — reverting the fix reproduced both a double `handle.stop()` call and
+      an unasserted rejection — before landing a `stopping` guard plus a caught-and-logged
+      `.catch()` on `handle.stop()`, so a duplicate stop from any source is a harmless no-op
+      rather than a crash.
 
 ### B · Forge — the output side (AC1, AC4)
 

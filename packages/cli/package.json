@@ -2,13 +2,10 @@
   "name": "@adl/cli",
   "version": "0.0.0",
   "type": "module",
-  "description": "ADL CLI — status, logs, pause, kill. Talks to the manager over HTTP only (D-18, D-21); structurally cannot resolve @adl/db or @adl/manager.",
+  "description": "ADL CLI — status, logs, pause, kill. Talks to the manager over HTTP only (D-18, D-21); structurally cannot resolve @adl/db or @adl/manager. A library, not the installed `adl` binary (5.7) — @adl/manager depends on this package and ships the real executable.",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "adl": "./dist/index.js"
-  },
   "files": [
     "dist",
     "README.md"
