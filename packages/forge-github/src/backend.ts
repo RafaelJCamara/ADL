@@ -19,15 +19,17 @@
  */
 import { createAppAuth } from '@octokit/auth-app';
 import { Octokit } from 'octokit';
-import type {
-  ChangeRequest,
-  ForgeAdapter,
-  ForgeRepoRef,
-  OpenChangeRequestInput,
-  PromoteToReadyInput,
-  ReadDiffInput,
-  ReadFileInput,
-  UpsertCommentInput,
+import {
+  COLLABORATOR_PERMISSIONS,
+  type ChangeRequest,
+  type CollaboratorPermission,
+  type ForgeAdapter,
+  type ForgeRepoRef,
+  type OpenChangeRequestInput,
+  type PromoteToReadyInput,
+  type ReadDiffInput,
+  type ReadFileInput,
+  type UpsertCommentInput,
 } from '@adl/core/forge';
 
 export interface GithubForgeAdapterOptions {
@@ -86,6 +88,28 @@ function toChangeRequest(pr: GithubPullRequest): ChangeRequest {
     draft: pr.draft ?? false,
     head: pr.head.ref,
   };
+}
+
+/**
+ * The subset of GitHub's commit response this adapter reads. `author` is
+ * GitHub's *resolved* GitHub account for the commit — distinct from
+ * `commit.author`, the raw, unverifiable git identity — and is `null` (or an
+ * object with no `login`) when GitHub cannot match the commit's email to any
+ * account.
+ */
+interface GithubAuthoredCommit {
+  readonly author: { readonly login?: string } | null;
+}
+
+/** GitHub's own permission levels — never `'unknown'`, which is ADL's sentinel, not GitHub's. */
+const GITHUB_PERMISSION_LEVELS = COLLABORATOR_PERMISSIONS.filter(
+  (level) => level !== 'unknown',
+);
+
+function isGithubPermissionLevel(
+  value: string,
+): value is Exclude<CollaboratorPermission, 'unknown'> {
+  return (GITHUB_PERMISSION_LEVELS as readonly string[]).includes(value);
 }
 
 /**
@@ -263,6 +287,37 @@ export function githubForgeAdapter(
       // response body as a string rather than the parsed comparison object
       // — that is the whole reason `mediaType.format: 'diff'` is passed.
       return response.data as unknown as string;
+    },
+
+    async authorPermission(
+      input: ReadFileInput,
+    ): Promise<CollaboratorPermission> {
+      // The most recent commit touching this path at this ref — SPEC-06
+      // asks about the folder's current content, not its full history.
+      const { data: commits } = await octokit.rest.repos.listCommits({
+        owner: input.repo.owner,
+        repo: input.repo.repo,
+        sha: input.ref,
+        path: input.path,
+        per_page: 1,
+      });
+
+      const commit = commits[0] as GithubAuthoredCommit | undefined;
+      const login = commit?.author?.login;
+      // No commit at all, or one GitHub could not match to any account —
+      // both are 'unknown', never 'none': 'none' asserts a real, checked
+      // account was found and has zero access.
+      if (login === undefined) return 'unknown';
+
+      const { data } = await octokit.rest.repos.getCollaboratorPermissionLevel({
+        owner: input.repo.owner,
+        repo: input.repo.repo,
+        username: login,
+      });
+
+      return isGithubPermissionLevel(data.permission)
+        ? data.permission
+        : 'unknown';
     },
   };
 }

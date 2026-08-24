@@ -5,8 +5,10 @@
  */
 export {
   CHANGE_REQUEST_STATES,
+  COLLABORATOR_PERMISSIONS,
   type ChangeRequest,
   type ChangeRequestState,
+  type CollaboratorPermission,
   type ForgeAdapter,
   type ForgeRepoRef,
   type OpenChangeRequestInput,

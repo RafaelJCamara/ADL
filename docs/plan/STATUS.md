@@ -24,15 +24,15 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
-four of its steps (5.1, 5.2, 5.8, 5.9) are done; groups A–D still have 5.3–5.7, 5.10–5.12,
-and all of C and D ahead.**
+five of its steps (5.1, 5.2, 5.3, 5.8, 5.9) are done; groups A–D still have 5.4–5.7,
+5.10–5.12, and all of C and D ahead.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.8/5.9 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.3/5.8/5.9 done
 M06–M18 ............................. not started
 ```
 
@@ -52,16 +52,21 @@ And the scanner's output can now be told apart from what ADL already knows about
 against both the `features` table and every open change request, so a folder is only ever
 admitted once — even across a lost `features` row, so long as its change request is still
 open. `ChangeRequest` gained a `head` field (the branch it was opened from, echoed back by
-the forge) so that cross-reference is possible at all.
+the forge) so that cross-reference is possible at all. And a folder that clears both checks
+still has to clear one more: the trusted-path filter (SPEC-06)
+(`@adl/core/detect`'s `evaluateSpecTrust` + `packages/manager/src/detect/trust.ts`'s
+`evaluateFeatureTrust`) rejects a folder whose most recent commit was authored by an account
+without write access — a real check against `ForgeAdapter.authorPermission`, never the raw
+git author identity, which is trivially spoofable.
 
-**What does not exist yet:** enqueueing the *undeveloped* predicate's output (still not
-called from anywhere but its own tests), the trusted-path filter (5.3), a production
-`resolveAdlYml` and the polling loop (5.4–5.7), promote-to-ready/sticky-comments/never-merge
-wiring (5.10–5.12), and the whole round loop — gates, send-back, protected-path enforcement
-(group C) — plus per-round accounting (group D). None of the new pieces above are wired into
-`daemon.ts`'s automatic dispatch yet; they were proven to compose by calling each directly,
-matching the milestone's own tracer-then-widen discipline. `dev-run` still fires a single
-synthetic `develop` stage by hand.
+**What does not exist yet:** enqueueing anything the *undeveloped* + trust predicates admit
+(still not called from anywhere but their own tests), a production `resolveAdlYml` and the
+polling loop (5.4–5.7), promote-to-ready/sticky-comments/never-merge wiring (5.10–5.12), and
+the whole round loop — gates, send-back, protected-path enforcement (group C) — plus
+per-round accounting (group D). None of the new pieces above are wired into `daemon.ts`'s
+automatic dispatch yet; they were proven to compose by calling each directly, matching the
+milestone's own tracer-then-widen discipline. `dev-run` still fires a single synthetic
+`develop` stage by hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -72,15 +77,15 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group A: **5.3**, the trusted-path filter (SPEC-06) — default branch only, author must
-have write permission, fork PRs ignored unless explicitly opted in. Reject *before* anything
-is enqueued.
+with group A: **5.4**, a production `resolveAdlYml` — M03 left this as a required injected
+function with no real implementation; implement it and wire it into `startDaemon`. This also
+unblocks **5.7**, `adl daemon start`.
 
-After 5.3: **5.4** (production `resolveAdlYml` — also unblocks **5.7**, `adl daemon start`),
-**5.5** (the polling loop, reusing `gc-schedule.ts`'s shape — this is also the first
-production caller of 5.2's `undevelopedFeatures`), **5.6** (exclusive claim + restart
-reconciliation, DETECT-05 — reuses 5.2's predicate for the lost-row case). Then group B's
-remainder — **5.10** (draft-at-round-1/promote-when-green wiring),
+After 5.4: **5.5** (the polling loop, reusing `gc-schedule.ts`'s shape — this is also the
+first production caller of 5.2's `undevelopedFeatures` and 5.3's `evaluateFeatureTrust`),
+**5.6** (exclusive claim + restart reconciliation, DETECT-05 — reuses 5.2's predicate for the
+lost-row case). Then group B's remainder — **5.10** (draft-at-round-1/promote-when-green
+wiring),
 **5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
 exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
 **5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge method;

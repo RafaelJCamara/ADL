@@ -349,6 +349,15 @@ export {
   type UndevelopedFeaturesInput,
 } from './detect/undeveloped.js';
 
+// The trusted-path filter's I/O half (5.3, SPEC-06) — published so a test
+// can drive it directly against a real ForgeAdapter, and so 5.5's polling
+// loop (not yet built) has a stable import path.
+export {
+  evaluateFeatureTrust,
+  type EvaluateFeatureTrustInput,
+  type FolderTrustResult,
+} from './detect/trust.js';
+
 // `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow loop)
 // — published for the same reason every other route module is: so a test can
 // mount it directly. `TRANSCRIPT_POLL_INTERVAL_MS`/`LOG_STREAM_EVENTS` are

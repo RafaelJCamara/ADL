@@ -9,3 +9,12 @@ export {
   undevelopedFeatureFolders,
   type UndevelopedInput,
 } from './undeveloped.js';
+export {
+  UNTRUSTED_REASONS,
+  evaluateSpecTrust,
+  type TrustDecision,
+  type TrustedDecision,
+  type TrustInput,
+  type UntrustedDecision,
+  type UntrustedReason,
+} from './trust.js';

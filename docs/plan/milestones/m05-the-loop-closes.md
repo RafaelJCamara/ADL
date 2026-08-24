@@ -90,9 +90,23 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       echoed back by the forge) so a change request can be matched to a folder via
       `@adl/workspace`'s `featureIdFromBranch` — `listOpenChangeRequests` had no way to
       report this before. Not yet wired into `daemon.ts`'s automatic dispatch (5.5's job).
-- [ ] **5.3** — Trusted-path filter (SPEC-06). Default branch only; author must have write
+- [x] **5.3** — Trusted-path filter (SPEC-06). Default branch only; author must have write
       permission; fork PRs ignored unless explicitly opted in. Reject *before* anything is
       enqueued.
+      **Shipped:** `@adl/core/detect`'s `evaluateSpecTrust` (pure) +
+      `packages/manager/src/detect/trust.ts`'s `evaluateFeatureTrust` (the I/O half). The
+      write-permission check is real: `ForgeAdapter.authorPermission` finds the most recent
+      commit touching a folder and the GitHub account it resolves to (`repos.listCommits` +
+      `repos.getCollaboratorPermissionLevel`), never trusting the raw, spoofable git author
+      identity. `'unknown'` (unresolvable author) is a distinct rejection reason from
+      `'none'` (a real, checked account with zero access) so a caller can log which one fired.
+      **Deviation:** `ForgeAdapter` gained `authorPermission` and `CollaboratorPermission`.
+      **Scope note:** the branch/fork dimensions are real in the pure predicate and fully
+      tested, but M05's own call site always passes `ref === defaultBranch` and
+      `isFork: false` — 5.1's scanner only ever reads the default branch, so there is no live
+      M05 path that could produce anything else. M10's webhook path is the first real caller
+      of those two dimensions, reusing this same predicate rather than a second one. Not yet
+      wired into `daemon.ts`'s automatic dispatch (5.5's job).
 - [ ] **5.4** — Production `resolveAdlYml`. M03 left this as a required injected function
       with no real implementation; implement it and wire it into `startDaemon`.
 - [ ] **5.5** — Polling loop (DETECT-03). A croner job that re-runs detection on an

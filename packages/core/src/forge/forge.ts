@@ -141,6 +141,27 @@ export interface ReadDiffInput {
 }
 
 /**
+ * A collaborator's access level, plus one value no forge reports itself.
+ *
+ * `'admin' | 'write' | 'read' | 'none'` are the forge's own answer for a real,
+ * checked account. `'unknown'` is ADL's own sentinel for the case a forge
+ * cannot answer at all — a commit whose email matches no account — and is
+ * never conflated with `'none'`, which asserts a real account was checked and
+ * found to have zero access. SPEC-06's trust predicate
+ * (`@adl/core/detect`'s `evaluateSpecTrust`) treats both as untrusted, but a
+ * caller logging *why* needs the two kept apart.
+ */
+export const COLLABORATOR_PERMISSIONS = Object.freeze([
+  'admin',
+  'write',
+  'read',
+  'none',
+  'unknown',
+] as const);
+
+export type CollaboratorPermission = (typeof COLLABORATOR_PERMISSIONS)[number];
+
+/**
  * Everything ADL needs from a forge, and nothing a forge merely happens to
  * offer.
  *
@@ -168,4 +189,11 @@ export interface ForgeAdapter {
   readFile(input: ReadFileInput): Promise<string>;
   /** A unified diff between `base` and `head` — protected-path enforcement diffs what was actually written (ROLE-11). */
   readDiff(input: ReadDiffInput): Promise<string>;
+  /**
+   * The permission level of whoever authored the most recent commit
+   * touching `input.path` at `input.ref` — SPEC-06's write-permission check
+   * (5.3). Takes the same repo/ref/path locator {@link readFile} does,
+   * because both resolve to the same coordinate.
+   */
+  authorPermission(input: ReadFileInput): Promise<CollaboratorPermission>;
 }

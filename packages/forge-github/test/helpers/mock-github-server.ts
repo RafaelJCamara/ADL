@@ -36,12 +36,24 @@ export interface MockComment {
   body: string;
 }
 
+/** GitHub's own permission levels — never `'unknown'`, which is ADL's own sentinel, not GitHub's. */
+export type MockCollaboratorPermission = 'admin' | 'write' | 'read' | 'none';
+
 /** The server's in-memory state, exposed so a test can assert against it directly. */
 export interface MockGithubState {
   readonly pulls: MockPullRequest[];
   readonly commentsByIssue: Map<number, MockComment[]>;
   readonly files: Map<string, string>;
   readonly diffs: Map<string, string>;
+  /**
+   * `${sha}:${path}` -> the login of whoever authored the most recent commit
+   * touching `path`, or `null` for a commit GitHub could not match to any
+   * account. No entry at all means no commit exists for that path — the
+   * adapter treats both `null` and "no entry" as `'unknown'`.
+   */
+  readonly commitAuthorsByPath: Map<string, string | null>;
+  /** username -> the permission level `getCollaboratorPermissionLevel` reports. No entry defaults to `'none'`. */
+  readonly collaboratorPermissions: Map<string, MockCollaboratorPermission>;
   /** Every `Authorization` header this server has seen, for the JWT-exchange proof. */
   readonly authorizationHeadersSeen: string[];
   nextPullNumber: number;
@@ -86,6 +98,8 @@ export async function startMockGithubServer(): Promise<MockGithubServer> {
     commentsByIssue: new Map(),
     files: new Map(),
     diffs: new Map(),
+    commitAuthorsByPath: new Map(),
+    collaboratorPermissions: new Map(),
     authorizationHeadersSeen: [],
     nextPullNumber: 1,
     nextCommentId: 1,
@@ -307,6 +321,38 @@ async function handle(
       'content-type': 'application/vnd.github.diff; charset=utf-8',
     });
     res.end(diff);
+    return;
+  }
+
+  // GET /repos/:owner/:repo/commits?path=...&sha=...
+  match = /^\/repos\/([^/]+)\/([^/]+)\/commits$/.exec(pathname);
+  if (method === 'GET' && match) {
+    const path = query.get('path') ?? '';
+    const sha = query.get('sha') ?? '';
+    const key = `${sha}:${path}`;
+    if (!state.commitAuthorsByPath.has(key)) {
+      sendJson(res, 200, []);
+      return;
+    }
+    const login = state.commitAuthorsByPath.get(key) ?? null;
+    sendJson(res, 200, [
+      {
+        sha: `mock-commit-${path}`,
+        author: login === null ? null : { login },
+      },
+    ]);
+    return;
+  }
+
+  // GET /repos/:owner/:repo/collaborators/:username/permission
+  match =
+    /^\/repos\/([^/]+)\/([^/]+)\/collaborators\/([^/]+)\/permission$/.exec(
+      pathname,
+    );
+  if (method === 'GET' && match) {
+    const username = decodeURIComponent(match[3] ?? '');
+    const permission = state.collaboratorPermissions.get(username) ?? 'none';
+    sendJson(res, 200, { permission, role_name: permission });
     return;
   }
 

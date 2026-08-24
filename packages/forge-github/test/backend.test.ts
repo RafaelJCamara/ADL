@@ -233,4 +233,61 @@ describe('githubForgeAdapter', () => {
 
     expect(diff).toBe(diffText);
   });
+
+  it("reports the write-permission author's real permission level", async () => {
+    server.state.commitAuthorsByPath.set(
+      'main:features/dark-mode/spec.md',
+      'a-maintainer',
+    );
+    server.state.collaboratorPermissions.set('a-maintainer', 'write');
+
+    const permission = await adapter.authorPermission({
+      repo: REPO,
+      ref: 'main',
+      path: 'features/dark-mode/spec.md',
+    });
+
+    expect(permission).toBe('write');
+  });
+
+  it('reports a real account with no access as none, distinct from unknown', async () => {
+    server.state.commitAuthorsByPath.set(
+      'main:features/dark-mode/spec.md',
+      'a-stranger',
+    );
+    server.state.collaboratorPermissions.set('a-stranger', 'none');
+
+    const permission = await adapter.authorPermission({
+      repo: REPO,
+      ref: 'main',
+      path: 'features/dark-mode/spec.md',
+    });
+
+    expect(permission).toBe('none');
+  });
+
+  it('reports unknown when no commit exists for the path', async () => {
+    const permission = await adapter.authorPermission({
+      repo: REPO,
+      ref: 'main',
+      path: 'features/never-committed/spec.md',
+    });
+
+    expect(permission).toBe('unknown');
+  });
+
+  it("reports unknown when GitHub can't associate the commit with any account", async () => {
+    server.state.commitAuthorsByPath.set(
+      'main:features/dark-mode/spec.md',
+      null,
+    );
+
+    const permission = await adapter.authorPermission({
+      repo: REPO,
+      ref: 'main',
+      path: 'features/dark-mode/spec.md',
+    });
+
+    expect(permission).toBe('unknown');
+  });
 });
