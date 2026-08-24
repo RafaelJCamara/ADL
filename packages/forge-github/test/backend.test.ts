@@ -83,6 +83,7 @@ describe('githubForgeAdapter', () => {
     expect(cr.number).toBeGreaterThan(0);
     expect(cr.url).toContain('/pull/');
     expect(cr.id).toBeTruthy();
+    expect(cr.head).toBe('adl/dark-mode');
 
     // The installation-token exchange really happened over HTTP, with a
     // genuine JWT (three base64url segments) the mock server's own regex
@@ -112,6 +113,7 @@ describe('githubForgeAdapter', () => {
     expect(promoted.draft).toBe(false);
     expect(promoted.state).toBe('open');
     expect(promoted.number).toBe(opened.number);
+    expect(promoted.head).toBe('adl/dark-mode');
   });
 
   it('creates one comment, then edits it in place on a second call with the same key (FORGE-06)', async () => {
@@ -191,6 +193,10 @@ describe('githubForgeAdapter', () => {
     const open = await adapter.listOpenChangeRequests(REPO);
     expect(open).toHaveLength(2);
     expect(open.map((cr) => cr.state)).toEqual(['draft', 'draft']);
+    expect(open.map((cr) => cr.head)).toEqual([
+      'adl/dark-mode',
+      'adl/export-widgets',
+    ]);
   });
 
   it('reads a file at a ref', async () => {

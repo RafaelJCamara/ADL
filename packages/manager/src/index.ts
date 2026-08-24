@@ -337,8 +337,17 @@ export {
 
 // The features/ scanner's I/O half (5.1, DETECT-01) — published so a test can
 // drive it directly against a real ManagerGitClient, and so 5.2's undeveloped
-// predicate (not yet built) has a stable import path.
+// predicate can consume its output.
 export { listFeatureFolders } from './detect/scanner.js';
+
+// The undeveloped predicate's I/O half (5.2, DETECT-01) — published so a
+// test can drive it directly against a real FeaturesRepository and
+// ForgeAdapter, and so 5.5's polling loop (not yet built) has a stable
+// import path.
+export {
+  undevelopedFeatures,
+  type UndevelopedFeaturesInput,
+} from './detect/undeveloped.js';
 
 // `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow loop)
 // — published for the same reason every other route module is: so a test can

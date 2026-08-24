@@ -24,15 +24,15 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
-three of its steps (5.1, 5.8, 5.9) are done; groups A–D still have 5.2–5.7, 5.10–5.12, and
-all of C and D ahead.**
+four of its steps (5.1, 5.2, 5.8, 5.9) are done; groups A–D still have 5.3–5.7, 5.10–5.12,
+and all of C and D ahead.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.8/5.9 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.8/5.9 done
 M06–M18 ............................. not started
 ```
 
@@ -46,14 +46,22 @@ branch can be *pushed* to a remote (`ManagerGitClient.push`); and a real `ForgeA
 a real draft change request, proven end to end in
 `packages/manager/test/tracer/detect-to-draft-cr-end-to-end.test.ts` against a local mock
 GitHub server (live GitHub credentials are deliberately deferred — see `DEBT.md` § 1 item 1.7).
+And the scanner's output can now be told apart from what ADL already knows about: the
+*undeveloped* predicate (`@adl/core/detect`'s `undevelopedFeatureFolders` +
+`packages/manager/src/detect/undeveloped.ts`'s `undevelopedFeatures`) cross-references a scan
+against both the `features` table and every open change request, so a folder is only ever
+admitted once — even across a lost `features` row, so long as its change request is still
+open. `ChangeRequest` gained a `head` field (the branch it was opened from, echoed back by
+the forge) so that cross-reference is possible at all.
 
-**What does not exist yet:** the *undeveloped* predicate and enqueueing (5.2), the trusted-
-path filter (5.3), a production `resolveAdlYml` and the polling loop (5.4–5.7), promote-to-
-ready/sticky-comments/never-merge wiring (5.10–5.12), and the whole round loop — gates,
-send-back, protected-path enforcement (group C) — plus per-round accounting (group D). None
-of the new pieces above are wired into `daemon.ts`'s automatic dispatch yet; they were
-proven to compose by calling each directly, matching the milestone's own tracer-then-widen
-discipline. `dev-run` still fires a single synthetic `develop` stage by hand.
+**What does not exist yet:** enqueueing the *undeveloped* predicate's output (still not
+called from anywhere but its own tests), the trusted-path filter (5.3), a production
+`resolveAdlYml` and the polling loop (5.4–5.7), promote-to-ready/sticky-comments/never-merge
+wiring (5.10–5.12), and the whole round loop — gates, send-back, protected-path enforcement
+(group C) — plus per-round accounting (group D). None of the new pieces above are wired into
+`daemon.ts`'s automatic dispatch yet; they were proven to compose by calling each directly,
+matching the milestone's own tracer-then-widen discipline. `dev-run` still fires a single
+synthetic `develop` stage by hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -64,15 +72,15 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group A: **5.2**, the *undeveloped* predicate — cross-reference `listFeatureFolders`'s
-output (5.1, done) against the `features` table and open ADL change requests
-(`listOpenChangeRequests`, 5.8/5.9, done) to decide what's actually new. Pure and
-exhaustively testable, per the milestone file's own description.
+with group A: **5.3**, the trusted-path filter (SPEC-06) — default branch only, author must
+have write permission, fork PRs ignored unless explicitly opted in. Reject *before* anything
+is enqueued.
 
-After 5.2: **5.3** (trusted-path filter, SPEC-06), **5.4** (production `resolveAdlYml` —
-also unblocks **5.7**, `adl daemon start`), **5.5** (the polling loop, reusing
-`gc-schedule.ts`'s shape), **5.6** (exclusive claim + restart reconciliation, DETECT-05).
-Then group B's remainder — **5.10** (draft-at-round-1/promote-when-green wiring),
+After 5.3: **5.4** (production `resolveAdlYml` — also unblocks **5.7**, `adl daemon start`),
+**5.5** (the polling loop, reusing `gc-schedule.ts`'s shape — this is also the first
+production caller of 5.2's `undevelopedFeatures`), **5.6** (exclusive claim + restart
+reconciliation, DETECT-05 — reuses 5.2's predicate for the lost-row case). Then group B's
+remainder — **5.10** (draft-at-round-1/promote-when-green wiring),
 **5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
 exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
 **5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge method;

@@ -65,6 +65,7 @@ interface GithubPullRequest {
   readonly state: string;
   readonly draft?: boolean | null;
   readonly merged_at?: string | null;
+  readonly head: { readonly ref: string };
 }
 
 function toChangeRequest(pr: GithubPullRequest): ChangeRequest {
@@ -83,6 +84,7 @@ function toChangeRequest(pr: GithubPullRequest): ChangeRequest {
     url: pr.html_url,
     state,
     draft: pr.draft ?? false,
+    head: pr.head.ref,
   };
 }
 
@@ -178,6 +180,11 @@ export function githubForgeAdapter(
         url: rp.url,
         state,
         draft: rp.isDraft,
+        // The GraphQL mutation's own selection set carries no branch field;
+        // `pr.head.ref` from the REST lookup just above (fetched for its
+        // `node_id`) already has it, so no second field is added to the
+        // mutation's selection set for it.
+        head: pr.head.ref,
       };
     },
 

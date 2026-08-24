@@ -76,10 +76,20 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `packages/manager/src/detect/scanner.ts`'s `listFeatureFolders` (the I/O half, through
       a new `ManagerGitClient.listFiles`). The *undeveloped* predicate (5.2) is not built —
       this step only proves detection, not enqueueing.
-- [ ] **5.2** — The *undeveloped* predicate. Cross-reference scanned folders against the
+- [x] **5.2** — The *undeveloped* predicate. Cross-reference scanned folders against the
       `features` table and open ADL change requests. Pure and exhaustively testable —
       this is the heart of DETECT-01, and "evaluate state" rather than "remember events"
       is the whole point.
+      **Shipped:** `@adl/core/detect`'s `undevelopedFeatureFolders` (pure) +
+      `packages/manager/src/detect/undeveloped.ts`'s `undevelopedFeatures` (the I/O half,
+      through `FeaturesRepository.findByPath` and `ForgeAdapter.listOpenChangeRequests`).
+      A folder is excluded either by a known `features` row or by a currently-open change
+      request, so a lost `features` row does not re-admit a feature whose change request is
+      still open — the same predicate DETECT-05's restart reconciliation (5.6) will reuse.
+      **Deviation:** `ChangeRequest` gained a `head` field (the branch it was opened from,
+      echoed back by the forge) so a change request can be matched to a folder via
+      `@adl/workspace`'s `featureIdFromBranch` — `listOpenChangeRequests` had no way to
+      report this before. Not yet wired into `daemon.ts`'s automatic dispatch (5.5's job).
 - [ ] **5.3** — Trusted-path filter (SPEC-06). Default branch only; author must have write
       permission; fork PRs ignored unless explicitly opted in. Reject *before* anything is
       enqueued.

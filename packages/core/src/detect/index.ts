@@ -5,3 +5,7 @@
  * see `packages/manager/src/detect/scanner.ts` for the I/O half.
  */
 export { scanFeatureFolders } from './scan.js';
+export {
+  undevelopedFeatureFolders,
+  type UndevelopedInput,
+} from './undeveloped.js';

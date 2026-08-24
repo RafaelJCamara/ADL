@@ -75,6 +75,7 @@ function toPullResponse(pr: MockPullRequest): Record<string, unknown> {
     state: pr.state,
     draft: pr.draft,
     merged_at: pr.merged_at,
+    head: { ref: pr.head },
   };
 }
 

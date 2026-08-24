@@ -75,6 +75,15 @@ export interface ChangeRequest {
   readonly url: string;
   readonly state: ChangeRequestState;
   readonly draft: boolean;
+  /**
+   * The branch this change request is built from — {@link OpenChangeRequestInput.head}
+   * echoed back by the forge. DETECT-01's undeveloped predicate (5.2) and
+   * DETECT-05's restart reconciliation (5.6) both match a change request
+   * back to a feature folder by running `@adl/workspace`'s
+   * `featureIdFromBranch` against this field — that match happens at the
+   * call site, never here, so `@adl/core` stays dependency-free.
+   */
+  readonly head: string;
 }
 
 export interface OpenChangeRequestInput {
@@ -148,7 +157,12 @@ export interface ForgeAdapter {
   /** Promote a draft to ready for review (FORGE-05) — never the reverse; nothing in this loop demotes a change request. */
   promoteToReady(input: PromoteToReadyInput): Promise<ChangeRequest>;
   upsertComment(input: UpsertCommentInput): Promise<void>;
-  /** Every open change request in `repo`, for DETECT-05's restart reconciliation. */
+  /**
+   * Every open change request in `repo` — DETECT-01's undeveloped predicate
+   * (5.2) reads it to avoid re-admitting a folder whose `features` row was
+   * lost while its change request is still open, and DETECT-05's restart
+   * reconciliation (5.6) reuses the same read.
+   */
   listOpenChangeRequests(repo: ForgeRepoRef): Promise<readonly ChangeRequest[]>;
   /** A file's content at `ref` — gate context assembled from the repository, never from a developer's own session (ROLE-03). */
   readFile(input: ReadFileInput): Promise<string>;
