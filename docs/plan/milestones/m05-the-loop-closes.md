@@ -107,8 +107,27 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       M05 path that could produce anything else. M10's webhook path is the first real caller
       of those two dimensions, reusing this same predicate rather than a second one. Not yet
       wired into `daemon.ts`'s automatic dispatch (5.5's job).
-- [ ] **5.4** — Production `resolveAdlYml`. M03 left this as a required injected function
+- [x] **5.4** — Production `resolveAdlYml`. M03 left this as a required injected function
       with no real implementation; implement it and wire it into `startDaemon`.
+      **Shipped:** `packages/manager/src/config/resolve-adl-yml.ts`'s `resolveProductionAdlYml`
+      reads `adl.yml` off `mainRepo`'s own working tree through `@adl/workspace`'s
+      `hostGitWorkspace.read()` — a plain, D-02-contained working-tree read that
+      `git/host-backend.ts`'s own `read()` docblock reserved for exactly this since M02,
+      deliberately never a git-ref lookup: `mainRepo` is ADL's own checkout, which no agent
+      ever touches, unlike a feature's worktree (5.1's scanner reads a committed ref for the
+      opposite reason). `StartDaemonOptions.resolveAdlYml`/`DispatcherDeps.resolveAdlYml`
+      keep M03's exact required-synchronous shape (`boot/startup.ts`'s own docblock names it
+      as the precedent) — the one real read happens once at boot, before the synchronous
+      closure `dispatchOnce` receives ever exists. `startDaemon` now refuses to start
+      (`AdlYmlUnavailableError`, mirroring `SchemaVersionRefusalError`/`BackendUnavailableError`
+      exactly) when `adl.yml` is missing or fails `AdlYmlSchema` validation — before the API
+      binds, before any lease is acquired. `resolveAdlYml` is now optional on
+      `StartDaemonOptions`: every pre-5.4 test fixture keeps supplying its own explicit
+      value unchanged (zero test churn), and the production path only fires when one is
+      absent. **Scope note:** v1 has exactly one physical `mainRepo`, so this resolves ONE
+      `AdlYml` and returns it for every feature regardless of `repo_id` — matching
+      `dispatchOnce`'s and `gc-schedule.ts`'s own existing single-repo assumption, not a new
+      one. This unblocks 5.7.
 - [ ] **5.5** — Polling loop (DETECT-03). A croner job that re-runs detection on an
       interval and enqueues what's new. Reuse the `gc-schedule.ts` shape — `protect: true`,
       one pass per tick, each step in its own try/catch.

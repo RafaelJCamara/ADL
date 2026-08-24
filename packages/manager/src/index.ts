@@ -197,6 +197,21 @@ export {
   type DaemonConfigNotFound,
 } from './config/daemon-config.js';
 
+// The production `resolveAdlYml` gate (05-04) — published so a test (or a
+// future `adl doctor`-style entry point) can drive it directly without
+// standing up a full `startDaemon`, mirroring the backend preflight gate's
+// own export shape exactly.
+export {
+  ADL_YML_PATH,
+  AdlYmlUnavailableError,
+  resolveProductionAdlYml,
+  type AdlYmlRefused,
+  type AdlYmlResolutionOutcome,
+  type AdlYmlResolutionRefusal,
+  type AdlYmlResolved,
+  type ResolveProductionAdlYmlDeps,
+} from './config/resolve-adl-yml.js';
+
 // The startup gate (D-37) — schema-version refuse/copy-then-migrate, and
 // repository reconciliation (D-35). Published so a CLI entry point (a later
 // plan's `adl daemon start`) can inspect `DAEMON_SCHEMA_VERSION` directly

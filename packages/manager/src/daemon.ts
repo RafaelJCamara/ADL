@@ -18,6 +18,7 @@ import {
 } from '@adl/core/config';
 import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
+import { hostGitWorkspace } from '@adl/workspace';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
 import { closeAttempt } from './bookkeeping/attempt.js';
@@ -41,6 +42,11 @@ import {
   runStartupGate,
   SchemaVersionRefusalError,
 } from './boot/startup.js';
+import {
+  ADL_YML_PATH,
+  AdlYmlUnavailableError,
+  resolveProductionAdlYml,
+} from './config/resolve-adl-yml.js';
 import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
@@ -67,13 +73,15 @@ import {
  * copy-then-migrate an older or unseeded database, inside
  * `runStartupGate`), then the scratch root a workspace backend creates
  * per-feature workspaces under (04-04), then repository reconciliation
- * (`reconcileRepos`, D-35), then lease expiry and the boot orphan kill
- * (D-13, `./boot/orphans.js`), then the backend preflight gate (04-07,
+ * (`reconcileRepos`, D-35), then the production `adl.yml` gate (05-04 —
+ * `resolveProductionAdlYml`, skipped entirely when `options.resolveAdlYml`
+ * is supplied), then lease expiry and the boot orphan kill (D-13,
+ * `./boot/orphans.js`), then the backend preflight gate (04-07,
  * D-01/D-02 — `runBackendPreflight`, when `options.agentBackendVersionCheck`
- * is supplied), then dispatch. A refusal from either gate exits before the
+ * is supplied), then dispatch. A refusal from any gate exits before the
  * API server binds —
- * `startDaemon` throws {@link SchemaVersionRefusalError} rather than returning
- * a handle.
+ * `startDaemon` throws {@link SchemaVersionRefusalError} or
+ * {@link AdlYmlUnavailableError} rather than returning a handle.
  */
 
 /** The compiled worker entry's default location, relative to this module. */
@@ -90,7 +98,21 @@ export interface StartDaemonOptions {
   readonly leaseTtlMs: number;
   readonly heartbeatIntervalMs: number;
   readonly daemonConfig: DaemonConfig;
-  readonly resolveAdlYml: (feature: FeaturesTable) => AdlYml;
+  /**
+   * Resolves the watched repository's effective `adl.yml` for a feature.
+   * Required, synchronous, injected-dependency shape kept exactly as M03
+   * left it (`boot/startup.ts`'s docblock names it as the precedent other
+   * gates follow) — the real I/O happens once, at boot, before this
+   * closure exists.
+   *
+   * Optional here: absent, `startDaemon` resolves the production default
+   * itself (05-04, `resolveProductionAdlYml`) by reading `adl.yml` off
+   * `mainRepo`'s own working tree and refusing to start
+   * ({@link AdlYmlUnavailableError}) when it is missing or invalid. Supply
+   * this explicitly to bypass that read entirely — every test fixture that
+   * predates 05-04 keeps doing exactly that, unchanged.
+   */
+  readonly resolveAdlYml?: (feature: FeaturesTable) => AdlYml;
   /**
    * The directory a workspace backend may create a per-feature workspace
    * under (04-04). Defaults to a `scratch` directory beside the database
@@ -262,6 +284,48 @@ export async function startDaemon(
 
   // D-35: reconcile watched repositories next.
   await reconcileRepos({ db, repos: options.daemonConfig.repos, logger });
+
+  // 05-04: the production `adl.yml` gate. Skipped entirely when the caller
+  // supplied its own `resolveAdlYml` (every pre-05-04 test fixture, and any
+  // caller that wants to bypass the read for its own reasons) — matching
+  // the backend preflight gate's own "absent means skip" precedent below,
+  // except this one has no boolean switch: the injected function's own
+  // presence IS the switch. Real I/O happens exactly once, here, through a
+  // host-rooted workspace over `mainRepo` — never a per-dispatch read, and
+  // never a git-ref lookup (`resolveProductionAdlYml`'s own docblock
+  // explains why a plain working-tree read is correct for this root
+  // specifically).
+  async function resolveProductionAdlYmlOrThrow(): Promise<
+    (feature: FeaturesTable) => AdlYml
+  > {
+    const hostWorkspace = await hostGitWorkspace({
+      featureId: 'adl-daemon-boot',
+      mainRepo,
+      scratchRoot,
+      baseRef: 'HEAD',
+    });
+    const outcome = await resolveProductionAdlYml({
+      readFile: (path) => hostWorkspace.read(path),
+    });
+    if (outcome.kind === 'refused') {
+      logger.error(outcome.refusal, 'adl.yml gate: refusing to start');
+      await db.destroy();
+      throw new AdlYmlUnavailableError(outcome.refusal);
+    }
+    logger.info(
+      { path: ADL_YML_PATH },
+      'adl.yml gate: resolved a production configuration',
+    );
+    const config = outcome.config;
+    return () => config;
+  }
+
+  // A `const` of a definite (non-optional) function type, resolved once —
+  // never a `let` narrowed by an `if`: `runDispatchOnce` below closes over
+  // this across an `await` boundary, and TypeScript does not carry a
+  // mutable binding's narrowing into a nested closure.
+  const resolveAdlYml: (feature: FeaturesTable) => AdlYml =
+    options.resolveAdlYml ?? (await resolveProductionAdlYmlOrThrow());
 
   // D-13: kill any still-running orphan from a previous daemon process
   // *before* expiring leases — `killBootOrphans` needs `lease_owner`'s PID
@@ -453,7 +517,7 @@ export async function startDaemon(
       leaseTtlMs: options.leaseTtlMs,
       heartbeatIntervalMs: options.heartbeatIntervalMs,
       daemonConfig: options.daemonConfig,
-      resolveAdlYml: options.resolveAdlYml,
+      resolveAdlYml,
       controlState,
       logger,
       mainRepo,

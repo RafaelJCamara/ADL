@@ -24,7 +24,7 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b) and
-five of its steps (5.1, 5.2, 5.3, 5.8, 5.9) are done; groups A–D still have 5.4–5.7,
+six of its steps (5.1, 5.2, 5.3, 5.4, 5.8, 5.9) are done; groups A–D still have 5.5–5.7,
 5.10–5.12, and all of C and D ahead.**
 
 ```
@@ -32,7 +32,7 @@ M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.3/5.8/5.9 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1/5.2/5.3/5.4/5.8/5.9 done
 M06–M18 ............................. not started
 ```
 
@@ -57,16 +57,24 @@ still has to clear one more: the trusted-path filter (SPEC-06)
 (`@adl/core/detect`'s `evaluateSpecTrust` + `packages/manager/src/detect/trust.ts`'s
 `evaluateFeatureTrust`) rejects a folder whose most recent commit was authored by an account
 without write access — a real check against `ForgeAdapter.authorPermission`, never the raw
-git author identity, which is trivially spoofable.
+git author identity, which is trivially spoofable. And `startDaemon` now has a real,
+production `resolveAdlYml` (`packages/manager/src/config/resolve-adl-yml.ts`'s
+`resolveProductionAdlYml`): it reads `adl.yml` off `mainRepo`'s own working tree through
+`@adl/workspace`'s `hostGitWorkspace.read()` once at boot, and refuses to start
+(`AdlYmlUnavailableError`) rather than dispatch a single feature when the file is missing or
+invalid — the same refuse-before-the-API-binds shape the schema and backend-preflight gates
+already use. It is the default now, used whenever a caller doesn't inject its own
+`resolveAdlYml` (every pre-5.4 test still does, unchanged).
 
 **What does not exist yet:** enqueueing anything the *undeveloped* + trust predicates admit
-(still not called from anywhere but their own tests), a production `resolveAdlYml` and the
-polling loop (5.4–5.7), promote-to-ready/sticky-comments/never-merge wiring (5.10–5.12), and
-the whole round loop — gates, send-back, protected-path enforcement (group C) — plus
-per-round accounting (group D). None of the new pieces above are wired into `daemon.ts`'s
-automatic dispatch yet; they were proven to compose by calling each directly, matching the
-milestone's own tracer-then-widen discipline. `dev-run` still fires a single synthetic
-`develop` stage by hand.
+(still not called from anywhere but their own tests), the polling loop and restart
+reconciliation (5.5–5.6), an `adl daemon start` that actually boots the manager (5.7),
+promote-to-ready/sticky-comments/never-merge wiring (5.10–5.12), and the whole round loop —
+gates, send-back, protected-path enforcement (group C) — plus per-round accounting (group D).
+None of the new detection pieces above are wired into `daemon.ts`'s automatic dispatch yet;
+they were proven to compose by calling each directly, matching the milestone's own
+tracer-then-widen discipline. `dev-run` still fires a single synthetic `develop` stage by
+hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -77,26 +85,27 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group A: **5.4**, a production `resolveAdlYml` — M03 left this as a required injected
-function with no real implementation; implement it and wire it into `startDaemon`. This also
-unblocks **5.7**, `adl daemon start`.
+with group A: **5.5**, the polling loop (DETECT-03) — a croner job that re-runs detection on
+an interval and enqueues what's new, reusing `gc-schedule.ts`'s shape (`protect: true`, one
+pass per tick, each step in its own try/catch). This is also the first production caller of
+5.2's `undevelopedFeatures` and 5.3's `evaluateFeatureTrust` — 5.1–5.4 all exist and are
+tested in isolation, but nothing yet calls them from `daemon.ts`'s automatic dispatch.
 
-After 5.4: **5.5** (the polling loop, reusing `gc-schedule.ts`'s shape — this is also the
-first production caller of 5.2's `undevelopedFeatures` and 5.3's `evaluateFeatureTrust`),
-**5.6** (exclusive claim + restart reconciliation, DETECT-05 — reuses 5.2's predicate for the
-lost-row case). Then group B's remainder — **5.10** (draft-at-round-1/promote-when-green
-wiring),
+After 5.5: **5.6** (exclusive claim + restart reconciliation, DETECT-05 — reuses 5.2's
+predicate for the lost-row case), then **5.7** (make `adl daemon start` actually boot the
+manager in-process — 5.4 already unblocked this). Then group B's remainder — **5.10**
+(draft-at-round-1/promote-when-green wiring),
 **5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
 exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
 **5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge method;
 5.12 is the assertion that reads its own shape and fails if one is ever added). Group C (the
-round loop itself) needs 5.4's `resolveAdlYml` and reuses `resolvePipeline`
-(`@adl/core/config`, still no caller). Group D (accounting) can run in parallel with C once a
-round exists to record against.
+round loop itself) reuses `resolvePipeline` (`@adl/core/config`, still no caller). Group D
+(accounting) can run in parallel with C once a round exists to record against.
 
-Steps 5.4 and 5.7 close a gap M03 shipped deliberately: **`adl daemon start`
-currently prints an honest gap message and exits 1**, because it needs a production
-`resolveAdlYml` that only detection can provide.
+Step 5.7 closes a gap M03 shipped deliberately: **`adl daemon start`
+currently prints an honest gap message and exits 1**, because it needed a production
+`resolveAdlYml` that only detection could provide — 5.4 supplied that; 5.7 is now the
+CLI/manager package-boundary decision (D-21) that was the other half of the gap, still open.
 
 **Before you plan M05 in detail, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
