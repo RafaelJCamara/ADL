@@ -38,6 +38,10 @@
     "./detect": {
       "types": "./dist/detect/index.d.ts",
       "default": "./dist/detect/index.js"
+    },
+    "./forge": {
+      "types": "./dist/forge/index.d.ts",
+      "default": "./dist/forge/index.js"
     }
   },
   "scripts": {
