@@ -207,6 +207,37 @@ export interface ManagerGitClient {
    * reporting the poisoned one.
    */
   effectiveConfig(key: string): Promise<string | undefined>;
+  /**
+   * Every file that exists at `ref`, repo-relative, optionally restricted to
+   * one `pathPrefix` (M05's detection scanner — `git ls-tree`, not a working
+   * tree walk, so this reads the DEFAULT BRANCH's committed state rather than
+   * whatever an agent's worktree currently has checked out).
+   *
+   * `pathPrefix` is a plain string handed to git's own pathspec matching —
+   * git itself, not this client, decides what "under `pathPrefix`" means, so
+   * there is nothing here to contain: an out-of-tree pathspec simply matches
+   * nothing.
+   */
+  listFiles(ref: string, pathPrefix?: string): Promise<readonly string[]>;
+  /**
+   * Push `refspec` to `remoteUrl` (M05's forge publish step).
+   *
+   * **Deliberately no credential parameter.** `NEUTRALISE_ARGS` already
+   * resets `credential.helper` to empty on every invocation this client
+   * makes (see the class docblock), so the one git-native mechanism left for
+   * an authenticated HTTPS push is a `remoteUrl` carrying its own
+   * `https://<user>:<token>@host/...` — libcurl reads embedded URL
+   * credentials directly and never consults a helper, so this needs no
+   * change to the neutralisation list. Building that URL — obtaining a
+   * short-lived installation token and formatting it in — is the caller's
+   * job (the forge adapter), never this client's: `test/git/manager-git.test.ts`'s
+   * credential-boundary suite is what keeps a "just add a token field"
+   * shortcut from landing here instead. The one accepted residual this
+   * choice carries — the credential is a plain `remoteUrl` argv element, and
+   * argv is visible to another process on the same host via `ps` — is
+   * recorded in `docs/plan/DEBT.md` rather than solved by this signature.
+   */
+  push(remoteUrl: string, refspec: string): Promise<void>;
 }
 
 export interface ManagerGitClientOptions {
@@ -393,6 +424,36 @@ export function managerGitClient(
       }
 
       return outcome.stdout.trim();
+    },
+
+    async listFiles(
+      ref: string,
+      pathPrefix?: string,
+    ): Promise<readonly string[]> {
+      // `--end-of-options` so a ref beginning with `-` is a ref, matching
+      // `revParse`'s own guard. `-z` for the same reason `status` uses it: a
+      // path containing a space, quote, or non-ASCII byte would otherwise
+      // arrive quoted and escaped rather than literal.
+      const args = [
+        'ls-tree',
+        '-r',
+        '--name-only',
+        '-z',
+        '--end-of-options',
+        ref,
+      ];
+      if (pathPrefix !== undefined) args.push('--', pathPrefix);
+      const raw = await gitOk(args);
+      return raw.split('\0').filter((path) => path !== '');
+    },
+
+    async push(remoteUrl: string, refspec: string): Promise<void> {
+      // No `--end-of-options`: unlike a revision or a config key, a remote
+      // URL and a refspec are never attacker-shaped input this client has to
+      // defend a leading `-` against — both are assembled by the caller from
+      // known-good pieces (a configured repo's remote and ADL's own
+      // `adl/<feature-id>` branch convention, D-13).
+      await gitOk(['push', remoteUrl, refspec]);
     },
   };
 }

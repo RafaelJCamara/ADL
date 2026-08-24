@@ -25,6 +25,7 @@ import type {
   LogChunk,
   Workspace,
 } from '@adl/core/stage';
+import { simpleGit } from 'simple-git';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as managerGitModule from '../../src/git/manager-git.js';
 import {
@@ -37,7 +38,11 @@ import {
   workspaceRegistry,
   WORKSPACE_BACKEND_IDS,
 } from '../../src/registry.js';
-import { openTempRepo, type OpenedTempRepo } from '../helpers/temp-repo.js';
+import {
+  openTempRepo,
+  withTempRepo,
+  type OpenedTempRepo,
+} from '../helpers/temp-repo.js';
 
 let repo: OpenedTempRepo;
 
@@ -90,6 +95,12 @@ describe('the neutralisation cannot be reached around', () => {
     revParse: (client) => client.revParse('HEAD'),
     branches: (client) => client.branches(),
     effectiveConfig: (client) => client.effectiveConfig('user.name'),
+    listFiles: (client) => client.listFiles('HEAD'),
+    push: (client) =>
+      client.push(
+        'https://example.invalid/repo.git',
+        'refs/heads/main:refs/heads/main',
+      ),
   };
 
   it('drives every member the client exposes, with none left uncovered', async () => {
@@ -402,5 +413,151 @@ describe('the operator-facing record of what is overridden', () => {
     );
 
     expect(documented.sort()).toEqual([...neutralised].sort());
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 6. listFiles and push against a real repository (M05: the detection scanner
+ *    and the forge publish step)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('listFiles', () => {
+  it('lists committed files under one path prefix, and nothing outside it', async () => {
+    await withTempRepo(async (ctx) => {
+      await mkdir(join(ctx.mainRepo, 'features', 'dark-mode'), {
+        recursive: true,
+      });
+      await writeFile(
+        join(ctx.mainRepo, 'features', 'dark-mode', 'spec.md'),
+        '# Dark mode\n',
+        'utf8',
+      );
+      await ctx.git.add('features/dark-mode/spec.md');
+      await ctx.git.raw(['commit', '-m', 'add feature']);
+
+      const host = await workspaceRegistry({
+        hostGit: {
+          configHome: join(ctx.scratchRoot, '..', 'adl-home-listfiles'),
+        },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-listfiles',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        const underFeatures = await managerGitClient(host).listFiles(
+          'HEAD',
+          'features',
+        );
+        expect(underFeatures).toEqual(['features/dark-mode/spec.md']);
+
+        const everything = await managerGitClient(host).listFiles('HEAD');
+        expect(everything.sort()).toEqual(
+          ['tracked.txt', 'features/dark-mode/spec.md'].sort(),
+        );
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+
+  it('returns empty for a prefix with no committed files, never throwing', async () => {
+    await withTempRepo(async (ctx) => {
+      const host = await workspaceRegistry({
+        hostGit: {
+          configHome: join(ctx.scratchRoot, '..', 'adl-home-listfiles-empty'),
+        },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-listfiles-empty',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        await expect(
+          managerGitClient(host).listFiles('HEAD', 'features'),
+        ).resolves.toEqual([]);
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+});
+
+describe('push', () => {
+  it('publishes a real commit to a real remote, through the same neutralised chokepoint', async () => {
+    await withTempRepo(async (ctx) => {
+      const bareRemote = join(ctx.scratchRoot, '..', 'bare-remote.git');
+      await mkdir(bareRemote, { recursive: true });
+      await simpleGit(bareRemote).init(['--bare']);
+
+      await writeFile(join(ctx.mainRepo, 'dev.txt'), 'developer work\n');
+      await ctx.git.add('dev.txt');
+      await ctx.git.raw(['commit', '-m', 'developer work']);
+      const headSha = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      const host = await workspaceRegistry({
+        hostGit: { configHome: join(ctx.scratchRoot, '..', 'adl-home-push') },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-push',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        await managerGitClient(host).push(
+          bareRemote,
+          'HEAD:refs/heads/adl/dark-mode',
+        );
+
+        const remoteHead = (
+          await simpleGit(bareRemote).raw([
+            'rev-parse',
+            'refs/heads/adl/dark-mode',
+          ])
+        ).trim();
+        expect(remoteHead).toBe(headSha);
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+
+  it('rejects with the git failure named, when the remote refuses the push', async () => {
+    await withTempRepo(async (ctx) => {
+      const host = await workspaceRegistry({
+        hostGit: {
+          configHome: join(ctx.scratchRoot, '..', 'adl-home-push-fail'),
+        },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-push-fail',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        await expect(
+          managerGitClient(host).push(
+            join(ctx.scratchRoot, '..', 'does-not-exist.git'),
+            'HEAD:refs/heads/adl/dark-mode',
+          ),
+        ).rejects.toThrow(/git push .* failed with exit code/);
+      } finally {
+        await host.destroy();
+      }
+    });
   });
 });
