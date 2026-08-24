@@ -19,9 +19,9 @@
   },
   "scripts": {
     "build": "tsc -b && node -e \"require('fs').cpSync('src/prompt/templates','dist/prompt/templates',{recursive:true})\"",
-    "pretypecheck": "tsc -b ../core ../db ../workspace ../agent-claude-code",
+    "pretypecheck": "tsc -b ../core ../db ../workspace ../agent-claude-code ../forge-github",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "pretest": "tsc -b ../core ../db ../workspace ../agent-claude-code",
+    "pretest": "tsc -b ../core ../db ../workspace ../agent-claude-code ../forge-github",
     "test": "vitest run"
   },
   "dependencies": {
@@ -39,6 +39,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@adl/forge-github": "workspace:*",
     "@types/node": "22.20.1",
     "typescript": "catalog:",
     "vitest": "catalog:"
