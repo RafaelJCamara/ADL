@@ -310,7 +310,14 @@ describe('the credential boundary (D-09, D-12, WORK-06)', () => {
       // rather than the lifetime of one call.
       expect(Object.keys(workspace).sort()).toEqual(
         [
+          // `detach` is M05 step 5.14's, and this assertion is the reason it is
+          // listed here rather than noticed later: a port widening has to be a
+          // deliberate line in a diff, since every new member is a new place a
+          // credential could be parked for the lifetime of a feature rather
+          // than the lifetime of one call. It went red on the widening, which
+          // is the whole job.
           'destroy',
+          'detach',
           'exec',
           'id',
           'read',

@@ -101,7 +101,7 @@ async function openChangeRequest(): Promise<{ number: number }> {
 async function runRound(
   db: Kysely<Database>,
   featureId: string,
-  { close }: { close?: string } = {},
+  { close, sha }: { close?: string; sha?: string } = {},
 ): Promise<string> {
   const attempt = await openAttempt(
     { db },
@@ -111,6 +111,15 @@ async function runRound(
     { db },
     { stageAttemptId: attempt.stageAttemptId, status: 'verdict' },
   );
+  if (sha !== undefined) {
+    // What the round loop writes when a developer stage reports `committed`
+    // (M05 step 5.14). Through the repository rather than a raw UPDATE, so
+    // this fixture exercises the same writer production uses.
+    await featuresRepository(db).recordRoundHeadSha({
+      id: attempt.roundId,
+      headSha: sha,
+    });
+  }
   if (close !== undefined) {
     await db
       .updateTable('rounds')
@@ -136,11 +145,7 @@ describe('publishStickyComment', () => {
           featureId: feature.id,
           changeRequest: (await forge.listOpenChangeRequests(FORGE_REPO))[0]!,
           role: DEVELOPER,
-          note: {
-            roundId,
-            line: 'Committed `abc1234`.',
-            headline: 'committed `abc1234`',
-          },
+          note: { roundId, sha: 'abc1234' },
         },
       );
 
@@ -164,33 +169,28 @@ describe('publishStickyComment', () => {
       const { logger } = createCapturingLogger();
       const cr = (await forge.listOpenChangeRequests(FORGE_REPO))[0]!;
 
-      const firstRound = await runRound(db, feature.id, { close: 'send_back' });
+      const firstRound = await runRound(db, feature.id, {
+        close: 'send_back',
+        sha: '1111111',
+      });
       await publishStickyComment(
         { db, logger, forge, forgeRepo: FORGE_REPO },
         {
           featureId: feature.id,
           changeRequest: cr,
           role: DEVELOPER,
-          note: {
-            roundId: firstRound,
-            line: 'Committed `1111111`.',
-            headline: 'committed `1111111`',
-          },
+          note: { roundId: firstRound, sha: '1111111' },
         },
       );
 
-      const secondRound = await runRound(db, feature.id);
+      const secondRound = await runRound(db, feature.id, { sha: '2222222' });
       await publishStickyComment(
         { db, logger, forge, forgeRepo: FORGE_REPO },
         {
           featureId: feature.id,
           changeRequest: cr,
           role: DEVELOPER,
-          note: {
-            roundId: secondRound,
-            line: 'Committed `2222222`.',
-            headline: 'committed `2222222`',
-          },
+          note: { roundId: secondRound, sha: '2222222' },
         },
       );
 
@@ -203,21 +203,22 @@ describe('publishStickyComment', () => {
       expect(body).toContain('<summary>Round 1 — send_back</summary>');
       expect(body).toContain('- Attempt 1 — completed');
 
-      // Round 1 is re-derived from the database, NOT carried over from the
-      // comment it was previously rendered into: its headline is the outcome
-      // `rounds` recorded, and the note it carried while it was the newest
-      // round — the commit sha — is gone.
+      // ── `docs/plan/DEBT.md` D-5-11-1, closed (M05 step 5.14) ─────────────
       //
-      // M05 step 5.13 answered half of the question this assertion was left
-      // here to force (`docs/plan/DEBT.md` D-5-11-1). The round loop writes
-      // real outcomes now, so a finished round says what it decided rather
-      // than degrading — see the `renders a finished round's outcome` case
-      // below. The sha specifically is still absent, and that is now a
-      // *diagnosed* gap rather than an open question: `RoundOutcome` has no
-      // field for a commit, so no amount of writing `outcome_json` was ever
-      // going to carry one. Its home is a `rounds.head_sha` column.
+      // Round 1 is re-derived from the database, NOT carried over from the
+      // comment it was previously rendered into — and the version of this
+      // assertion that stood here through 5.11 and 5.13 said its commit sha
+      // was therefore *gone*, deliberately asserting the defect so that
+      // whichever step added `rounds.head_sha` would trip over it. This is
+      // that step, and the assertion is inverted rather than deleted:
+      //
+      // - the sha survives, because the column does;
+      // - the headline is still the OUTCOME, not the sha. A closed round
+      //   leads with what it decided (`send_back` says more to a human
+      //   scanning folds than `1111111` does) and carries the sha on the
+      //   first line of the fold, where it is one click away.
+      expect(body).toContain('Committed `1111111`.');
       expect(body).not.toContain('Round 1 — committed `1111111`');
-      expect(body).not.toContain('Committed `1111111`.');
     });
   });
 

@@ -36,10 +36,17 @@ import {
   hostGitWorkspace,
   type HostGitWorkspaceOptions,
 } from './git/host-backend.js';
-import { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
+import {
+  attachStubWorkspace,
+  listStubWorkspaces,
+  stubWorkspace,
+} from './stub/backend.js';
 import { featureIdFromBranch } from './worktree/lifecycle.js';
 import { listManagedWorktrees } from './worktree/list.js';
-import { worktreeWorkspace } from './worktree/backend.js';
+import {
+  attachWorktreeWorkspace,
+  worktreeWorkspace,
+} from './worktree/backend.js';
 
 /**
  * The backends that ship with ADL.
@@ -111,6 +118,7 @@ export interface WorkspaceRegistry {
 const worktreeBackend: WorkspaceBackend = {
   id: 'worktree',
   create: (spec: WorkspaceSpec) => worktreeWorkspace(spec),
+  attach: (spec: WorkspaceSpec) => attachWorktreeWorkspace(spec),
   async list(mainRepo: string): Promise<readonly ManagedWorkspace[]> {
     const entries = await listManagedWorktrees(mainRepo);
     return entries.flatMap((entry) => {
@@ -129,6 +137,7 @@ const worktreeBackend: WorkspaceBackend = {
 const stubBackend: WorkspaceBackend = {
   id: 'stub',
   create: (spec: WorkspaceSpec) => stubWorkspace(spec),
+  attach: (spec: WorkspaceSpec) => attachStubWorkspace(spec),
   list: (mainRepo: string) => Promise.resolve(listStubWorkspaces(mainRepo)),
 };
 
@@ -153,11 +162,18 @@ const stubBackend: WorkspaceBackend = {
  * inventory exists so the GC sweep can find workspaces to reclaim (D-20), and
  * the one resource this backend addresses is the repository ADL was installed
  * into. An entry here would invite a sweep to act on it.
+ *
+ * `attach` is the same function as `create` (M05 step 5.14), and for the
+ * mirror-image reason `detach` and `destroy` collapse on this backend: the
+ * thing `attach` exists to find is *always already there*, because it is the
+ * repository ADL was installed into. There is no "nothing here" case to report,
+ * so this is the one backend whose `attach` never returns `undefined`.
  */
 function hostGitBackend(options: HostGitWorkspaceOptions): WorkspaceBackend {
   return {
     id: 'host-git',
     create: (spec: WorkspaceSpec) => hostGitWorkspace(spec, options),
+    attach: (spec: WorkspaceSpec) => hostGitWorkspace(spec, options),
     list: () => Promise.resolve([]),
   };
 }

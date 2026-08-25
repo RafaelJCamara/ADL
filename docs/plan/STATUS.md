@@ -24,14 +24,14 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), all of group B (5.8–5.12), and group C's opener (5.13) are done.**
+group A (5.1–5.7), all of group B (5.8–5.12), and group C's 5.13 and 5.14 are done.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener, groups A and B, and 5.13 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener, groups A and B, 5.13, 5.14 done
 M06–M18 ............................. not started
 ```
 
@@ -256,14 +256,43 @@ round's real result, which `role-rounds.ts` reads: a finished round folds away a
 `send_back — 3 findings` rather than a bare kind. The sha needs a `rounds.head_sha` column,
 and moves to 5.14 alongside its second consumer.
 
-**What does not exist yet:** a real gate (5.14 — the command gate; today a non-developer
-stage honestly refuses), send-back context in the next prompt (5.15), protected-path
-enforcement (5.16), gate isolation (5.17), and per-round accounting (group D). **And the
-gap 5.13 found and did not fix (`DEBT.md` D-5-13-1, owner 5.14):** a workspace does not
-survive the stage that created it — `destroy()` runs in the stage runner's `finally` and
-`createWorktree` refuses to attach to an existing worktree — so a real gate would branch
-from `baseRef` and judge a tree with none of the developer's work in it. The same gap
-breaks crash recovery today.
+And there is now a **real gate** (5.14, and it is the step the milestone's own AC2 turns
+on). `packages/manager/test/scenario/command-gate-loop.test.ts` drives a real
+`startDaemon()` through `develop → the test command fails → send back → round 2's developer
+→ the test command passes → publishing`, with the *real* `createProductionStageRunner` in
+four real forked workers and only the billed `claude` binary doubled. 5.13 proved that shape
+against a **scripted** worker; the difference is that nothing in it ever ran a command, so
+nothing ever needed the developer's commit to still exist — which is exactly why
+`DEBT.md` D-5-13-1 was found by reading code rather than by a red test.
+**Closing D-5-13-1 is most of this step**, and the port was missing two symmetric pairs
+rather than one method: `create ↔ destroy` reclaims the **workspace**, `attach ↔ detach`
+reclaims the **run**. `WorkspaceBackend.attach(spec)` (the method ARCHITECTURE.md §1 has
+named since before M01 and that was never built) returns `Workspace | undefined` —
+`undefined` for the ordinary "nothing here" first-stage case, and a *throw* for a
+half-present workspace, since reporting the second as the first would send the caller to
+`create()` and silently replace an agent's committed work. `Workspace.detach()` reclaims the
+scratch `HOME` and leaves the worktree. The stage runner now does
+`attach(spec) ?? create(spec)` and ends with `detach()`, and **no stage calls `destroy()`
+at all** — reclaiming a workspace is a decision made from feature state (D-16) and `gc.ts`'s
+sweep is what makes it. That also fixes crash recovery, which `dispatchOnce` has preserved
+`workspace_handle` for since M03 with nothing to attach with. **Maintainer decision:**
+`detach()` widens `Workspace`, which *is* republished through `@adl/plugin-sdk` and so is
+one-way (D-01) — the debt item claimed `WorkspaceBackend` was the published half and it is
+not, inverting which method is expensive; added now, before that package ships (M18), for
+D-27's reason.
+The gate itself is deliberately small (`worker-entry/command-gate.ts`): one command through
+`workspace.exec`, three answers — exit 0 → `pass` citing `{kind:'global', category:'build'}`
+(never a criterion), non-zero → `send_back` with one blocker finding carrying a bounded tail
+of the output, and **killed rather than exited → a `StageError`, not a verdict**, because a
+command with no exit code judged nothing and reporting one anyway would make an
+infrastructure failure cost the developer a round (CORE-06). It takes a workspace and a
+command and nothing else — no spec, no prompt, no agent — so ROLE-03's isolation (5.17) is
+already the shape of the call. `rounds.head_sha` (migration `0005`) closes D-5-11-1: written
+when the developer stage reports `committed`, never at round close, because a developer
+stage in a pipeline with any gate in it `advance`s rather than completing.
+
+**What does not exist yet:** send-back context in the next prompt (5.15), protected-path
+enforcement (5.16), formal gate isolation (5.17), and per-round accounting (group D).
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -274,20 +303,25 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-group C with **5.14 — the command-gate stage**. Groups A and B are closed and 5.13 has
-turned the loop.
+group C with **5.15 — send-back carries the failing verdict into the next developer prompt
+as context (LOOP-02)**. Groups A and B are closed, and 5.13/5.14 have turned the loop with
+a real gate.
 
-**5.14 is bigger than its one-line description, and 5.13 is why.** Before it can run
-`adl.yml`'s test command against the developer's work, it has to make the workspace survive
-the stage that created it (`DEBT.md` **D-5-13-1**): `createProductionStageRunner` destroys
-the worktree in its `finally` and `createWorktree` deliberately refuses to attach to an
-existing one, so a gate would branch from `baseRef` and judge a tree with none of the commit
-in it. `WorkspaceBackend.attach` is the shape ARCHITECTURE.md §1 already names and that was
-never built — note it widens a **one-way port** republished through `@adl/plugin-sdk`.
-The same gap breaks crash recovery today, so fixing it pays twice. 5.14 also inherits
-`rounds.head_sha` (`DEBT.md` D-5-11-1's residue): a gate needs the diff between the base and
-this round's commit, which is the same column a prior round's sticky-comment fold needs.
-Group D (accounting) can now run in parallel — real rounds exist to record against.
+**5.15 is the step that makes the send-back mean something.** Today round 2's developer is
+handed the identical prompt round 1 got: `buildDeveloperPrompt` takes
+`(spec, effectiveConfig, capabilities, workspaceRoot)` and nothing about what the gate said,
+so the loop is currently "run again and hope". The `SendBackBrief` the prompt builder's own
+determinism contract already names as its fourth input is written to `rounds.outcome_json`
+by 5.13's round loop and read by nobody. Note the plumbing constraint: a worker cannot read
+the database (`adl/worker-entry-no-db`), so the brief has to travel on `AssignMessage` the
+way `pushUrl` and `effectiveConfigJson` already do — the dispatcher is where it is read and
+attached, and `dispatchOnce`'s continuation path is where a mid-flight round's brief would
+be looked up.
+
+After that, **5.16** (protected-path enforcement) is the first real consumer of
+`rounds.head_sha` — it needs the diff between the base and this round's commit, which the
+command gate did not, because it runs *inside* the attached worktree where `HEAD` already is
+that commit. Group D (accounting) can run in parallel — real rounds exist to record against.
 
 **Before you plan M05 in detail, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
@@ -352,10 +386,10 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 | `packages/core` | The settled vocabulary — verdicts, findings, criterion IDs, normalized specs, `adl.yml`/`EffectiveConfig`, the lifecycle state machine, **the round loop's decision** (5.13, `@adl/core/loop`), and the port *declarations* (`Workspace`, `AgentRunner`, `Stage`). **Pure and I/O-free, lint-enforced.** | nothing, deliberately |
 | `packages/plugin-sdk` | The small published contract a third-party gate depends on. Re-exports `@adl/core`; **defines nothing of its own.** | core |
 | `packages/db` | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`. | core (dev) |
-| `packages/workspace` | **The exec boundary.** Worktree lifecycle, zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
+| `packages/workspace` | **The exec boundary.** Worktree lifecycle — including `attach`/`detach`, so a workspace outlives the stage that created it (5.14) — zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
 | `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`) and for the credentialed publish side — push, open a draft change request, upsert each role's sticky comment (5.10, 5.11). Both list calls paginate. | core |
-| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
+| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, `src/worker-entry/command-gate.ts`), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
 | `packages/cli` | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`). | nothing, by design |
 
 No `apps/` directory — the dashboard is M17 and unbuilt.
@@ -386,6 +420,11 @@ Nothing blocks M05. Two things to know before you start:
 2. **D-2-R-1** ([`DEBT.md`](./DEBT.md) § 2) — the highest-severity open item. Concurrent
    features are not isolated from each other. Accepted for v1, with "concurrency > 1 on a
    shared host" as an explicit revisit trigger.
+3. **D-5-14-1** ([`DEBT.md`](./DEBT.md) § 3, new) — a finished feature's worktree is now
+   never collected. `TERMINAL_STATES` is `merged`/`abandoned`, and v1 produces neither
+   (ADL never merges; nothing watches for a human doing it until M10). Invisible before
+   5.14 only because the stage runner destroyed the worktree every stage, which was itself
+   the defect. Owner M09; not blocking, but it accumulates.
 
 ---
 

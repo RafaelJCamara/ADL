@@ -248,6 +248,111 @@ export async function createWorktree(
 }
 
 /**
+ * Re-open the worktree a previous stage created, or report that there is none.
+ *
+ * The counterpart to {@link createWorktree}, and the reason
+ * {@link createWorktree}'s refusal can stay as absolute as it is: "attach to
+ * what is already there" is now a *different call*, made deliberately, rather
+ * than a clean-up-and-retry decision `createWorktree` would have had to make
+ * from the filesystem (WORK-04 forbids exactly that). One worker holds one
+ * lease and one lease holds one feature, so the exclusion this function relaxes
+ * is enforced a layer up, by the lease, not by hoping the directory is free.
+ *
+ * **Three answers, and the middle one is the whole point.**
+ *
+ * - Neither the directory nor the branch exists → `undefined`. Nothing is here;
+ *   this is the ordinary round-1-index-0 case and not a failure.
+ * - Both exist, and git agrees the directory is a worktree with that branch
+ *   checked out → the same {@link CreatedWorktree} `createWorktree` returns.
+ * - **Anything else → throws.** A directory with no branch, a branch with no
+ *   directory, a path git does not recognise, a worktree sitting on some other
+ *   branch: reporting any of those as "nothing here" would send the caller to
+ *   `createWorktree`, which would either refuse with a message about the wrong
+ *   thing or — in the case git had lost track of the directory — succeed and
+ *   silently replace an agent's committed work. The distinction between "there
+ *   is nothing here" and "there is something here I will not attach to" is the
+ *   one this function exists to make.
+ *
+ * The last check is asked of the **worktree itself** (`rev-parse --abbrev-ref
+ * HEAD` run inside it) rather than of the main repository's inventory, because
+ * that is the fact that actually matters: every later `git` the stage runs —
+ * `revParse`, `push`, a gate's `diff` — runs in that directory, and a directory
+ * git will not answer for is one none of them can use. It also costs one
+ * command instead of a porcelain parse, and avoids an import cycle with
+ * `list.ts` (which reads {@link featureIdFromBranch} from here).
+ */
+export async function attachWorktree(
+  mainRepo: string,
+  scratchRoot: string,
+  featureId: string,
+): Promise<CreatedWorktree | undefined> {
+  assertUsableFeatureId(featureId);
+
+  const worktreePath = join(scratchRoot, featureId);
+  const branch = branchNameFor(featureId);
+
+  const onDisk = await exists(worktreePath);
+  // The same `branch --list --end-of-options` form and the same reasoning as
+  // `createWorktree`'s: absence is empty output rather than a non-zero exit,
+  // and the terminator is required because the pattern is derived from an
+  // untrusted feature id (D-22).
+  const branchListed = await adlGit(mainRepo).rawOk([
+    'branch',
+    '--list',
+    '--end-of-options',
+    branch,
+  ]);
+  const branchExists = branchListed.trim() !== '';
+
+  if (!onDisk && !branchExists) return undefined;
+
+  if (!onDisk || !branchExists) {
+    throw new WorkspaceError(
+      `Refusing to attach to the workspace for feature ${JSON.stringify(featureId)}: it is half present — ` +
+        `${onDisk ? `${worktreePath} exists but branch ${branch} does not` : `branch ${branch} exists but ${worktreePath} does not`}. ` +
+        'Reclaiming what is left is the GC sweep’s decision, and the sweep asks feature state.',
+      featureId,
+    );
+  }
+
+  // `symbolic-ref --short`, NOT `rev-parse --abbrev-ref`. Verified against git
+  // 2.49 (house convention 15, and this probe earned its keep — the first
+  // implementation used `rev-parse` and the contract suite caught it):
+  //
+  // - `git rev-parse --abbrev-ref --end-of-options HEAD` prints TWO lines,
+  //   `--end-of-options` and then the branch. `rev-parse` echoes an argument it
+  //   does not recognise instead of honouring the terminator, so the guard this
+  //   file applies everywhere else silently corrupts the answer here.
+  //   `symbolic-ref` honours it.
+  // - `symbolic-ref` exits 128 on a **detached** HEAD, where `rev-parse
+  //   --abbrev-ref` prints the string `HEAD` and exits 0. Detached is a
+  //   worktree ADL must refuse rather than one it must string-compare its way
+  //   out of, so the failure lands on the exit code where it belongs.
+  // - It exits 128 on a directory that is not a working tree at all, which is
+  //   the other half of what this check is for.
+  const head = await adlGit(worktreePath).raw([
+    'symbolic-ref',
+    '--short',
+    '--end-of-options',
+    'HEAD',
+  ]);
+  if (head.exitCode !== 0) {
+    throw new WorkspaceError(
+      `Refusing to attach to the workspace for feature ${JSON.stringify(featureId)}: ${worktreePath} exists but git will not report a branch checked out in it (detached, or not a working tree): ${head.stderr.trim() || '(no stderr)'}.`,
+      featureId,
+    );
+  }
+  if (head.stdout.trim() !== branch) {
+    throw new WorkspaceError(
+      `Refusing to attach to the workspace for feature ${JSON.stringify(featureId)}: ${worktreePath} has ${JSON.stringify(head.stdout.trim())} checked out, not ${JSON.stringify(branch)}.`,
+      featureId,
+    );
+  }
+
+  return { worktreePath, branch };
+}
+
+/**
  * Whether a `git worktree remove` failure means the worktree was already gone.
  *
  * Keyed on git's message rather than on a pre-flight filesystem check, which

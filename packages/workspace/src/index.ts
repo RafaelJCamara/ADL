@@ -168,10 +168,15 @@ export {
 // importing one, which is a different statement from this package publishing
 // them for a test or an embedder to construct directly.
 export {
+  attachWorktreeWorkspace,
   worktreeWorkspace,
   type WorktreeWorkspaceOptions,
 } from './worktree/backend.js';
-export { listStubWorkspaces, stubWorkspace } from './stub/backend.js';
+export {
+  attachStubWorkspace,
+  listStubWorkspaces,
+  stubWorkspace,
+} from './stub/backend.js';
 //
 // ADL's own workspace (D-17). Registered as `'host-git'`, and the reason it is a
 // backend rather than a second `adl/no-direct-spawn` exemption is written out at

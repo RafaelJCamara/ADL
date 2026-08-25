@@ -70,6 +70,22 @@ function subjectFor(id: string): ContractSubject {
         baseRef: 'HEAD',
         onTeardown,
       }),
+    attach: (
+      featureId: string,
+      onTeardown: (report: WorkspaceTeardownReport) => void,
+    ) =>
+      backend.attach({
+        featureId,
+        mainRepo: repo.mainRepo,
+        scratchRoot: repo.scratchRoot,
+        // Passed and deliberately ignored by every attaching backend: an
+        // attached workspace is already on its own branch, past this ref, and
+        // re-deriving anything from it would discard the work the attach
+        // exists to reach. Supplied identically to `create` above so the two
+        // subjects differ in the verb and nothing else.
+        baseRef: 'HEAD',
+        onTeardown,
+      }),
     list: () => backend.list(repo.mainRepo),
   };
 }
@@ -112,10 +128,20 @@ const BACKEND_MODULES = [
   'git/host-backend.js',
 ];
 
-/** The factory names themselves, for a namespace or aliased import. */
+/**
+ * The factory names themselves, for a namespace or aliased import.
+ *
+ * The two `attach*` entries are M05 step 5.14's, and they are listed
+ * separately rather than left to substring luck: `attachWorktreeWorkspace`
+ * happens to contain `worktreeWorkspace` and would have been caught anyway,
+ * but `attachStubWorkspace` does **not** contain `stubWorkspace` (the `s`
+ * changes case), so the guard would have had a hole exactly one backend wide.
+ */
 const BACKEND_FACTORIES = [
   'worktreeWorkspace',
+  'attachWorktreeWorkspace',
   'stubWorkspace',
+  'attachStubWorkspace',
   'hostGitWorkspace',
 ];
 

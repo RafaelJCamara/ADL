@@ -48,6 +48,17 @@ interface LiveStub {
   readonly featureId: string;
   readonly mainRepo: string;
   readonly root: string;
+  /**
+   * The stub's whole storage, held here rather than in the instance closure so
+   * that {@link attachStubWorkspace} hands a second instance the *same* files
+   * (M05 step 5.14).
+   *
+   * A stub whose attach returned an empty map would be a backend on which the
+   * contract suite's "a gate sees what the developer wrote" case passes for the
+   * wrong reason, which is the failure mode this file's own header warns about
+   * for the `mkdtemp` root.
+   */
+  readonly files: Map<string, string>;
 }
 
 /**
@@ -109,17 +120,55 @@ export async function stubWorkspace(spec: WorkspaceSpec): Promise<Workspace> {
   // of a directory while the guard's realpath produces another would reject
   // every path in it.
   const root = await realpath(await mkdtemp(join(tmpdir(), 'adl-stub-')));
-  const scratchHome = await createScratchHome();
 
-  /** Absolute contained path -> contents. The stub's whole storage. */
-  let files = new Map<string, string>();
-  let destroyed = false;
-
-  live.set(spec.featureId, {
+  const entry: LiveStub = {
     featureId: spec.featureId,
     mainRepo: spec.mainRepo,
     root,
-  });
+    files: new Map<string, string>(),
+  };
+  live.set(spec.featureId, entry);
+
+  return openStubWorkspace(spec, entry);
+}
+
+/**
+ * Re-open the stub workspace this spec names, or `undefined` if none is live
+ * (M05 step 5.14) — the stub's half of {@link WorkspaceBackend.attach}.
+ *
+ * **Its answer is honestly weaker than the worktree backend's, and the weakness
+ * is the same one this file already declares.** The inventory is a process-local
+ * `Map`, so a stub workspace does not survive the process that created it: a
+ * forked worker attaching for its second stage finds nothing and creates
+ * instead, where the worktree backend would have found the real directory git
+ * left on disk. That is durability — the one axis T-2-27 already accepts this
+ * backend being weaker on — and not a difference in the *contract*: within one
+ * process, attach returns the same root and the same files, which is what the
+ * contract suite exercises on both backends.
+ *
+ * There is no half-present state to refuse here, so unlike the worktree
+ * backend this never throws: a `Map` either has the entry or does not.
+ */
+export function attachStubWorkspace(
+  spec: WorkspaceSpec,
+): Promise<Workspace | undefined> {
+  const entry = live.get(spec.featureId);
+  return entry === undefined
+    ? Promise.resolve(undefined)
+    : openStubWorkspace(spec, entry);
+}
+
+/**
+ * The instance both entry points return — a fresh scratch `HOME` (per run,
+ * D-07) over an existing root and an existing file map (per workspace).
+ */
+async function openStubWorkspace(
+  spec: WorkspaceSpec,
+  entry: LiveStub,
+): Promise<Workspace> {
+  const { root, files } = entry;
+  const scratchHome = await createScratchHome();
+  let destroyed = false;
 
   return {
     id: spec.featureId,
@@ -180,7 +229,13 @@ export async function stubWorkspace(spec: WorkspaceSpec): Promise<Workspace> {
               ),
             );
           }
-          files = new Map(captured);
+          // Mutated in place rather than reassigned: since M05 step 5.14 the
+          // map is the *workspace's* (`LiveStub.files`), shared with every
+          // instance an `attach` hands out, so rebinding a local would restore
+          // this instance's view and leave every other one on the pre-restore
+          // contents.
+          files.clear();
+          for (const [path, contents] of captured) files.set(path, contents);
           return Promise.resolve();
         },
 
@@ -190,6 +245,25 @@ export async function stubWorkspace(spec: WorkspaceSpec): Promise<Workspace> {
           return Promise.resolve();
         },
       });
+    },
+
+    /**
+     * Reclaim this run's scratch `HOME` and leave the workspace live (M05 step
+     * 5.14) — the stub's half of `Workspace.detach`.
+     *
+     * The root directory, the file map, and the inventory entry all survive, so
+     * a later {@link attachStubWorkspace} in this process finds exactly what the
+     * previous stage left. Delegates the idempotency and the never-throws
+     * contract to {@link destroyScratchHome}, identically to the worktree
+     * backend — the whole point of the contract suite running the same cases
+     * over both.
+     */
+    async detach(): Promise<void> {
+      reportScratchHomeTeardown(
+        spec.onTeardown,
+        spec.featureId,
+        await destroyScratchHome(scratchHome.path),
+      );
     },
 
     async destroy(): Promise<void> {

@@ -5,12 +5,22 @@
  * left behind (that function's own docblock names this phase as its
  * replacement).
  *
+ * **It runs one of two things** (M05 step 5.14), decided by
+ * {@link resolveStageRole} from the pipeline position and the stage id alone:
+ * the developer agent at index 0, or a {@link runCommandGate} at any later
+ * index whose stage id this build has an implementation for. A stage id it
+ * cannot run is refused before a workspace is opened. The steps below describe
+ * the developer path; the gate path shares 1, 4 and 7 and skips the rest,
+ * which is ROLE-03's isolation arriving as a property of the code rather than
+ * as a rule (M05 step 5.17 is the formal version).
+ *
  * Given an `assign` message, this module:
  *
  * 1. obtains a `Workspace` from the registry using the message's backend id
- *    and workspace fields — never naming a backend factory itself (the
- *    registry is the only module allowed to, per `@adl/workspace`'s own
- *    barrel comment);
+ *    and workspace fields — **attaching to the one a previous stage left, and
+ *    creating one only when there is none** (M05 step 5.14) — never naming a
+ *    backend factory itself (the registry is the only module allowed to, per
+ *    `@adl/workspace`'s own barrel comment);
  * 2. loads the normalized spec directly from the worktree (the assign
  *    message carries no spec, and this module — like every file under
  *    `worker-entry/` — must not import `@adl/db` to fetch one);
@@ -27,9 +37,11 @@
  *    prompt is unauditable, which is the property that file exists to
  *    prevent;
  * 6. runs the backend, classifying its outcome; and
- * 7. closes the writer and destroys the workspace on every exit path,
- *    including a failure — a leaked worktree turns one bad run into an
- *    accumulating one.
+ * 7. closes the writer and **detaches** from the workspace on every exit path,
+ *    including a failure — reclaiming the run's scratch `HOME` while leaving
+ *    the worktree and its branch for the next stage. It deliberately does not
+ *    `destroy()`: doing so at the end of every stage is `docs/plan/DEBT.md`
+ *    D-5-13-1, which this step closes.
  *
  * This module imports NO process library and NO `@adl/db` — the existing
  * `adl/no-direct-spawn` and `adl/worker-entry-no-db` lint rules cover the
@@ -67,6 +79,7 @@ import {
   type ClaudeCodeAgentRunner,
 } from '@adl/agent-claude-code';
 import { composeBranchFeatureId } from '../branch-identity.js';
+import { runCommandGate } from './command-gate.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
 import { writePromptArtifact } from '../prompt/artifact.js';
@@ -185,6 +198,60 @@ function sendUsage(leaseToken: string, record: AgentUsageRecord): void {
   process.send(message);
 }
 
+/**
+ * The stage id whose implementation is {@link runCommandGate} (M05 step 5.14).
+ *
+ * One of `BUILT_IN_STAGE_IDS`, and the only one of the three this build can
+ * run as a gate: `develop` is the mutator at index 0, and `review` is the
+ * reviewer agent, which is M07's.
+ *
+ * A `Record<stageId, role>` rather than a chain of `if`s so that adding the
+ * reviewer is one entry, and so that "what can this build run?" is a value a
+ * test can read rather than control flow it has to re-derive.
+ */
+const GATE_IMPLEMENTATIONS: Readonly<Record<string, 'command'>> = Object.freeze(
+  { test: 'command' },
+);
+
+/** What this runner is being asked to be for one `assign`. */
+type StageRole =
+  | { readonly kind: 'developer' }
+  | { readonly kind: 'command-gate' }
+  | { readonly kind: 'unsupported'; readonly detail: string };
+
+/**
+ * Decide what to run, from the pipeline position and the stage id alone.
+ *
+ * **Index 0 is the developer, whatever it is called.** D-05 and
+ * `@adl/core/stage/developer-outcome.ts` both state it — "the sequencer
+ * special-cases index 0 because `develop` is always the implicit first
+ * mutator" — and `@adl/core/loop`'s `planRoundStep` enforces it on the other
+ * side by escalating a gate verdict that arrives in the developer's slot. So
+ * this branches on the *index* first and the id second, rather than looking up
+ * `'develop'`: a pipeline that names its first entry something else still gets
+ * the mutator, and the two halves of the contract cannot disagree.
+ *
+ * Everything else is looked up in {@link GATE_IMPLEMENTATIONS}, and an id with
+ * no entry is refused **before a workspace is opened**. The classification is
+ * `binary_missing`, which `stageErrorPolicy` makes non-retryable, so the round
+ * loop escalates rather than looping forever on a stage that will never exist
+ * in this build — and the message names the milestone that supplies it.
+ */
+function resolveStageRole(assign: AssignMessage): StageRole {
+  if (assign.stageIndex === 0) return { kind: 'developer' };
+  if (GATE_IMPLEMENTATIONS[assign.stageId] === 'command') {
+    return { kind: 'command-gate' };
+  }
+  return {
+    kind: 'unsupported',
+    detail:
+      `no implementation exists yet for pipeline stage "${assign.stageId}" at index ` +
+      `${String(assign.stageIndex)} — this build ships the developer stage and the ` +
+      `command gate (${Object.keys(GATE_IMPLEMENTATIONS).join(', ')}). The reviewer ` +
+      'is M07, the behaviour tester M08, and third-party harnesses M13.',
+  };
+}
+
 export interface ProductionStageRunnerDeps {
   /** The agent CLI as an argv prefix — a test seam for the replay double. Defaults to `['claude']`. */
   readonly claudeBinary?: readonly string[];
@@ -221,26 +288,11 @@ export function createProductionStageRunner(
   const now = deps.now ?? (() => new Date().toISOString());
 
   return async (assign: AssignMessage): Promise<StageRunnerResult> => {
-    // M05 step 5.13: this runner implements pipeline index 0 — the developer,
-    // "always the implicit first mutator" (D-05,
-    // `@adl/core/stage/developer-outcome.ts`). It has no gate to run at any
-    // later index, and running the developer agent again there would report a
-    // gate verdict for work the developer just wrote — self-approval arriving
-    // through the back door the `DeveloperOutcome` union was shaped to close.
-    //
-    // So it refuses, before a workspace is even created, with the one
-    // classification that is true: the thing that should run is not installed.
-    // `binary_missing` is non-retryable (`stageErrorPolicy`), so the round
-    // loop escalates rather than looping on a stage that will never exist,
-    // and the escalation names the step that supplies it. M05 step 5.14 is
-    // the command gate that replaces this refusal with a real implementation.
-    if (assign.stageIndex !== 0) {
-      return stageErrorResult(
-        'binary_missing',
-        `no implementation exists yet for pipeline stage "${assign.stageId}" at index ` +
-          `${String(assign.stageIndex)} — this build ships the developer stage only ` +
-          '(M05 step 5.14 adds the command gate)',
-      );
+    // Decided before a workspace is opened: a stage this build cannot run must
+    // not leave a worktree behind on its way to being refused.
+    const role = resolveStageRole(assign);
+    if (role.kind === 'unsupported') {
+      return stageErrorResult('binary_missing', role.detail);
     }
 
     const registry = workspaceRegistry();
@@ -255,21 +307,35 @@ export function createProductionStageRunner(
     // itself is untouched everywhere else in this function — the transcript
     // address, the usage/IPC messages — all of that stays keyed on the bare
     // ULID exactly as before; only the workspace/branch identity changes.
-    let workspace: Workspace | undefined;
+    //
+    // M05 step 5.14: **attach first, create only if there is nothing to attach
+    // to.** A workspace outlives the stage that created it now, so by the time
+    // a gate runs — or round 2's developer, or a crash-recovery dispatch — the
+    // worktree carrying the work already exists and `create()` would refuse it
+    // (`docs/plan/DEBT.md` D-5-13-1). `attach` reports "nothing here" as
+    // `undefined` and a half-present workspace as a throw, so this single
+    // expression covers both without a filesystem probe of its own —
+    // reclamation decisions still come from feature state, never from disk
+    // (WORK-04).
+    const workspaceSpec = {
+      featureId: composeBranchFeatureId(
+        basename(assign.workspaceHandle),
+        assign.featureId,
+      ),
+      mainRepo: assign.mainRepo,
+      scratchRoot: assign.scratchRoot,
+      baseRef: assign.baseRef,
+    };
+
+    let workspace: Workspace;
     try {
-      workspace = await backend.create({
-        featureId: composeBranchFeatureId(
-          basename(assign.workspaceHandle),
-          assign.featureId,
-        ),
-        mainRepo: assign.mainRepo,
-        scratchRoot: assign.scratchRoot,
-        baseRef: assign.baseRef,
-      });
+      workspace =
+        (await backend.attach(workspaceSpec)) ??
+        (await backend.create(workspaceSpec));
     } catch (error) {
       return stageErrorResult(
         'provider_error',
-        `could not create the workspace: ${error instanceof Error ? error.message : String(error)}`,
+        `could not open the workspace: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
@@ -308,6 +374,43 @@ export function createProductionStageRunner(
     }
 
     try {
+      let effectiveConfig: EffectiveConfig;
+      try {
+        effectiveConfig = JSON.parse(
+          assign.effectiveConfigJson,
+        ) as EffectiveConfig;
+      } catch (error) {
+        return stageErrorResult(
+          'unparseable',
+          `effectiveConfigJson on the assign message did not parse as JSON: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      if (role.kind === 'command-gate') {
+        // M05 step 5.14. The gate takes the workspace and one command and
+        // nothing else — no spec, no prompt, no artifact, no agent. That is
+        // ROLE-03's fresh-context isolation showing up as the *shape of the
+        // call* rather than as a rule somebody has to remember: there is no
+        // parameter through which the developer's session or transcript could
+        // reach it. The formal version is M05 step 5.17.
+        const appendPromises: Promise<void>[] = [];
+        const verdict = await runCommandGate({
+          workspace,
+          stageId: assign.stageId,
+          command: effectiveConfig.commands.test,
+          path: process.env['PATH'] ?? '',
+          onEvent: (event: AgentEvent) => {
+            appendPromises.push(appendRecord(event));
+          },
+        });
+        // Every record on disk before the result is reported, matching the
+        // developer path's own `await Promise.all(appendPromises)` — a verdict
+        // the manager acts on while its evidence is still buffered is a
+        // transcript that can lose the thing it was written to explain.
+        await Promise.all(appendPromises);
+        return { verdictJson: JSON.stringify(verdict) };
+      }
+
       let spec: NormalizedSpec;
       try {
         spec = await loadSpecFromWorktree(
@@ -320,18 +423,6 @@ export function createProductionStageRunner(
             ? `spec failed to load from the worktree: ${error.message}`
             : `could not load the spec from the worktree: ${error instanceof Error ? error.message : String(error)}`;
         return stageErrorResult('unparseable', detail);
-      }
-
-      let effectiveConfig: EffectiveConfig;
-      try {
-        effectiveConfig = JSON.parse(
-          assign.effectiveConfigJson,
-        ) as EffectiveConfig;
-      } catch (error) {
-        return stageErrorResult(
-          'unparseable',
-          `effectiveConfigJson on the assign message did not parse as JSON: ${error instanceof Error ? error.message : String(error)}`,
-        );
       }
 
       const { systemPrompt, instructions } = buildDeveloperPrompt({
@@ -496,7 +587,15 @@ export function createProductionStageRunner(
         writerClosed = true;
         await writer.close();
       }
-      await workspace.destroy();
+      // `detach`, not `destroy` (M05 step 5.14). This stage is over; the
+      // workspace is not. The gate at the next index has to judge the commit
+      // this stage just made, and round 2's developer has to build on it, so
+      // reclaiming the worktree here is precisely the defect D-5-13-1 records.
+      // What the *run* owns — the scratch `HOME` — still goes, on every exit
+      // path including the failing ones. Reclaiming the workspace itself is a
+      // decision made from feature state, and `worktree/gc.ts`'s sweep is what
+      // makes it (D-16).
+      await workspace.detach();
     }
   };
 }

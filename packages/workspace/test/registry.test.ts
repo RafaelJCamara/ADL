@@ -51,6 +51,7 @@ describe('the workspace backend registry (D-04)', () => {
     const outOfTree: WorkspaceBackend = {
       id: 'container',
       create: () => Promise.reject(new Error('not called')),
+      attach: () => Promise.reject(new Error('not called')),
       list: () => Promise.resolve([]),
     };
 

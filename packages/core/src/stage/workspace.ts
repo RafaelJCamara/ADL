@@ -253,6 +253,43 @@ export interface WorkspaceBackend {
   /** The registry id this backend answers to — `'worktree'`, `'stub'`, later `'container'`. */
   readonly id: string;
   create(spec: WorkspaceSpec): Promise<Workspace>;
+  /**
+   * Re-open the workspace this spec names, or `undefined` if there is none.
+   *
+   * `.planning/research/ARCHITECTURE.md` §1 named this method and §5 sketched
+   * its signature ("recovery re-attaches to the existing workspace rather than
+   * recloning — `WorkspaceBackend.attach(handle)` exists for exactly this"),
+   * and it went unbuilt until M05 step 5.14. Two things needed it, and both
+   * were broken without it:
+   *
+   * 1. **A gate has to judge the developer's work.** One worker runs per
+   *    stage, so a gate that called {@link WorkspaceBackend.create} would
+   *    branch from `baseRef` and see none of the commit it exists to judge.
+   * 2. **Crash recovery.** `dispatchOnce` preserves `workspace_handle` across
+   *    a recovery dispatch *precisely* so recovery re-attaches — but nothing
+   *    attached, so a worker killed before its teardown ran left a workspace
+   *    that the next `create()` threw on, retryably, forever.
+   *
+   * **`undefined` rather than a throw, and rather than create-if-absent.**
+   * "Nothing is there" is the ordinary first-stage case, not a failure (rule
+   * 5), and the caller writes `attach(spec) ?? create(spec)` with no
+   * filesystem probe of its own. What is *not* ordinary is a half-present
+   * workspace — a directory with no branch, a branch with no directory, a
+   * path this backend does not recognise — and a backend **throws** on those
+   * rather than returning `undefined`, because silently creating over the top
+   * of one is how an agent's committed work is lost. The two answers are
+   * "there is nothing here" and "there is something here I will not attach
+   * to", and collapsing them is the bug.
+   *
+   * Takes the same {@link WorkspaceSpec} as `create` rather than a separate
+   * handle type: every field `create` uses to *locate* a workspace
+   * (`featureId`, `mainRepo`, `scratchRoot`) is what `attach` needs to find
+   * it again, and a second type would be the same three fields under another
+   * name. `baseRef` is the one field `attach` ignores — an attached workspace
+   * is already on its branch, and re-deriving it from a ref would discard
+   * every commit made since.
+   */
+  attach(spec: WorkspaceSpec): Promise<Workspace | undefined>;
   list(mainRepo: string): Promise<readonly ManagedWorkspace[]>;
 }
 
@@ -291,6 +328,51 @@ export interface Workspace {
   write(relPath: string, contents: string): Promise<void>;
   /** Capture the current state so a later round can return to it. */
   snapshot(): Promise<RestoreHandle>;
-  /** Tear the workspace down, including the scratch `HOME`. */
+  /**
+   * Reclaim what *this run* owns and leave the workspace itself for a later
+   * {@link WorkspaceBackend.attach} (M05 step 5.14).
+   *
+   * **The lifecycle is two symmetric pairs**, and reading `detach` as "a
+   * gentler destroy" gets it exactly backwards:
+   *
+   * | Pair | Reclaims | Called by |
+   * |---|---|---|
+   * | `create` ↔ `destroy` | the workspace — worktree, branch, scratch `HOME` | the GC sweep, at a terminal feature state (D-16) |
+   * | `attach` ↔ `detach`  | the run — the scratch `HOME` only | every stage, in its own `finally` |
+   *
+   * `detach` is what a *stage* ends with, whichever of `create`/`attach`
+   * produced the instance — the developer at round 1 index 0 creates and
+   * detaches exactly as the gate behind it attaches and detaches. That
+   * asymmetry is deliberate: making `destroy()` mean two different things
+   * depending on how the caller obtained the object is the ambiguity this
+   * split exists to avoid.
+   *
+   * Before this method existed, `createProductionStageRunner` called
+   * `destroy()` in its `finally`, which reclaimed the worktree *and* deleted
+   * the `adl/*` branch at the end of every stage. That is `docs/plan/DEBT.md`
+   * D-5-13-1: a gate would have judged a tree with none of the developer's
+   * work in it, and a crash-recovery dispatch could never re-attach because
+   * there was nothing left to attach to.
+   *
+   * **Idempotent, and it must not throw** for the same reason `destroy()`'s
+   * teardown steps are individually idempotent: it runs on the failure path of
+   * every stage, and a `finally` that raises replaces the error the caller was
+   * about to report with one about cleanup.
+   *
+   * ⚠ **One-way.** `@adl/plugin-sdk` republishes {@link Workspace}, so this
+   * signature is frozen from the first release (D-01). It is added *now*,
+   * before that package is published (M18), for D-27's reason: the change that
+   * lands before the contract it would have broken is the only kind that costs
+   * nothing.
+   */
+  detach(): Promise<void>;
+  /**
+   * Tear the workspace down, including the scratch `HOME`.
+   *
+   * See {@link Workspace.detach} for which of the two a caller wants. Since
+   * M05 step 5.14 no stage calls this: a workspace outlives every stage that
+   * runs in it, and reclaiming it is a decision made from *feature state* —
+   * the GC sweep's, per D-16 and WORK-04.
+   */
   destroy(): Promise<void>;
 }

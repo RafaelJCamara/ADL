@@ -36,15 +36,6 @@ import { publishStickyComment } from './sticky-comment.js';
 const DEVELOPER_COMMENT_KEY = 'developer';
 const DEVELOPER_COMMENT_TITLE = 'Developer';
 
-/**
- * A commit as a human reads it. Abbreviated to git's own conventional 7, with
- * anything shorter passed through untouched — `CommittedOutcomeSchema` admits
- * an abbreviated sha (7–64 hex), so this must not assume a full one.
- */
-function shortSha(sha: string): string {
-  return sha.length > 7 ? sha.slice(0, 7) : sha;
-}
-
 export interface PublishOnDeveloperCommittedParams {
   readonly feature: FeaturesTable;
   /**
@@ -69,7 +60,6 @@ export async function publishOnDeveloperCommitted(
   });
   if (changeRequest === undefined) return;
 
-  const short = shortSha(params.sha);
   await publishStickyComment(deps, {
     featureId: params.feature.id,
     changeRequest,
@@ -78,10 +68,10 @@ export async function publishOnDeveloperCommitted(
       title: DEVELOPER_COMMENT_TITLE,
       stageId: params.stageId,
     },
-    note: {
-      roundId: params.roundId,
-      line: `Committed \`${short}\`.`,
-      headline: `committed \`${short}\``,
-    },
+    // The raw sha, not rendered text (M05 step 5.14). `role-rounds.ts` renders
+    // it, because it renders the same fact for every *prior* round out of
+    // `rounds.head_sha` — two formatters would drift the first time either
+    // changed.
+    note: { roundId: params.roundId, sha: params.sha },
   });
 }

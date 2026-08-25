@@ -90,6 +90,7 @@ describe('featuresRepository.closeRound', () => {
         number: 1,
         outcome: null,
         outcome_json: null,
+        head_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -122,6 +123,7 @@ describe('featuresRepository.closeRound', () => {
         number: 1,
         outcome: null,
         outcome_json: null,
+        head_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -144,6 +146,83 @@ describe('featuresRepository.closeRound', () => {
       // quietly rewritten to `escalate` by a duplicate message would make the
       // pull request disagree with the history it was rendered from.
       expect((await repo.latestRound(featureId))?.outcome).toBe('green');
+    });
+  });
+});
+
+describe('featuresRepository.recordRoundHeadSha', () => {
+  it('records the developer’s commit on a round that is still open', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      const roundId = ulid();
+      await repo.insertRound({
+        id: roundId,
+        feature_id: featureId,
+        number: 1,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+
+      // The round is emphatically NOT closed here, and that is the case that
+      // matters: in any pipeline with a gate in it the developer's stage
+      // `advance`s rather than completing, so a sha only ever written at round
+      // close would never be written at all (M05 step 5.14).
+      expect(
+        await repo.recordRoundHeadSha({ id: roundId, headSha: 'abc1234' }),
+      ).toBe(true);
+
+      const round = await repo.latestRound(featureId);
+      expect(round?.head_sha).toBe('abc1234');
+      expect(round?.outcome).toBeNull();
+      expect(round?.ended_at).toBeNull();
+    });
+  });
+
+  it('overwrites, so a re-run stage’s commit replaces the superseded one', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      const roundId = ulid();
+      await repo.insertRound({
+        id: roundId,
+        feature_id: featureId,
+        number: 1,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+
+      await repo.recordRoundHeadSha({ id: roundId, headSha: 'aaaaaaa' });
+      await repo.recordRoundHeadSha({ id: roundId, headSha: 'bbbbbbb' });
+
+      // Deliberately unlike `closeRound`, whose `ended_at is null` guard makes
+      // a replay a no-op. A retryable stage error re-dispatches into the SAME
+      // open round (`openAttempt` reuses a round whose outcome is null), so one
+      // round can legitimately see the developer commit twice — and the sha
+      // that matters is the one on the branch now.
+      expect((await repo.latestRound(featureId))?.head_sha).toBe('bbbbbbb');
+    });
+  });
+
+  it('reports no match for a round id that does not exist', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      expect(
+        await featuresRepository(db).recordRoundHeadSha({
+          id: ulid(),
+          headSha: 'abc1234',
+        }),
+      ).toBe(false);
     });
   });
 });

@@ -13,11 +13,25 @@
 // way; this double has to as well to be a faithful stand-in.
 // eslint-disable-next-line no-restricted-imports -- see the note above: this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync } from 'node:fs';
 
 const cwd = process.cwd();
 
-writeFileSync(`${cwd}/agent-output.txt`, 'written by the fake claude double\n');
+// APPENDS a distinct line rather than writing a fixed one, and that is a
+// correctness requirement rather than a flourish (M05 step 5.14).
+//
+// Since a workspace outlives the stage that created it (`Workspace.detach`,
+// closing `docs/plan/DEBT.md` D-5-13-1), round 2's developer attaches to a
+// worktree that ALREADY contains round 1's commit. A double that wrote
+// identical content would leave nothing staged, `git commit` would exit
+// non-zero, and the round would report a `provider_error` and retry forever —
+// which is exactly what `test/scenario/command-gate-loop.test.ts` reproduced
+// the first time it ran. A real agent handed a send-back makes a different
+// change; this line is the double's stand-in for that.
+appendFileSync(
+  `${cwd}/agent-output.txt`,
+  `written by the fake claude double (pid ${process.pid}, ${process.hrtime.bigint()})\n`,
+);
 execFileSync('git', ['add', 'agent-output.txt'], { cwd });
 execFileSync('git', ['commit', '-m', 'agent: implement the feature'], { cwd });
 

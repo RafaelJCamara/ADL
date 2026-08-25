@@ -49,32 +49,61 @@ const SEVERITY_RANK = new Map<string, number>(
 );
 
 /**
- * Detail the publishing event itself carries that no table records.
+ * The commit the publishing event itself carries, for the one round it is
+ * about.
  *
- * Today there is exactly one: the commit sha a `developer_outcome: committed`
- * reports. Scoped to a single `roundId` rather than applied to "the latest
- * round" because the supervisor knows exactly which round its worker was
- * assigned, and "latest" is a guess that is wrong the moment two rounds are
- * ever in flight.
+ * Scoped to a single `roundId` rather than applied to "the latest round"
+ * because the supervisor knows exactly which round its worker was assigned, and
+ * "latest" is a guess that is wrong the moment two rounds are ever in flight.
  *
- * **A note lives only as long as its round is the newest one**, and M05 step
- * 5.13 narrowed that rather than removing it. A finished round now renders its
- * real result from `rounds.outcome_json` — {@link describeRoundOutcome} — so a
- * fold no longer degrades to a bare `send_back`. The **sha** specifically is
- * still not read back, because the debt item that owned this
- * (`docs/plan/DEBT.md` D-5-11-1) rested on a premise that turned out to be
- * false: `RoundOutcome` has no field for a commit, so writing the real outcome
- * could never have carried one. Its durable home is a `rounds.head_sha`
- * column — a migration, and one with a second consumer waiting (a gate needs
- * the diff between the base and exactly that commit), which is why it belongs
- * to the step that adds the gate rather than being smuggled in here.
+ * **This is now a race-loser's backstop rather than the only source**, which is
+ * `docs/plan/DEBT.md` D-5-11-1 closing (M05 step 5.14). Every round's sha lives
+ * in `rounds.head_sha` from this step on, so a *prior* round re-rendered during
+ * round 2 keeps it — before the column existed, a note lived exactly as long as
+ * its round was the newest one and round 1's fold silently lost its sha.
+ *
+ * The note survives the column for one specific reason, and it is an ordering
+ * fact rather than a preference: `worker-supervisor/supervisor.ts` fires
+ * `onDeveloperCommitted` — which reaches this module — **before** and *without
+ * awaiting* `onStageCompleted`, which is what writes `head_sha`. So the round
+ * being published is precisely the one round whose column may not be written
+ * yet. The event carries the authoritative value for it; the column carries it
+ * for every round after that.
+ *
+ * It carries the raw sha rather than rendered text so that both sources render
+ * through the same {@link committedLine}/{@link committedHeadline} — a
+ * pre-formatted string here would be a second formatter, and the two would
+ * drift the first time either changed (rule 8).
  */
 export interface RoundNote {
   readonly roundId: string;
-  /** Prepended to that round's rendered body. */
-  readonly line: string;
-  /** Used instead of the derived headline for that round. */
-  readonly headline: string;
+  /** The commit that round produced, as the event reported it. */
+  readonly sha: string;
+}
+
+/**
+ * A commit as a human reads it. Abbreviated to git's own conventional 7, with
+ * anything shorter passed through untouched — `CommittedOutcomeSchema` admits
+ * an abbreviated sha (7–64 hex), so this must not assume a full one.
+ */
+function shortSha(sha: string): string {
+  return sha.length > 7 ? sha.slice(0, 7) : sha;
+}
+
+/** Prepended to a round's body whenever that round produced a commit. */
+function committedLine(sha: string): string {
+  return `Committed \`${shortSha(sha)}\`.`;
+}
+
+/**
+ * The headline for the round whose commit event triggered this publish.
+ *
+ * Every other round uses {@link deriveHeadline}, which leads with what the
+ * round *decided* — `send_back — 3 findings` says more about a finished round
+ * than a sha does, and the sha is still on the first line of the fold.
+ */
+function committedHeadline(sha: string): string {
+  return `committed \`${shortSha(sha)}\``;
 }
 
 /** Collapse whitespace: a summary, title or error kind is inlined into a single markdown line. */
@@ -87,6 +116,7 @@ interface AttemptRow {
   readonly roundNumber: number;
   readonly roundOutcome: string | null;
   readonly roundOutcomeJson: string | null;
+  readonly roundHeadSha: string | null;
   readonly attempt: number;
   readonly status: string;
   readonly errorKind: string | null;
@@ -233,6 +263,7 @@ export async function readRoleRounds(
       'rounds.number as roundNumber',
       'rounds.outcome as roundOutcome',
       'rounds.outcome_json as roundOutcomeJson',
+      'rounds.head_sha as roundHeadSha',
       'stage_attempts.attempt as attempt',
       'stage_attempts.status as status',
       'stage_attempts.error_kind as errorKind',
@@ -308,8 +339,14 @@ export async function readRoleRounds(
         ? params.note
         : undefined;
 
+    // The event's sha for the round it is about, the column's for every other
+    // — see {@link RoundNote} for why the event still wins where both exist.
+    // Rendered through one formatter either way, so a fold looks identical
+    // whether it was written this second or read back three rounds later.
+    const sha = noted?.sha ?? first.roundHeadSha ?? undefined;
+
     const lines: string[] = [];
-    if (noted !== undefined) lines.push(noted.line, '');
+    if (sha !== undefined) lines.push(committedLine(sha), '');
     for (const attempt of attempts) {
       lines.push(describeAttempt(attempt));
       const attemptFindings =
@@ -322,9 +359,25 @@ export async function readRoleRounds(
 
     rounds.push({
       number: first.roundNumber,
+      // **The note decides the headline, not `roundOutcome === null`.** That
+      // looks like the more principled rule — "a closed round leads with what
+      // it decided, an open one with what it produced" — and it is a race:
+      // `worker-supervisor/supervisor.ts` fires `onDeveloperCommitted` without
+      // awaiting it and then awaits `onStageCompleted`, so whether this round
+      // is closed *by the time the comment renders* depends on which of two
+      // concurrent tasks wins. A pull-request comment whose heading flips
+      // between runs is not a comment anyone can review, and it is not
+      // something a test can assert either.
+      //
+      // So the note — which is present exactly when this round is the one that
+      // just committed — is the deterministic signal, and this is the same
+      // behaviour that shipped in 5.11. What M05 step 5.14 changes is the
+      // BODY: the commit line above now comes from `rounds.head_sha` for every
+      // round the note does not address, which is what D-5-11-1 was about.
       headline:
-        noted?.headline ??
-        deriveHeadline(attempts, first.roundOutcome, first.roundOutcomeJson),
+        noted === undefined
+          ? deriveHeadline(attempts, first.roundOutcome, first.roundOutcomeJson)
+          : committedHeadline(noted.sha),
       body: lines.join('\n'),
     });
   }

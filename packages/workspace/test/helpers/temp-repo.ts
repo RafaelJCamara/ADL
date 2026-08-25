@@ -75,7 +75,27 @@ export async function openTempRepo(): Promise<OpenedTempRepo> {
     // On Windows an open handle makes the unlink fail, which would turn a
     // passing test into a confusing teardown error. That applies doubly here: a
     // child process that has only just exited can still hold one.
-    await rm(dir, { recursive: true, force: true });
+    //
+    // `force` alone is not enough, and M05 step 5.14 is what proved it: since a
+    // workspace now outlives the stage that created it (`Workspace.detach`),
+    // this fixture is the thing that removes a real worktree a real forked
+    // worker was using seconds earlier, where before the stage's own
+    // `destroy()` had already done it through `git worktree remove`. Windows
+    // then failed the whole suite with `EBUSY: resource busy or locked, rmdir`
+    // in `test/usage/recording.test.ts` — reproduced on the first full run
+    // after the lifecycle change.
+    //
+    // `maxRetries`/`retryDelay` are Node's own answer to exactly this: it
+    // retries `EBUSY`/`EPERM`/`ENOTEMPTY`/`EMFILE` with a linear backoff. The
+    // set is the same one `src/exec/scratch-home.ts`'s `TRANSIENT_CODES`
+    // already retries by hand, and for the same stated reason — the handle is
+    // usually released within milliseconds.
+    await rm(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 50,
+    });
   };
 
   try {

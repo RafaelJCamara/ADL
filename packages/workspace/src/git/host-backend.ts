@@ -254,6 +254,27 @@ export async function hostGitWorkspace(
     },
 
     /**
+     * Release the instance. **Deletes nothing** — identically to
+     * {@link Workspace.destroy} below (M05 step 5.14).
+     *
+     * On the feature backends the two differ: `detach` keeps the workspace for
+     * the next stage and `destroy` reclaims it. Here there is nothing of this
+     * instance's own to reclaim on *either* path — the root is the user's
+     * repository and the `HOME` is the daemon's own configuration directory —
+     * so the two collapse, and they collapse onto the safe one. Written out as
+     * its own method rather than aliased to `destroy` so that a future change to
+     * either cannot silently redefine the other.
+     */
+    detach(): Promise<void> {
+      report(spec.onTeardown, {
+        workspaceId: spec.featureId,
+        resource: HOST_RESOURCE,
+        outcome: 'already-absent',
+      });
+      return Promise.resolve();
+    },
+
+    /**
      * Release the instance. **Deletes nothing.**
      *
      * ⚠ Every other backend's `destroy()` removes a directory. This one must

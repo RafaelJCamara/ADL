@@ -38,7 +38,12 @@ import {
 } from '../exec/scratch-home.js';
 import { assertCwdWithinRoot, assertWithinRoot } from '../paths.js';
 import { report, reportScratchHomeTeardown } from '../teardown.js';
-import { createWorktree, destroyWorktree } from './lifecycle.js';
+import {
+  attachWorktree,
+  createWorktree,
+  destroyWorktree,
+  type CreatedWorktree,
+} from './lifecycle.js';
 
 /** The OS error code behind a failed filesystem call, when there is one. */
 function codeOf(error: unknown): string | undefined {
@@ -119,18 +124,28 @@ async function worktreeAdminDir(
   }
 }
 
-export async function worktreeWorkspace(
+/**
+ * Stand a workspace up over a worktree that already exists on disk.
+ *
+ * Everything `worktreeWorkspace` does *except* creating the worktree, which is
+ * the one step `create` and `attach` differ in (M05 step 5.14). Every other
+ * step is per **run**, not per worktree, and so has to happen on both paths:
+ * the scratch `HOME` is a fresh `mkdtemp` each time (D-07), the `safe.directory`
+ * marking is written into that new home, the privilege decision is made against
+ * the daemon's PATH as it stands now, and the group grant is re-applied because
+ * the worktree may have been created by a differently-privileged earlier run.
+ *
+ * Factored out rather than duplicated because a second copy is a second place
+ * for `writeScratchGitConfig`'s ordering constraint — it must precede
+ * `applyWorkerAccess`, see below — to be got wrong, and only one of the two
+ * copies would have the comment saying so.
+ */
+async function openWorktreeWorkspace(
   spec: WorkspaceSpec,
-  options: WorktreeWorkspaceOptions = {},
+  options: WorktreeWorkspaceOptions,
+  { worktreePath, branch }: CreatedWorktree,
 ): Promise<Workspace> {
   const worker = options.worker ?? workerIdentityFromEnv();
-
-  const { worktreePath, branch } = await createWorktree(
-    spec.mainRepo,
-    spec.scratchRoot,
-    spec.featureId,
-    spec.baseRef,
-  );
   const scratchHome = await createScratchHome();
 
   // D-2-08-1: git ≥2.35.2 (CVE-2022-24765) refuses to operate inside a
@@ -360,20 +375,66 @@ export async function worktreeWorkspace(
     },
 
     /**
+     * Reclaim this **run's** resources — the scratch `HOME`, and nothing else.
+     *
+     * The worktree and its `adl/*` branch are deliberately left exactly where
+     * they are, for the next stage's {@link attachWorktreeWorkspace} to pick up
+     * (M05 step 5.14, closing `docs/plan/DEBT.md` D-5-13-1). See
+     * `Workspace.detach`'s own docblock in `@adl/core/stage` for the two
+     * lifecycle pairs and which caller wants which.
+     *
+     * Idempotent and non-throwing, both by delegation:
+     * {@link destroyScratchHome} already owns the retry loop, the
+     * already-absent semantics, and the never-throws contract, and a second
+     * call reports `already-absent` rather than failing. That matters more here
+     * than it does for `destroy()` — this runs in the `finally` of every stage,
+     * including the failing ones, and a cleanup that raises would replace the
+     * error the stage was about to report with one about cleanup.
+     *
+     * Note what is *not* reported: the worktree. This method did not touch it,
+     * and `WorkspaceTeardownReport` is a statement about a resource that was
+     * reclaimed — naming one that was deliberately kept would tell an operator
+     * the opposite of what happened.
+     */
+    async detach(): Promise<void> {
+      reportScratchHomeTeardown(
+        spec.onTeardown,
+        spec.featureId,
+        await destroyScratchHome(scratchHome.path),
+      );
+    },
+
+    /**
      * Reclaim everything this workspace owns: the worktree, its branch, and the
      * scratch home.
      *
-     * **This is the primary reclamation path, not a hint (D-14).** The worker
-     * calls `destroy()` the moment it sees the feature reach a terminal state,
-     * so reclamation is true *continuously* rather than only in the moments
-     * after a GC pass. The sweep in `worktree/gc.ts` is the backstop for what a
-     * crash skipped (D-15) — it exists because a worker can die between the
-     * terminal transition and this call, not because teardown is optional here.
+     * **Called from feature state, never from a stage ending (D-14, D-16,
+     * WORK-04).** A workspace outlives every stage that runs in it — the gate
+     * has to judge the developer's commit, and round 2's developer has to build
+     * on round 1's — so what ends a stage is {@link Workspace.detach}, above.
+     * The decision to reclaim *this* is made from the feature's state, and the
+     * one thing that reads feature state is `worktree/gc.ts`'s `sweepOrphans`
+     * (which calls {@link destroyWorktree} directly rather than through this
+     * method, having no instance to call it on).
      *
-     * Said explicitly because the simplification is tempting and wrong: dropping
-     * this call "since the sweep would catch it eventually" turns success
-     * criterion 1 from a continuous property into a periodic one, and every
-     * window between sweeps accumulates worktrees and `adl/*` branches.
+     * ⚠ **This docblock used to say the opposite**, and the correction is worth
+     * recording rather than quietly making. It claimed the worker called
+     * `destroy()` "the moment it sees the feature reach a terminal state, so
+     * reclamation is true *continuously*". The worker never saw a terminal
+     * state — it cannot; it holds one stage, and the state machine lives in the
+     * manager — so what it actually did was destroy the worktree at the end of
+     * **every** stage. That is `docs/plan/DEBT.md` D-5-13-1, closed by M05 step
+     * 5.14: a gate would have branched from `baseRef` and judged a tree with
+     * none of the developer's work in it, and a crash-recovery dispatch could
+     * never re-attach because there was nothing left to attach to.
+     *
+     * The consequence the old paragraph warned about is therefore now real and
+     * accepted rather than avoided: reclamation is periodic, on the GC
+     * schedule, and a worktree survives until its feature is `merged` or
+     * `abandoned` (`TERMINAL_STATES`). That is the correct lifetime — a human
+     * reading an `escalated` or `pr_open` feature's branch needs it to exist —
+     * but it does mean a completed feature that never reaches a terminal state
+     * keeps its worktree. See `docs/plan/DEBT.md` for that residual.
      *
      * The two-step order lives inside {@link destroyWorktree} rather than here,
      * so no call site — this one included — is in a position to get it wrong.
@@ -414,4 +475,53 @@ export async function worktreeWorkspace(
       );
     },
   };
+}
+
+/**
+ * Create the feature's worktree and stand a workspace up over it.
+ *
+ * The registry's `create`. Refuses if anything is already there —
+ * {@link createWorktree} owns that refusal and its reasoning (WORK-04).
+ */
+export async function worktreeWorkspace(
+  spec: WorkspaceSpec,
+  options: WorktreeWorkspaceOptions = {},
+): Promise<Workspace> {
+  return openWorktreeWorkspace(
+    spec,
+    options,
+    await createWorktree(
+      spec.mainRepo,
+      spec.scratchRoot,
+      spec.featureId,
+      spec.baseRef,
+    ),
+  );
+}
+
+/**
+ * Stand a workspace up over the worktree a previous stage left behind, or
+ * report that there is none (M05 step 5.14).
+ *
+ * The registry's `attach`. {@link attachWorktree} owns the three-way answer —
+ * nothing here, something here, or something here I will not attach to — and
+ * `undefined` propagates unchanged so the caller can write
+ * `attach(spec) ?? create(spec)` with no filesystem probe of its own.
+ *
+ * `spec.baseRef` is not read on this path, deliberately: the worktree is
+ * already on its own branch, several commits past that ref, and re-deriving
+ * anything from it would discard exactly the work the attach exists to reach.
+ */
+export async function attachWorktreeWorkspace(
+  spec: WorkspaceSpec,
+  options: WorktreeWorkspaceOptions = {},
+): Promise<Workspace | undefined> {
+  const existing = await attachWorktree(
+    spec.mainRepo,
+    spec.scratchRoot,
+    spec.featureId,
+  );
+  return existing === undefined
+    ? undefined
+    : openWorktreeWorkspace(spec, options, existing);
 }

@@ -54,6 +54,19 @@ export interface ContractSubject {
     featureId: string,
     onTeardown: (report: WorkspaceTeardownReport) => void,
   ): Promise<Workspace>;
+  /**
+   * Re-open the workspace under `featureId`, or `undefined` if there is none
+   * (M05 step 5.14).
+   *
+   * Takes the same two arguments as {@link ContractSubject.create} for the same
+   * reason: the cases below have to be able to *pair* the two calls on one id
+   * and read what each one reported, without either backend needing a hook the
+   * other does not have.
+   */
+  attach(
+    featureId: string,
+    onTeardown: (report: WorkspaceTeardownReport) => void,
+  ): Promise<Workspace | undefined>;
   /** The backend's own inventory, scoped to the repository these live in. */
   list(): Promise<readonly ManagedWorkspace[]>;
 }
@@ -84,6 +97,8 @@ export function describeWorkspaceContract(
   describe(`workspace contract: ${name}`, () => {
     let subject: ContractSubject;
     let workspace: Workspace;
+    /** The id `workspace` was created under, so a case can attach to the same one. */
+    let workspaceId: string;
     let reports: WorkspaceTeardownReport[];
 
     /** Unique per case, so no case can be affected by another's leftovers. */
@@ -95,7 +110,8 @@ export function describeWorkspaceContract(
     beforeEach(async () => {
       subject = factory();
       reports = [];
-      workspace = await subject.create(freshId(), (entry) =>
+      workspaceId = freshId();
+      workspace = await subject.create(workspaceId, (entry) =>
         reports.push(entry),
       );
       // Establish the seeded file's contents for this case. A write, not a
@@ -367,6 +383,127 @@ export function describeWorkspaceContract(
 
     it('leaves no root directory behind after destroy', async () => {
       await workspace.destroy();
+      await expect(stat(workspace.root)).rejects.toThrow();
+    });
+
+    /* ──────────────────────────────────────────────────────────────────────
+     * attach ↔ detach (M05 step 5.14)
+     *
+     * The pair that makes a gate able to judge the developer's work. Before it
+     * existed, `createProductionStageRunner` called `destroy()` at the end of
+     * every stage and the next stage's `create()` branched from `baseRef` —
+     * `docs/plan/DEBT.md` D-5-13-1. These cases run over both backends for the
+     * same reason every case above does: the property belongs to the port, and
+     * the container backend inherits them the day it registers an id.
+     * ────────────────────────────────────────────────────────────────────── */
+
+    it('attaches to a detached workspace and sees what the last run wrote', async () => {
+      // The whole point, in one case. A second stage — a different process in
+      // production — must reach the *same* workspace, with the previous
+      // stage's work in it. `CONTRACT_SEEDED_FILE` was written by `beforeEach`
+      // through the port, so the assertion is about continuity and not about
+      // any backend's idea of where files live.
+      await workspace.write('developer-wrote-this.txt', 'round-1 work');
+      await workspace.detach();
+
+      const second = await subject.attach(workspaceId, (entry) =>
+        reports.push(entry),
+      );
+      expect(
+        second,
+        'a detached workspace must still be attachable',
+      ).toBeDefined();
+
+      await expect(second!.read('developer-wrote-this.txt')).resolves.toBe(
+        'round-1 work',
+      );
+      await expect(second!.read(CONTRACT_SEEDED_FILE)).resolves.toBe('seed');
+      expect(second!.id).toBe(workspace.id);
+      expect(second!.root).toBe(workspace.root);
+
+      await second!.detach();
+    });
+
+    it('gives the attached workspace its own scratch HOME', async () => {
+      // D-07 is per *run*, not per workspace: the scratch `HOME` is what
+      // `detach()` reclaims, so an attach that reused the detached one would
+      // hand the next stage a directory that had just been deleted — and would
+      // also let one stage's leftover `.gitconfig` or session file reach the
+      // next, which is the one thing D-07 promises cannot happen.
+      const first = workspace.scratchHome;
+      await workspace.detach();
+
+      const second = await subject.attach(workspaceId, () => {});
+      expect(second).toBeDefined();
+      expect(second!.scratchHome).not.toBe(first);
+
+      const info = await stat(second!.scratchHome);
+      expect(info.isDirectory()).toBe(true);
+
+      await second!.detach();
+    });
+
+    it('reports nothing to attach to for a workspace that was never created', async () => {
+      // `undefined`, not a throw: "there is nothing here" is the ordinary
+      // round-1-index-0 case, and it is what lets a caller write
+      // `attach(spec) ?? create(spec)` with no filesystem probe of its own.
+      await expect(
+        subject.attach(freshId(), () => {}),
+      ).resolves.toBeUndefined();
+    });
+
+    it('reports nothing to attach to once the workspace is destroyed', async () => {
+      await workspace.destroy();
+
+      await expect(
+        subject.attach(workspaceId, () => {}),
+        'destroy() reclaims the workspace, so there must be nothing left to attach to',
+      ).resolves.toBeUndefined();
+    });
+
+    it('keeps the workspace in the inventory across a detach', async () => {
+      // The counterpart to the `destroy()` half of the inventory case above.
+      // A detach that dropped the entry would make the GC sweep — which reads
+      // this inventory and asks feature state (D-16, D-20) — blind to a
+      // workspace that is very much still on disk.
+      await workspace.detach();
+
+      expect((await subject.list()).map((entry) => entry.featureId)).toContain(
+        workspaceId,
+      );
+    });
+
+    it('reports what detach reclaimed, and stays a safe no-op the second time', async () => {
+      await workspace.detach();
+
+      // It reports *something* — a teardown that reclaims silently gives an
+      // operator no way to tell a reclaimed resource from a leaked one (plan
+      // 02-05's point, restated for this half of the lifecycle).
+      expect(reports.length).toBeGreaterThan(0);
+      expect(reports.every((entry) => entry.workspaceId === workspace.id)).toBe(
+        true,
+      );
+
+      // And it names none of what it deliberately kept. `detach()` did not
+      // touch the workspace, so reporting it would tell an operator the
+      // opposite of what happened.
+      const detached = new Set(reports.map((entry) => entry.resource));
+      reports.length = 0;
+
+      // Idempotent, and — the property that actually matters — non-throwing:
+      // this runs in the `finally` of every stage including the failing ones,
+      // where a raising cleanup would replace the error being reported.
+      await expect(workspace.detach()).resolves.toBeUndefined();
+      expect(reports.map((entry) => entry.resource)).toEqual([...detached]);
+      expect(reports.map((entry) => entry.outcome)).not.toContain('reclaimed');
+    });
+
+    it('still destroys a workspace that was detached and never re-attached', async () => {
+      // The crash shape: a worker detaches, the feature is later abandoned, and
+      // the GC sweep reclaims it without anything having attached in between.
+      await workspace.detach();
+
+      await expect(workspace.destroy()).resolves.toBeUndefined();
       await expect(stat(workspace.root)).rejects.toThrow();
     });
   });

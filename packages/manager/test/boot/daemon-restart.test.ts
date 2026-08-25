@@ -119,6 +119,7 @@ async function seedPreCrashState(
     number: 1,
     outcome: null,
     outcome_json: null,
+    head_sha: null,
     started_at: now,
     ended_at: null,
   });

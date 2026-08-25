@@ -388,18 +388,107 @@ describe('readRoleRounds', () => {
       const rounds = await readRoleRounds(db, {
         featureId: feature.id,
         stageId: DEVELOP,
-        note: {
-          roundId: second.roundId,
-          line: 'Committed `abc1234`.',
-          headline: 'committed `abc1234`',
-        },
+        note: { roundId: second.roundId, sha: 'abc1234' },
       });
 
       expect(rounds[1]?.headline).toBe('committed `abc1234`');
       expect(rounds[1]?.body.startsWith('Committed `abc1234`.')).toBe(true);
-      // Round 1 is untouched by a note addressed to round 2.
+      // Round 1 is untouched by a note addressed to round 2, and — since it
+      // never had a `head_sha` written — carries no commit line either.
       expect(rounds[0]?.headline).toBe('send_back');
       expect(rounds[0]?.body).not.toContain('abc1234');
+    });
+  });
+
+  it('renders a prior round’s commit from rounds.head_sha, not from the note', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const feature = await seedFeature(db);
+      const repo = featuresRepository(db);
+
+      // Round 1 committed and was sent back; round 2 is the one being
+      // published now. This is `docs/plan/DEBT.md` D-5-11-1's exact shape: a
+      // note only ever addresses the newest round, so round 1's sha has to
+      // come from somewhere durable or it is gone the moment round 2 renders.
+      const first = await openAttempt(
+        { db },
+        { featureId: feature.id, stageId: DEVELOP, stageIndex: 0 },
+      );
+      await closeAttempt(
+        { db },
+        { stageAttemptId: first.stageAttemptId, status: 'verdict' },
+      );
+      await repo.recordRoundHeadSha({
+        id: first.roundId,
+        headSha: '1111111aaaa',
+      });
+      await endRound(db, first.roundId, 'send_back');
+
+      const second = await openAttempt(
+        { db },
+        { featureId: feature.id, stageId: DEVELOP, stageIndex: 0 },
+      );
+      await closeAttempt(
+        { db },
+        { stageAttemptId: second.stageAttemptId, status: 'verdict' },
+      );
+      await repo.recordRoundHeadSha({
+        id: second.roundId,
+        headSha: '2222222bbbb',
+      });
+
+      const rounds = await readRoleRounds(db, {
+        featureId: feature.id,
+        stageId: DEVELOP,
+        note: { roundId: second.roundId, sha: '2222222bbbb' },
+      });
+
+      // The prior round keeps its commit — the whole point of the column.
+      expect(rounds[0]?.body).toContain('Committed `1111111`.');
+      // …while still leading with what it DECIDED. `send_back` is more use to
+      // a human scanning folds than a sha, and the sha is on the first line of
+      // the fold either way.
+      expect(rounds[0]?.headline).toBe('send_back');
+
+      // The round the note addresses leads with what it just produced.
+      expect(rounds[1]?.headline).toBe('committed `2222222`');
+      expect(rounds[1]?.body.startsWith('Committed `2222222`.')).toBe(true);
+    });
+  });
+
+  it('renders a round’s commit with no note at all — the column alone is enough', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const feature = await seedFeature(db);
+
+      const attempt = await openAttempt(
+        { db },
+        { featureId: feature.id, stageId: DEVELOP, stageIndex: 0 },
+      );
+      await closeAttempt(
+        { db },
+        { stageAttemptId: attempt.stageAttemptId, status: 'verdict' },
+      );
+      await featuresRepository(db).recordRoundHeadSha({
+        id: attempt.roundId,
+        headSha: 'facefeed0123',
+      });
+
+      // No `note`. Every republish that is not triggered by this round's own
+      // commit event takes this path — a later role's comment, a repair after
+      // a human edit, a re-render during a subsequent round.
+      const rounds = await readRoleRounds(db, {
+        featureId: feature.id,
+        stageId: DEVELOP,
+      });
+
+      // Abbreviated to git's own 7, from a 12-character sha, so this is also
+      // the assertion that both sources go through ONE formatter.
+      expect(rounds[0]?.body.startsWith('Committed `facefee`.')).toBe(true);
+      // The headline stays derived — only the note produces a `committed …`
+      // heading, deliberately, because the note is the one deterministic
+      // signal available at publish time. See `readRoleRounds`.
+      expect(rounds[0]?.headline).toBe('1 attempt');
     });
   });
 

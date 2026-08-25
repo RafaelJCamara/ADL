@@ -112,6 +112,33 @@ export interface FeaturesRepository {
   }): Promise<boolean>;
 
   /**
+   * Record the commit this round's developer produced (M05 step 5.14,
+   * `docs/plan/DEBT.md` D-5-11-1).
+   *
+   * **Separate from {@link FeaturesRepository.closeRound}, and it has to be.**
+   * The sha arrives when the *developer stage* finishes, which in any pipeline
+   * with a gate in it is several stages before the round ends — the round loop
+   * `advance`s there rather than completing. Folding it into `closeRound` would
+   * mean either holding the sha in memory across worker processes or writing it
+   * from a report that no longer carries it.
+   *
+   * Deliberately **unguarded**, unlike `closeRound`'s `ended_at is null`.
+   * `closeRound` is a terminal write and its guard makes an at-least-once
+   * replay a no-op; this one is not terminal, and last-writer-wins is the
+   * *correct* rule rather than a relaxation. A retryable stage error routes the
+   * feature through `reapOne`, which re-dispatches into the **same open round**
+   * (`bookkeeping/attempt.ts`'s `openAttempt` reuses a round whose `outcome` is
+   * null and opens a second `stage_attempts` row inside it), so one round can
+   * legitimately see the developer commit twice — and the sha that matters is
+   * the one that is on the branch now. A `head_sha is null` guard would pin the
+   * round to a commit that had been superseded.
+   *
+   * Returns whether a row matched, so a caller can tell "recorded" from "that
+   * round id does not exist" rather than inferring it from silence.
+   */
+  recordRoundHeadSha(input: { id: string; headSha: string }): Promise<boolean>;
+
+  /**
    * Acquire a lease on an unheld or expired feature.
    *
    * The guard admits a row whose `lease_token` is null (never leased) or
@@ -278,6 +305,16 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .set({ outcome, outcome_json: outcomeJson, ended_at: endedAt })
         .where('id', '=', id)
         .where('ended_at', 'is', null)
+        .executeTakeFirst();
+
+      return Number(result.numUpdatedRows) === 1;
+    },
+
+    async recordRoundHeadSha({ id, headSha }) {
+      const result = await db
+        .updateTable('rounds')
+        .set({ head_sha: headSha })
+        .where('id', '=', id)
         .executeTakeFirst();
 
       return Number(result.numUpdatedRows) === 1;

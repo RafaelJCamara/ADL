@@ -210,6 +210,9 @@ function fakeWorkspace(
     async snapshot() {
       throw new Error('not implemented in fake');
     },
+    async detach() {
+      /* no-op */
+    },
     async destroy() {
       /* no-op */
     },

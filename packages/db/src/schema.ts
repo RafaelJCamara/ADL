@@ -93,6 +93,17 @@ export interface RoundsTable {
   outcome: string | null;
   /** The full `RoundOutcome` payload — the brief, the reason, the inconclusives. */
   outcome_json: string | null;
+  /**
+   * The commit the developer produced in this round (M05 step 5.14,
+   * `0005_rounds_head_sha.ts`).
+   *
+   * Null for three ordinary reasons — the round is still running, its
+   * developer reported `blocked` and made no commit, or it predates the
+   * migration — which is why it is nullable rather than defaulted. Not part of
+   * `outcome_json`: that column holds a `RoundOutcome`, which is a statement
+   * about verdicts and has no field for a commit.
+   */
+  head_sha: string | null;
   started_at: string;
   ended_at: string | null;
 }
@@ -358,6 +369,7 @@ export const TABLE_COLUMNS = {
     'number',
     'outcome',
     'outcome_json',
+    'head_sha',
     'started_at',
     'ended_at',
   ],

@@ -516,6 +516,25 @@ async function runStageCompleted(
     );
   } else if (completion.kind === 'error') {
     await recordStageError(deps, params.stageAttemptId, completion.error, at);
+  } else if (completion.outcome.kind === 'committed') {
+    // M05 step 5.14, closing `docs/plan/DEBT.md` D-5-11-1. The sha exists only
+    // on this event: it is what the worker read back out of the workspace, and
+    // no table has held it until now. `publish/role-rounds.ts` reads this
+    // column when it re-renders a *prior* round's fold, which is every round
+    // after the first — before this write, round 1's fold silently lost its
+    // sha the moment round 2 republished the comment.
+    //
+    // Written here, beside the other two evidence writes and before any state
+    // change, for their reason: a CAS that loses its race must not also lose
+    // the record of what the developer produced. It is deliberately not part
+    // of the `complete` branch's transaction below — a developer stage in a
+    // pipeline with any gate in it `advance`s rather than completing, so a
+    // round-close-only write would never fire for exactly the pipelines this
+    // milestone exists to run.
+    await repo.recordRoundHeadSha({
+      id: params.roundId,
+      headSha: completion.outcome.sha,
+    });
   }
 
   const pipeline = resolveSnapshotPipeline(feature.effective_config_json);

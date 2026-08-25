@@ -582,7 +582,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       refuses to attach to an existing worktree), so a real gate would branch from `baseRef`
       and see none of the developer's work — and the same gap breaks crash recovery today.
       `DEBT.md` § 3, **owner 5.14**, since that is the first step with a gate that needs one.
-- [ ] **5.14** — The command-gate stage. Runs `adl.yml`'s test command through
+- [x] **5.14** — The command-gate stage. Runs `adl.yml`'s test command through
       `workspace.exec` and translates the exit code into a verdict. **Deterministic and
       forceable to fail on demand** — that is why the first gate is a command gate and not
       the reviewer agent: no agent nondeterminism confounding the send-back signal.
@@ -597,6 +597,80 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       Also inherits `rounds.head_sha` from 5.13 (`DEBT.md` D-5-11-1): a gate needs the diff
       between the base and this round's commit, which is the same column a prior round's
       sticky-comment fold needs to stop losing its sha.
+      **Shipped, and a real gate now turns the loop:**
+      `packages/manager/test/scenario/command-gate-loop.test.ts` drives a real
+      `startDaemon()` through `develop → test fails → send back → round 2's developer →
+      test passes → publishing`, with the **real** `createProductionStageRunner` in four
+      real forked workers and only the billed `claude` binary doubled. 5.13's own scenario
+      proved the same shape against a *scripted* worker; the difference is that nothing in
+      it ever ran a command, so nothing ever needed the developer's commit to still exist —
+      which is exactly why D-5-13-1 was found by reading code rather than by a red test.
+      **Workspace continuity, the half this step actually owns.** The port was missing two
+      symmetric pairs, not one method: `create ↔ destroy` reclaims the **workspace**,
+      `attach ↔ detach` reclaims the **run**. `WorkspaceBackend.attach(spec)` returns
+      `Workspace | undefined` — `undefined` for the ordinary "nothing here" first-stage
+      case, and a **throw** for a half-present workspace, because reporting the second as
+      the first would send the caller to `create()` and silently replace an agent's
+      committed work. `Workspace.detach()` reclaims the scratch `HOME` and leaves the
+      worktree; the stage runner now does `attach(spec) ?? create(spec)` and ends with
+      `detach()`, and **no stage calls `destroy()` at all** — reclaiming a workspace is a
+      decision made from feature state (D-16) and `gc.ts`'s sweep is what makes it. That
+      also fixes crash recovery, which `dispatchOnce` has preserved `workspace_handle` for
+      since M03 with nothing to attach with. **Deviation, confirmed with the maintainer
+      before implementation:** `detach()` widens `Workspace`, which **is** republished
+      through `@adl/plugin-sdk` and therefore one-way (D-01) — the debt item claimed
+      `WorkspaceBackend` was the published half and it is not, which inverts which of the
+      two methods is expensive. Added now, before that package ships (M18), for D-27's
+      reason: the change that lands before the contract it would break costs nothing. The
+      alternatives — `backend.detach(ws)`, keeping the published port frozen, or no detach
+      at all and letting `sweepScratchHomes` collect — were put to the maintainer with
+      their costs and this one chosen.
+      **The gate itself is deliberately small.** `worker-entry/command-gate.ts` runs one
+      command through `workspace.exec` and answers three ways: exit 0 → `pass` citing
+      `{kind:'global', category:'build'}` (never a criterion — `verdict.ts`'s own docblock
+      names this gate's honest answer, and a green `npm test` is not evidence that AC-3 was
+      verified); non-zero → `send_back` with one blocker finding carrying a **bounded tail**
+      of the output; and **killed rather than exited → a `StageError`, not a verdict**,
+      because a command with no exit code judged nothing and reporting one anyway would make
+      an infrastructure failure cost the developer a round (CORE-06, D-12). The finding's
+      title carries the stage and the exit code and nothing that varies per run, so the same
+      failure recurring across rounds fingerprints identically — which is what M06's stall
+      detection reads. The gate takes a workspace and a command and **nothing else**: no
+      spec, no prompt, no agent, so ROLE-03's fresh-context isolation (5.17) is already the
+      shape of the call rather than a rule to remember. Which stage ids this build can run
+      is a frozen `GATE_IMPLEMENTATIONS` record — `test` today — and an id with no entry is
+      refused with a non-retryable `binary_missing` **before a workspace is opened**.
+      **`rounds.head_sha` (`0005_rounds_head_sha.ts`) closes D-5-11-1**, written when the
+      developer stage reports `committed` rather than at round close — a developer stage in
+      any pipeline with a gate in it `advance`s, so a round-close-only write would never
+      fire for the pipelines this milestone exists to run. `RoundNote` now carries the raw
+      sha rather than rendered text, so the event and the column go through one formatter.
+      **A race found and removed while doing it:** the first cut derived a round's headline
+      from `roundOutcome === null`, and `onDeveloperCommitted` fires *unawaited, before*
+      `onStageCompleted` — so whether a round was closed at render time depended on which
+      of two concurrent tasks won, and the tracer caught the resulting flip. The note's
+      presence is the deterministic signal and stays the headline's source.
+      **Everything load-bearing was watched failing first** (convention 13): reverting
+      `detach()` to `destroy()` turned the gate's own case red with `expected 'send_back'
+      to be 'pass'` — a gate judging a `baseRef` tree, D-5-13-1 exactly; making `detach()`
+      destroy the worktree turned three contract cases red on both backends; dropping the
+      `head_sha` read reproduced D-5-11-1's `- Attempt 1 — completed` fold. The six
+      `expect(worktree).toBe(false)` assertions in `stage-runner.test.ts` went red on the
+      lifecycle change, which is their job, and are inverted rather than deleted.
+      **Two empirical corrections, both from probes rather than from reading** (convention
+      15): `git rev-parse --abbrev-ref --end-of-options HEAD` **echoes the terminator as a
+      rev** and prints two lines, so `attachWorktree` uses `symbolic-ref --short` — which
+      honours `--end-of-options` and exits 128 on a detached HEAD, where `rev-parse` prints
+      the string `HEAD` and exits 0. And `fake-claude-success.mjs` had to start appending a
+      *distinct* line: round 2's developer now attaches to a worktree already containing
+      round 1's commit, so a double writing identical content staged nothing, `git commit`
+      exited non-zero, and the round retried forever — reproduced on the new scenario's
+      first run.
+      **Found and not fixed:** `DEBT.md` **D-5-14-1** (a finished feature's worktree is
+      never collected — `TERMINAL_STATES` is `merged`/`abandoned` and v1 produces neither,
+      owner M09) and **D-5-14-2** (a worker whose `stage_result` was accepted is still
+      logged as "exited without an accepted result"; predates this step, reproduces on
+      5.13's own scenario, owner M06).
 - [ ] **5.15** — Send-back carries the failing verdict into the next developer prompt as
       context (LOOP-02).
 - [ ] **5.16** — Protected-path enforcement (ROLE-11). Diff what the developer wrote; if
@@ -654,3 +728,6 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | The round loop's writes | `packages/manager/src/loop/round-runner.ts`'s `onStageCompleted` — done, 5.13. Wired unconditionally in `daemon.ts`; `options.forge` only decides whether a green round also promotes. |
 | Re-dispatching a feature mid-pipeline | `FeaturesRepository.listDispatchable()` + `dispatchOnce`'s continuation path — done, 5.13. A continuation runs no transition and never re-merges `adl.yml`. |
 | The `stage_result` wire envelope | `packages/manager/src/ipc/stage-verdict.ts` — done, 5.13. A real Zod union with a validated parser; a gate reports `{kind:'verdict', verdict}`. |
+| Workspace continuity across stages | `WorkspaceBackend.attach` + `Workspace.detach` (`@adl/core/stage`) — done, 5.14. A stage does `attach(spec) ?? create(spec)` and ends with `detach()`; nothing in the loop calls `destroy()`, which is the GC sweep's decision from feature state. |
+| A gate implementation | `packages/manager/src/worker-entry/command-gate.ts` — done, 5.14. A new gate kind is an entry in `stage-runner.ts`'s `GATE_IMPLEMENTATIONS` plus a runner; an unlisted stage id is refused with a non-retryable `binary_missing`. |
+| The commit a round produced | `rounds.head_sha` (`0005_rounds_head_sha.ts`) — done, 5.14. Written when the developer stage reports `committed`, never at round close. |

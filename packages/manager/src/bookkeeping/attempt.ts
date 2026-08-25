@@ -106,6 +106,10 @@ export async function openAttempt(
           number: roundNumber,
           outcome: null,
           outcome_json: null,
+          // Filled in by the round loop when this round's developer stage
+          // reports a commit (M05 step 5.14) — null here is a round that has
+          // not run its developer yet, which every round is at this moment.
+          head_sha: null,
           started_at: at,
           ended_at: null,
         });
