@@ -56,7 +56,11 @@ import {
   type StageErrorKind,
   type Workspace,
 } from '@adl/core/stage';
-import { workspaceRegistry, managerGitClient } from '@adl/workspace';
+import {
+  workspaceRegistry,
+  managerGitClient,
+  branchNameFor,
+} from '@adl/workspace';
 import {
   CLAUDE_CODE_CAPABILITIES,
   claudeCodeBackend,
@@ -436,6 +440,37 @@ export function createProductionStageRunner(
           reason:
             'the agent run completed with no reported error, but HEAD did not move — no commit was made',
         });
+      }
+
+      // M05 step 5.10: push the branch before this function returns — still
+      // inside this `try`, before the `finally` below destroys the workspace
+      // and reclaims the branch along with it (`Workspace.destroy`'s own
+      // contract; see 5.0b's tracer for the same ordering constraint proven
+      // by hand). `assign.pushUrl` is a fresh, already-credentialed URL the
+      // manager minted for this dispatch (`dispatcher.ts`) — this module
+      // never constructs one itself, matching WORK-02's "no forge adapter, no
+      // new external dependency" discipline for `worker-entry/**`. Absent
+      // (`options.forge` not configured, or the manager's own mint attempt
+      // failed) means nothing is pushed.
+      if (assign.pushUrl !== undefined) {
+        try {
+          await git.push(
+            assign.pushUrl,
+            `HEAD:refs/heads/${branchNameFor(workspace.id)}`,
+          );
+        } catch (error) {
+          // A push failure is reported through the exact same channel as
+          // "could not create the workspace" / "could not read HEAD" above —
+          // never a degraded-but-`committed` outcome (docs/plan/DEBT.md
+          // D-5-R-1's owner step made this call: a retry of a `stage_error`
+          // naturally retries the publish too, where a third
+          // `DeveloperOutcome` variant would need a core, exhaustiveness-
+          // guarded union to grow just for this).
+          return stageErrorResult(
+            'provider_error',
+            `commit ${headAfter} succeeded locally, but pushing the branch failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
 
       return developerOutcomeResult({ kind: 'committed', sha: headAfter });

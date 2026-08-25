@@ -225,6 +225,34 @@ export const PollConfigSchema = z
 export type PollConfig = z.infer<typeof PollConfigSchema>;
 
 /**
+ * GitHub App credentials for one watched repository (M05 step 5.10) — never
+ * shared across repos in this schema, matching v1's own "exactly one
+ * physical `mainRepo`" assumption elsewhere (`resolveProductionAdlYml`,
+ * `poll-schedule.ts`'s single-repo read): duplication across repos is a
+ * later milestone's problem, not a reason to invent a second, cross-repo
+ * credentials section now. Stored inline, like `ApiConfigSchema.token` — a
+ * generated/issued secret is a natural fit for this machine-readable,
+ * owner-only-permissioned file (`daemon-config.ts`'s own `OWNER_ONLY_FILE_MODE`),
+ * not a second "read a path" indirection.
+ */
+export const GithubAppConfigSchema = z
+  .strictObject({
+    app_id: z
+      .union([z.string(), z.number()])
+      .describe('The GitHub App’s own id.'),
+    private_key: z
+      .string()
+      .min(1)
+      .describe('The GitHub App’s PEM private key, stored inline.'),
+    installation_id: z
+      .union([z.string(), z.number()])
+      .describe('The installation id for this repository.'),
+  })
+  .meta({ id: 'GithubAppConfig' });
+
+export type GithubAppConfig = z.infer<typeof GithubAppConfigSchema>;
+
+/**
  * One watched repository, declared in the daemon config and reconciled into
  * the `repos` table at startup (D-35). Fields correspond to `ReposTable`'s
  * columns, minus `created_at`/`updated_at` — those are the table's own
@@ -251,6 +279,20 @@ export const WatchedRepoSchema = z
     features_dir: RepoRelativePathSchema.default('features').describe(
       'The directory, relative to the repo root, ADL watches for feature folders. ' +
         'Default: "features", matching adl.yml’s own default (D-16).',
+    ),
+    /**
+     * Absent means the real `adl daemon start` entry point wires no
+     * `ForgeAdapter` for this repository at all (M05 step 5.10) — the same
+     * "absent means skip" shape {@link PollConfigSchema}'s own consumer
+     * (`StartDaemonOptions.forge`) already established. Present only for
+     * `forge: "github"` in practice; not schema-enforced against `forge`'s
+     * value, since a second forge adapter (M09/M14) grows a sibling optional
+     * field here rather than a discriminated union this repository does not
+     * need yet.
+     */
+    github_app: GithubAppConfigSchema.optional().describe(
+      'GitHub App credentials for this repository (forge: "github"). Absent: ' +
+        'no live ForgeAdapter is wired for this repository.',
     ),
   })
   .meta({ id: 'WatchedRepo' });

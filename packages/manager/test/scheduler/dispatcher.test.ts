@@ -291,3 +291,78 @@ describe('dispatchOnce — the concurrency cap', () => {
     });
   });
 });
+
+describe('dispatchOnce — forge.pushCredential (M05 step 5.10)', () => {
+  it('mints a push credential and threads it onto assign.pushUrl', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedFeature(db, { repoId, state: 'queued' });
+
+      let capturedPushUrl: string | undefined;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        forge: {
+          pushCredential: async () =>
+            'https://x-access-token:tok@github.com/example/target-repo.git',
+        },
+        spawnWorker: (call) => {
+          capturedPushUrl = call.assign.pushUrl;
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(capturedPushUrl).toBe(
+        'https://x-access-token:tok@github.com/example/target-repo.git',
+      );
+    });
+  });
+
+  it('degrades to no pushUrl, without failing dispatch, when minting the credential throws', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedFeature(db, { repoId, state: 'queued' });
+
+      let sawAssign = false;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        forge: {
+          pushCredential: async () => {
+            throw new Error('installation token exchange failed');
+          },
+        },
+        spawnWorker: (call) => {
+          sawAssign = true;
+          expect(call.assign.pushUrl).toBeUndefined();
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(sawAssign).toBe(true);
+    });
+  });
+
+  it('carries no pushUrl at all when no forge is configured', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedFeature(db, { repoId, state: 'queued' });
+
+      let sawAssign = false;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        spawnWorker: (call) => {
+          sawAssign = true;
+          expect(call.assign.pushUrl).toBeUndefined();
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(sawAssign).toBe(true);
+    });
+  });
+});

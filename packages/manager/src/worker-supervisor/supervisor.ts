@@ -8,6 +8,31 @@ import {
   type UsageMessage,
 } from '../ipc/protocol.js';
 import { checkFence, type StaleRejectionCounter } from '../fencing.js';
+import type { StageRunnerVerdict } from '../worker-entry/stage-runner.js';
+
+/**
+ * The real commit sha, when a fence-matched `stage_result`'s `verdictJson`
+ * reports `{kind:'developer_outcome', outcome:{kind:'committed'}}` — never
+ * for `blocked` or a `stage_error` (M05 step 5.10). `worker-entry/**` owns
+ * producing this envelope (`stage-runner.ts`'s own docblock); this is the
+ * first production reader of it on the manager side. A structurally
+ * malformed `verdictJson` (a crashed or malicious worker) is treated as "no
+ * commit to publish," not thrown — mirroring `parseWorkerMessage`'s own
+ * "an infrastructure failure, never trusted data" discipline just above.
+ */
+function committedShaFromVerdict(verdictJson: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(verdictJson) as unknown;
+  } catch {
+    return undefined;
+  }
+  const verdict = parsed as Partial<StageRunnerVerdict>;
+  return verdict.kind === 'developer_outcome' &&
+    verdict.outcome?.kind === 'committed'
+    ? verdict.outcome.sha
+    : undefined;
+}
 
 /**
  * One feature's forked worker, and everything the supervisor tracks about it.
@@ -164,6 +189,23 @@ export interface SupervisorDeps {
     readonly featureId: string;
     readonly leaseToken: string;
     readonly repoId: string;
+  }) => void;
+  /**
+   * Called once a fence-matched `stage_result` reports a real commit
+   * (`developer_outcome: committed` — never `blocked`, never a
+   * `stage_error`) — M05 step 5.10's publish hook. By the time this fires,
+   * the branch is already on the remote if a forge is configured: a push
+   * failure inside `stage-runner.ts` is reported as a `stage_error` instead
+   * of a `committed` outcome (see that module's own docblock), so this
+   * callback firing is itself the guarantee. `daemon.ts` wires this to
+   * `publish/draft-cr.ts`'s `publishDraftChangeRequest`, gated on
+   * `options.forge` being configured; absent here, no forge-aware caller —
+   * every earlier plan's `createSupervisor` call site keeps compiling
+   * unchanged, mirroring `onRoundBoundary`.
+   */
+  readonly onDeveloperCommitted?: (params: {
+    readonly feature: FeaturesTable;
+    readonly sha: string;
   }) => void;
   /**
    * Called when a forked worker's process exits without the manager having
@@ -415,6 +457,14 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
               leaseToken,
               repoId: feature.repo_id,
             });
+            // M05 step 5.10: fire only for a real, committed developer
+            // outcome — never for `blocked` or a `stage_error`, and never
+            // for an unparseable `verdictJson` (treated as "nothing to
+            // publish", not thrown).
+            const committedSha = committedShaFromVerdict(message.verdictJson);
+            if (committedSha !== undefined) {
+              deps.onDeveloperCommitted?.({ feature, sha: committedSha });
+            }
             // CR-01: a fence-matched stage_result is the one place the
             // manager KNOWS this attempt reached a verdict — `assign` (this
             // spawn() call's own closure) carries the stageAttemptId, never

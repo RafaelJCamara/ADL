@@ -2,6 +2,12 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import pino, { type Logger } from 'pino';
 import type { DaemonStartDeps, DaemonStartRunner } from '@adl/cli';
+import type { DaemonConfig } from '@adl/core/config';
+import {
+  githubForgeAdapter,
+  githubPushUrl,
+  parseGithubRemoteUrl,
+} from '@adl/forge-github';
 import {
   claudeVersionCheckRunner,
   BackendUnavailableError,
@@ -75,6 +81,59 @@ export interface DaemonStartRunnerDeps {
 }
 
 /**
+ * Build the real, credentialed `StartDaemonOptions.forge` from the
+ * configured repository's `github_app` block (M05 step 5.10) — the same
+ * "absent means skip" shape {@link StartDaemonOptions.agentBackendVersionCheck}
+ * already uses. v1 watches exactly one physical repository
+ * (`resolveProductionAdlYml`'s own scope note, `daemon.ts`), so this reads
+ * `daemonConfig.repos[0]` — the same single-configured-repository
+ * assumption every other production call site already makes.
+ *
+ * A `remote_url` {@link parseGithubRemoteUrl} cannot resolve to
+ * `{owner, repo}` is logged and skipped, never a hard refusal: forge wiring
+ * is a capability this entry point gains when configured, not a startup
+ * precondition like the schema/adl.yml/backend gates above, none of which
+ * this function touches.
+ */
+function buildForgeOption(
+  daemonConfig: DaemonConfig,
+  logger: Logger,
+): StartDaemonOptions['forge'] {
+  const repoConfig = daemonConfig.repos[0];
+  if (repoConfig?.github_app === undefined) return undefined;
+
+  const repo = parseGithubRemoteUrl(repoConfig.remote_url);
+  if (repo === undefined) {
+    logger.warn(
+      { remoteUrl: repoConfig.remote_url },
+      'daemon config: repos[0].github_app is set, but remote_url does not ' +
+        'parse as a GitHub repository — no ForgeAdapter wired',
+    );
+    return undefined;
+  }
+
+  const { app_id, private_key, installation_id } = repoConfig.github_app;
+  const adapter = githubForgeAdapter({
+    appId: app_id,
+    privateKey: private_key,
+    installationId: installation_id,
+  });
+
+  return {
+    adapter,
+    repo,
+    pushCredential: async () => {
+      const pushToken = await adapter.getPushToken();
+      return githubPushUrl({
+        token: pushToken.token,
+        owner: repo.owner,
+        repo: repo.repo,
+      });
+    },
+  };
+}
+
+/**
  * Build the production `DaemonStartRunner`. Every dependency above defaults
  * to the real thing; a test overrides only the ones it needs to control,
  * matching this package's own `StartDaemonOptions` injection style.
@@ -134,6 +193,7 @@ export function createProductionDaemonStartRunner(
     }
 
     const path = env['PATH'] ?? '';
+    const forgeOption = buildForgeOption(loaded.config, logger);
     const options: StartDaemonOptions = {
       dbFilePath,
       host: loaded.config.api.host,
@@ -152,6 +212,9 @@ export function createProductionDaemonStartRunner(
         path,
         scratchHome: scratchRoot,
       }),
+      // M05 step 5.10: absent unless `repos[0].github_app` is configured —
+      // see `buildForgeOption`'s own docblock.
+      ...(forgeOption !== undefined ? { forge: forgeOption } : {}),
     };
 
     let handle: DaemonHandle;

@@ -16,6 +16,7 @@ import {
   type TempRepo,
 } from '../../../workspace/test/helpers/temp-repo.js';
 import { posixOnly } from '../helpers/platform.js';
+import { branchNameFor } from '@adl/workspace';
 import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import type { AssignMessage } from '../../src/ipc/protocol.js';
 import {
@@ -94,6 +95,7 @@ function buildAssign(overrides: {
   readonly mainRepo: string;
   readonly scratchRoot: string;
   readonly baseRef: string;
+  readonly pushUrl?: string;
 }): AssignMessage {
   return {
     t: 'assign',
@@ -111,7 +113,15 @@ function buildAssign(overrides: {
     stageId: 'develop',
     stageIndex: 0,
     logsRoot: join(dirname(overrides.scratchRoot), 'logs'),
+    ...(overrides.pushUrl !== undefined ? { pushUrl: overrides.pushUrl } : {}),
   };
+}
+
+/** The real branch a committed dispatch pushes — mirrors `stage-runner.ts`'s own composition (DETECT-05, 5.6). */
+function realBranchFor(assign: AssignMessage): string {
+  return branchNameFor(
+    composeBranchFeatureId(basename(assign.workspaceHandle), assign.featureId),
+  );
 }
 
 /**
@@ -201,6 +211,90 @@ describe('createProductionStageRunner', () => {
       ).trim();
       expect(authorName).toBe('ADL (claude-code)');
       expect(authorEmail).toBe('adl+claude-code@noreply.local');
+    });
+  }, 20_000);
+
+  it('a committed run with assign.pushUrl set pushes the branch before the workspace is destroyed (M05 step 5.10)', async () => {
+    await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+      const featureId = `feat-${ulid()}`;
+      await writeFeatureSpec(mainRepo, featureId);
+      await commitFeatureSpec(git, featureId);
+      const baseRef = (await git.revparse(['HEAD'])).trim();
+
+      const bareRemote = join(scratchRoot, '..', 'push-target.git');
+      await mkdir(bareRemote, { recursive: true });
+      await git.raw(['-C', bareRemote, 'init', '--bare']);
+
+      const assign = buildAssign({
+        featureId,
+        mainRepo,
+        scratchRoot,
+        baseRef,
+        pushUrl: bareRemote,
+      });
+      const runner = createProductionStageRunner({
+        claudeBinary: [process.execPath, FAKE_CLAUDE_SUCCESS],
+        claudeCliPath: process.env['PATH'] ?? '',
+      });
+
+      const result = await runner(assign);
+      const verdict = JSON.parse(result.verdictJson) as StageRunnerVerdict;
+
+      expect(verdict.kind).toBe('developer_outcome');
+      if (
+        verdict.kind !== 'developer_outcome' ||
+        verdict.outcome.kind !== 'committed'
+      ) {
+        throw new Error(
+          `expected a committed outcome, got ${result.verdictJson}`,
+        );
+      }
+
+      const branch = realBranchFor(assign);
+      const pushedSha = (
+        await git.raw(['-C', bareRemote, 'rev-parse', `refs/heads/${branch}`])
+      ).trim();
+      expect(pushedSha).toBe(verdict.outcome.sha);
+
+      // The workspace was still destroyed on the committed-and-pushed path.
+      expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
+    });
+  }, 20_000);
+
+  it('a push failure is reported as a retryable stage_error, never a false committed outcome', async () => {
+    await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+      const featureId = `feat-${ulid()}`;
+      await writeFeatureSpec(mainRepo, featureId);
+      await commitFeatureSpec(git, featureId);
+      const baseRef = (await git.revparse(['HEAD'])).trim();
+
+      // Not a real remote — `git init --bare` never ran here — so the push
+      // itself fails, deterministically, with no network involved.
+      const notARemote = join(scratchRoot, '..', 'not-a-remote.git');
+
+      const assign = buildAssign({
+        featureId,
+        mainRepo,
+        scratchRoot,
+        baseRef,
+        pushUrl: notARemote,
+      });
+      const runner = createProductionStageRunner({
+        claudeBinary: [process.execPath, FAKE_CLAUDE_SUCCESS],
+        claudeCliPath: process.env['PATH'] ?? '',
+      });
+
+      const result = await runner(assign);
+      const verdict = JSON.parse(result.verdictJson) as StageRunnerVerdict;
+
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind === 'stage_error') {
+        expect(verdict.error.kind).toBe('provider_error');
+        expect(verdict.error.retryable).toBe(true);
+      }
+
+      // Still torn down — a failed publish does not leak the worktree.
+      expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
     });
   }, 20_000);
 

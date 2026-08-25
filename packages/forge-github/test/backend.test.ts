@@ -290,4 +290,16 @@ describe('githubForgeAdapter', () => {
 
     expect(permission).toBe('unknown');
   });
+
+  it('mints a real installation access token through the same App-auth JWT exchange (M05 step 5.10)', async () => {
+    const pushToken = await adapter.getPushToken();
+
+    expect(pushToken.token).toBe('mock-installation-token');
+    expect(new Date(pushToken.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    expect(
+      server.state.authorizationHeadersSeen.some((header) =>
+        /^bearer [^.]+\.[^.]+\.[^.]+$/i.test(header),
+      ),
+    ).toBe(true);
+  });
 });

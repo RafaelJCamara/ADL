@@ -201,6 +201,116 @@ describe('createProductionDaemonStartRunner — mapping and refusals', () => {
     expect(written.api?.token).toBeUndefined();
   });
 
+  it('with no repos[0].github_app configured, forge is absent — matching the "no live GitHub App credentials yet" default (DEBT.md item 1.7)', async () => {
+    let captured: StartDaemonOptions | undefined;
+    const runner = createProductionDaemonStartRunner({
+      cwd: () => dir,
+      startDaemonFn: async (options) => {
+        captured = options;
+        return fakeHandle();
+      },
+      buildAgentBackendVersionCheck: () => async () => ({
+        stdout: '',
+        exitCode: 0,
+      }),
+    });
+
+    await runner({ stderr: new CapturingSink() });
+
+    expect(captured?.forge).toBeUndefined();
+  });
+
+  it('a repos[0].github_app block with a real GitHub remote_url builds a real forge option (M05 step 5.10)', async () => {
+    await mkdir(join(dir, '.adl'), { recursive: true });
+    await writeFile(
+      join(dir, '.adl', 'daemon.json'),
+      JSON.stringify({
+        repos: [
+          {
+            id: 'main',
+            remote_url: 'https://github.com/adl-org/adl-demo.git',
+            default_branch: 'main',
+            forge: 'github',
+            github_app: {
+              app_id: 12345,
+              private_key: 'not-a-real-key-just-config-plumbing',
+              installation_id: 67890,
+            },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    let captured: StartDaemonOptions | undefined;
+    const runner = createProductionDaemonStartRunner({
+      cwd: () => dir,
+      startDaemonFn: async (options) => {
+        captured = options;
+        return fakeHandle();
+      },
+      buildAgentBackendVersionCheck: () => async () => ({
+        stdout: '',
+        exitCode: 0,
+      }),
+    });
+
+    await runner({ stderr: new CapturingSink() });
+
+    expect(captured?.forge).toBeDefined();
+    expect(captured?.forge?.adapter.id).toBe('github');
+    expect(captured?.forge?.repo).toEqual({
+      owner: 'adl-org',
+      repo: 'adl-demo',
+    });
+    expect(typeof captured?.forge?.pushCredential).toBe('function');
+  });
+
+  it('a github_app block whose remote_url does not parse as GitHub logs a warning and leaves forge absent, without refusing to start', async () => {
+    await mkdir(join(dir, '.adl'), { recursive: true });
+    await writeFile(
+      join(dir, '.adl', 'daemon.json'),
+      JSON.stringify({
+        repos: [
+          {
+            id: 'main',
+            remote_url: 'https://gitlab.com/adl-org/adl-demo.git',
+            default_branch: 'main',
+            forge: 'github',
+            github_app: {
+              app_id: 12345,
+              private_key: 'not-a-real-key-just-config-plumbing',
+              installation_id: 67890,
+            },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const { logger, logs } = createCapturingLogger();
+    let captured: StartDaemonOptions | undefined;
+    const runner = createProductionDaemonStartRunner({
+      cwd: () => dir,
+      logger,
+      startDaemonFn: async (options) => {
+        captured = options;
+        return fakeHandle();
+      },
+      buildAgentBackendVersionCheck: () => async () => ({
+        stdout: '',
+        exitCode: 0,
+      }),
+    });
+
+    await runner({ stderr: new CapturingSink() });
+
+    expect(captured?.forge).toBeUndefined();
+    expect(
+      logs.some((l) =>
+        l.msg?.includes('does not parse as a GitHub repository'),
+      ),
+    ).toBe(true);
+  });
+
   it.each([
     [
       'SchemaVersionRefusalError',

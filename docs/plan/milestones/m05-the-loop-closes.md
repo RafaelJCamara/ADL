@@ -275,8 +275,76 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       GraphQL `markPullRequestReadyForReview` mutation (REST has no "unset draft"). Tested
       against a hand-rolled `node:http` mock GitHub server; the one live-credentialed run
       is `DEBT.md` item 1.7.
-- [ ] **5.10** — Draft CR at round 1, promoted to ready only when every gate is green
+- [x] **5.10** — Draft CR at round 1, promoted to ready only when every gate is green
       (FORGE-05).
+      **Shipped, the draft-at-round-1 half:** a real commit now automatically pushes and
+      opens a real draft change request, with no manual stitching — the automatic version of
+      what 5.0b's tracer proved by hand. The push has to happen *inside* the worker, before
+      `createProductionStageRunner`'s own `finally` destroys the workspace (`Workspace.destroy()`
+      reclaims the branch along with the worktree), so the manager mints a fresh,
+      short-lived, already-credentialed URL once per dispatch
+      (`scheduler/dispatcher.ts`'s new `DispatcherDeps.forge.pushCredential`) and threads it
+      through the existing `AssignMessage` as a new optional `pushUrl` field —
+      `worker-entry/stage-runner.ts` pushes with it right after confirming a real commit, still
+      inside its own `try`. A push failure is reported through the exact same `stage_error`
+      channel as "could not create the workspace" (`provider_error`, retryable) rather than a
+      degraded-but-`committed` outcome or a new `DeveloperOutcome` variant. Opening the change
+      request itself stays in the manager: `worker-supervisor/supervisor.ts` gained
+      `onDeveloperCommitted`, the first production reader of the `StageRunnerVerdict` envelope
+      M04 left unread — fired only for a fence-matched `stage_result` reporting
+      `developer_outcome: committed`, which (because a push failure is a `stage_error`
+      instead) is itself the guarantee the branch is already on the remote. `daemon.ts` wires
+      it to a new `publish/draft-cr.ts`'s `publishDraftChangeRequest`, gated on
+      `options.forge` exactly like 5.5's poll schedule.
+      **No DB migration.** Idempotency ("don't open a second draft CR for a feature that
+      already has one") is answered by asking the forge — `listOpenChangeRequests`, matched
+      against the exact branch this feature's own dispatch would push
+      (`branch-identity.ts`'s `composeBranchFeatureId` + `@adl/workspace`'s `branchNameFor`)
+      — the same "evaluate state, don't remember events" discipline 5.2/5.6 already
+      established, rather than a new `features` column or table.
+      **`packages/forge-github` gained one new capability and two pure helpers:**
+      `githubForgeAdapter` now also returns `getPushToken()` (via `octokit.auth({type:
+      'installation'})`, reusing the adapter's own already-configured `octokit` instance —
+      no second `createAppAuth` call, no new dependency), exposed through a new
+      `GithubForgeAdapter` type (`ForgeAdapter` plus this one GitHub-specific extension,
+      never added to the neutral port itself — FORGE-10's minimal-interface spirit). New
+      `src/repo-ref.ts`: `parseGithubRemoteUrl` (derives `ForgeRepoRef` from a GitHub-shaped
+      `remote_url` — no production call site did this before) and `githubPushUrl` (formats
+      the token into `https://x-access-token:<token>@host/owner/repo.git`), both pure and
+      unit-tested with no network.
+      **Closing the real entry point's gap, as planned:** `@adl/core/config`'s
+      `WatchedRepoSchema` gained an optional `github_app` block (`app_id`/`private_key`/
+      `installation_id`, stored inline like `api.token` already is). `boot/cli-entry.ts` — the
+      real `adl daemon start` — now builds a real `ForgeAdapter` and push credential from
+      `repos[0].github_app` when configured, wiring `StartDaemonOptions.forge` for the real
+      binary for the first time; a `remote_url` `parseGithubRemoteUrl` can't resolve is
+      logged and skipped, never a hard refusal. This is also the first real production caller
+      of 5.5's poll schedule dependency. `@adl/forge-github` moved from `devDependencies` to
+      a real runtime `dependencies` entry of `@adl/manager`. **No live GitHub App credentials
+      are configured yet** — `DEBT.md` item 1.7 is unchanged; this only makes the real binary
+      *capable*.
+      **Scope decision, confirmed with the maintainer before implementation:** the
+      "promoted to ready only when every gate is green" half is genuinely not buildable yet —
+      group C (5.13's round loop) is what will ever produce an aggregate "every gate is
+      green" verdict, and nothing in production evaluates one today. `forge.promoteToReady`
+      stays built (5.9) and uncalled, exactly like `resetCrashCountOnSuccess`'s own
+      documented-gap precedent — a one-line call site for 5.13 once `aggregate()` exists.
+      **No state-machine change.** `publishing`/`cr_opened`/`pr_open`
+      (`@adl/core/state/feature-state.ts`) model the loop's *final* hand-off to a human,
+      entered only after `all_gates_passed` — which nothing fires yet. A draft CR opened
+      early, during `gating`, is a side artifact for visibility, not a lifecycle state; its
+      existence is fully answerable by asking the forge, exactly as this step's idempotency
+      check already does.
+      **`DEBT.md` D-5-R-1 is now live**, not hypothetical: a real credentialed push URL is
+      constructed and passed as a `git` argv element on every real dispatch with a forge
+      configured. No mitigation attempted this step — the residual is accepted exactly as
+      already documented, updated to say so.
+      **Proof:** a new tracer, `test/tracer/draft-cr-wiring.test.ts` — real `startDaemon()`
+      with a real `forge` (mock GitHub server + a local bare remote standing in for a
+      credentialed push target) → `POST /dev-run/:featureId` → real forked worker → real
+      commit → real push → real draft CR, with no manual stitching. 5.0b's own manual tracer
+      (`detect-to-draft-cr-end-to-end.test.ts`) still passes unmodified — the pieces it
+      proved compose by hand are the same pieces this step wired behind the scheduler.
 - [ ] **5.11** — Sticky per-role comments (FORGE-06). One comment per role, edited in
       place, prior rounds collapsed into `<details>`. Four gates over five rounds is twenty
       comments if you get this wrong — the AI-slop pattern maintainers are revolting

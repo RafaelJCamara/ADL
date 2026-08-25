@@ -165,13 +165,19 @@ element passed to the real `git` child, which means the short-lived forge token 
 to another process on the same host reading `/proc/<pid>/cmdline` (or `ps`) for the
 (typically sub-second) duration of the push.
 
-- **Not yet exploitable in shipped code** — nothing today constructs a real credentialed
-  URL; the M05 tracer's own push is against an unauthenticated local bare remote, and no
-  production call site exists yet.
-- **Becomes live** the moment a real GitHub App installation token is formatted into a
-  `push()` call — expected around 5.10 (draft-CR-at-round-1 wiring) or whenever the
-  round-loop runner first performs a real publish.
-- **Candidate mitigations, not evaluated yet:** a custom `credential.helper` appended via
+- **Live as of M05 step 5.10.** `worker-entry/stage-runner.ts` calls `ManagerGitClient.push`
+  with `assign.pushUrl` — a real, credentialed URL the manager mints per dispatch
+  (`scheduler/dispatcher.ts`'s `DispatcherDeps.forge.pushCredential`, wired from
+  `boot/cli-entry.ts`'s `buildForgeOption` whenever `repos[0].github_app` is configured) —
+  whenever a real developer stage commits. Proven live end to end by
+  `test/tracer/draft-cr-wiring.test.ts`. Not yet exploitable *in this project's own CI or the
+  maintainer's own install*, since no live GitHub App credentials are configured
+  (`DEBT.md` item 1.7) — but the code path itself is real, shipped, and unconditional
+  whenever an operator does configure one.
+- **No mitigation attempted this step** — 5.10's own scope, confirmed with the maintainer
+  before implementation, was the draft-CR-at-round-1 wiring itself; the residual below is
+  accepted exactly as already documented, not re-litigated.
+- **Candidate mitigations, still not evaluated:** a custom `credential.helper` appended via
   `-c` *after* `NEUTRALISE_ARGS` reading the token from a caller-supplied env var outside
   the `GIT_*` execution-vector ban (`packages/workspace/src/exec/env.ts`'s
   `GIT_EXECUTION_ENV_PREFIXES` blocks `GIT_CONFIG_*`/`GIT_ASKPASS` outright, so this needs a
@@ -179,7 +185,8 @@ to another process on the same host reading `/proc/<pid>/cmdline` (or `ps`) for 
   or simply accepting the argv-visibility window as bounded by the token's own short TTL
   (GitHub installation tokens expire in ~1 hour) and the same-host trust boundary the
   manager already operates inside.
-- **Owner:** whichever M05 step first constructs a real, credentialed push URL.
+- **Owner:** unassigned — a real mitigation, if one is wanted, is a fresh milestone decision
+  now that the residual is live rather than hypothetical.
 
 ---
 
@@ -235,10 +242,11 @@ a cleanup.
   exactly-pinned `claude` on PATH.
 - **The poll schedule (5.5) requires an explicit `ForgeAdapter` (`StartDaemonOptions.forge`)
   and does not start without one**, the same "absent means skip" shape as the backend
-  preflight gate above. `packages/manager/src/boot/cli-entry.ts` (5.7), the real `adl daemon
-  start` entry point, does not supply one either — no live GitHub App exists yet (item 1.7
-  above). → whichever step first gives that entry point a real credential source (5.10 is
-  the natural candidate, since it's already where the credentialed forge-publish side lands).
+  preflight gate above. `packages/manager/src/boot/cli-entry.ts` **now builds one (5.10)**
+  whenever `repos[0].github_app` is configured — the real entry point has a credential
+  source as of this step. It still supplies none *by default*: no live GitHub App exists yet
+  (item 1.7 above), so the maintainer's own `.adl/daemon.json` leaves `github_app` unset and
+  the poll schedule (and the publish side, D-5-R-1) stays off until that's populated.
 - **The context-file cascade is not wired into `mergeConfig`'s output.**
   `effectiveConfig.context.files` stays exactly what `adl.yml` declared.
 - **No capability-reconciliation error event.** Implemented per its plan's literal wording,

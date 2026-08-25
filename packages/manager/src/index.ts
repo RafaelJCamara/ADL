@@ -388,6 +388,14 @@ export {
   type FolderTrustResult,
 } from './detect/trust.js';
 
+// The publish hook's I/O half (5.10, FORGE-05) — published so a test can
+// drive it directly against a real ForgeAdapter, and so `daemon.ts`'s
+// `onDeveloperCommitted` wiring has a stable import path.
+export {
+  publishDraftChangeRequest,
+  type PublishDraftChangeRequestDeps,
+} from './publish/draft-cr.js';
+
 // `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow loop)
 // — published for the same reason every other route module is: so a test can
 // mount it directly. `TRANSCRIPT_POLL_INTERVAL_MS`/`LOG_STREAM_EVENTS` are

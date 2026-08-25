@@ -113,3 +113,63 @@ describe('DaemonConfigSchema — repos (D-35)', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('DaemonConfigSchema — repos.github_app (M05 step 5.10)', () => {
+  const baseRepo = {
+    id: 'my-repo',
+    remote_url: 'git@github.com:example/my-repo.git',
+    default_branch: 'main',
+    forge: 'github',
+  };
+
+  it('defaults to absent — no live ForgeAdapter is implied for a repo that omits it', () => {
+    const result = DaemonConfigSchema.parse({ repos: [baseRepo] });
+    expect(result.repos[0]?.github_app).toBeUndefined();
+  });
+
+  it('parses a repo entry carrying real GitHub App credentials', () => {
+    const result = DaemonConfigSchema.parse({
+      repos: [
+        {
+          ...baseRepo,
+          github_app: {
+            app_id: 12345,
+            private_key:
+              '-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n',
+            installation_id: 67890,
+          },
+        },
+      ],
+    });
+
+    expect(result.repos[0]?.github_app).toEqual({
+      app_id: 12345,
+      private_key:
+        '-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n',
+      installation_id: 67890,
+    });
+  });
+
+  it('accepts string-typed app/installation ids, matching GitHub App API responses', () => {
+    const result = DaemonConfigSchema.safeParse({
+      repos: [
+        {
+          ...baseRepo,
+          github_app: {
+            app_id: 'app-id-string',
+            private_key: 'pem',
+            installation_id: 'installation-id-string',
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a github_app block missing a required field', () => {
+    const result = DaemonConfigSchema.safeParse({
+      repos: [{ ...baseRepo, github_app: { app_id: 1 } }],
+    });
+    expect(result.success).toBe(false);
+  });
+});

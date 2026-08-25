@@ -50,6 +50,7 @@ import {
 } from './config/resolve-adl-yml.js';
 import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
+import { publishDraftChangeRequest } from './publish/draft-cr.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import { startGcSchedule } from './scheduler/gc-schedule.js';
 import { startPollSchedule } from './scheduler/poll-schedule.js';
@@ -201,6 +202,17 @@ export interface StartDaemonOptions {
   readonly forge?: {
     readonly adapter: ForgeAdapter;
     readonly repo: ForgeRepoRef;
+    /**
+     * Mints a fresh, short-lived, already-credentialed push URL (M05 step
+     * 5.10) — threaded into every dispatch (`dispatchOnce`'s own `forge.pushCredential`)
+     * and, once a real commit is reported, is also what makes
+     * `onDeveloperCommitted` below safe to open a change request from: a
+     * push failure is reported as a `stage_error`, never a `committed`
+     * outcome, so by the time that callback fires the branch is already on
+     * the remote. Absent: `adapter`/`repo` still drive the read-only poll
+     * schedule (5.5), but nothing is ever pushed or published.
+     */
+    readonly pushCredential?: () => Promise<string>;
   };
 }
 
@@ -400,6 +412,12 @@ export async function startDaemon(
     }
   }
 
+  // Captured once, in this scope, so the closures below (`onDeveloperCommitted`
+  // and `runDispatchOnce`'s own `forge` field) both see a narrowed, defined
+  // value — a plain `options.forge !== undefined` check inline in an object
+  // literal does not narrow `options.forge` itself inside a nested closure.
+  const configuredForge = options.forge;
+
   const supervisor = createSupervisor({
     entryPath: options.workerEntryPath ?? DEFAULT_WORKER_ENTRY_PATH,
     cwd: options.workerCwd ?? process.cwd(),
@@ -436,6 +454,29 @@ export async function startDaemon(
         'pause-park',
       );
     },
+    // M05 step 5.10: a real commit reported for a feature, with a forge
+    // configured — open (or confirm already-open) its draft change request.
+    // Absent `options.forge`, no callback at all: the same "absent means
+    // skip" shape the poll schedule below already uses, and this daemon's
+    // only forge-aware callback besides it.
+    ...(configuredForge !== undefined
+      ? {
+          onDeveloperCommitted: (params: {
+            feature: FeaturesTable;
+            sha: string;
+          }) => {
+            void publishDraftChangeRequest(
+              {
+                db,
+                logger,
+                forge: configuredForge.adapter,
+                forgeRepo: configuredForge.repo,
+              },
+              params,
+            );
+          },
+        }
+      : {}),
     // 04-10, D-06: the one INSERT path for a `usage_events` row — through
     // the existing `usageRepository(db).record`, never a second writer. The
     // supervisor has already fenced the message and resolved the feature id
@@ -564,6 +605,12 @@ export async function startDaemon(
       spawnWorker: ({ feature, leaseToken, assign }) => {
         supervisor.spawn(feature, leaseToken, assign);
       },
+      // M05 step 5.10: absent unless the configured forge also carries a
+      // `pushCredential` — `adapter`/`repo` alone (5.5's read-only poll
+      // schedule) are not enough to publish anything.
+      ...(configuredForge?.pushCredential !== undefined
+        ? { forge: { pushCredential: configuredForge.pushCredential } }
+        : {}),
     });
   }
 

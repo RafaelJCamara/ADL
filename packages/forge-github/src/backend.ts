@@ -16,8 +16,21 @@
  * `@octokit/core@7.0.7` source: `authStrategy({ request: this.request, ... })`),
  * so the installation-token POST inherits the override with no separate
  * wiring here.
+ *
+ * **`getPushToken` is the one deliberate exception to "stores no token."**
+ * `ManagerGitClient.push` (`packages/workspace/src/git/manager-git.ts`, M05
+ * step 5.10) takes no credential parameter — `credential.helper` is
+ * neutralised, so the only mechanism left for an authenticated push is a
+ * remote URL carrying `x-access-token:<token>`, which needs the bare string,
+ * not an auth hook `octokit`'s internals can consume on this adapter's
+ * behalf. `getPushToken` reuses the exact `octokit` instance already
+ * configured above (`octokit.auth(...)`, the documented public accessor for
+ * an `authStrategy`'s own resolved auth function) rather than constructing a
+ * second `createAppAuth` — so it inherits the same `baseUrl` test override
+ * with no separate wiring, exactly like every other method here.
  */
 import { createAppAuth } from '@octokit/auth-app';
+import type { InstallationAccessTokenAuthentication } from '@octokit/auth-app';
 import { Octokit } from 'octokit';
 import {
   COLLABORATOR_PERMISSIONS,
@@ -121,9 +134,29 @@ function stickyMarker(key: string): string {
   return `<!-- adl:role=${key} -->`;
 }
 
+/** A short-lived GitHub App installation token, as `@octokit/auth-app` reports it. */
+export interface GithubPushToken {
+  readonly token: string;
+  readonly expiresAt: string;
+}
+
+/**
+ * {@link ForgeAdapter} plus one GitHub-specific extension — never added to
+ * the port itself (FORGE-10's minimal-interface spirit: a capability
+ * specific to one forge is an optional, separately-gated method on that
+ * forge's own adapter, not a widening every other adapter has to stub out).
+ * A caller that only needs the neutral port keeps using `ForgeAdapter`; a
+ * caller that needs a real push credential (M05 step 5.10) imports this
+ * richer type instead.
+ */
+export interface GithubForgeAdapter extends ForgeAdapter {
+  /** Mint a fresh installation access token for the configured App/installation — never cached here (see module docblock). */
+  getPushToken(): Promise<GithubPushToken>;
+}
+
 export function githubForgeAdapter(
   options: GithubForgeAdapterOptions,
-): ForgeAdapter {
+): GithubForgeAdapter {
   const octokit = new Octokit({
     authStrategy: createAppAuth,
     auth: {
@@ -318,6 +351,18 @@ export function githubForgeAdapter(
       return isGithubPermissionLevel(data.permission)
         ? data.permission
         : 'unknown';
+    },
+
+    async getPushToken(): Promise<GithubPushToken> {
+      // `octokit.auth` is typed `(...args: unknown[]) => Promise<unknown>`
+      // upstream (`@octokit/core@7.0.7`'s own `dist-types`) — the cast below
+      // is to `@octokit/auth-app`'s own documented result shape for an
+      // `{ type: 'installation' }` request, not an assumption invented here.
+      const auth = (await octokit.auth({
+        type: 'installation',
+        installationId: options.installationId,
+      })) as InstallationAccessTokenAuthentication;
+      return { token: auth.token, expiresAt: auth.expiresAt };
     },
   };
 }

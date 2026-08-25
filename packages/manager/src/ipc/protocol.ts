@@ -157,6 +157,19 @@ export const AssignMessageSchema = z
      * the default but not a guarantee.
      */
     logsRoot: z.string().min(1),
+    /**
+     * A fresh, short-lived, already-credentialed remote URL
+     * (`https://x-access-token:<token>@host/owner/repo.git`) the worker
+     * pushes the branch to right after a real commit, still inside
+     * `createProductionStageRunner`'s own `try` and before
+     * `Workspace.destroy()` reclaims the branch (M05 step 5.10). Only the
+     * manager holds forge credentials, so this is minted once per dispatch
+     * and handed down — the worker never constructs one itself. Absent:
+     * `options.forge` was not configured (or minting the token failed, a
+     * caught degrade — `docs/plan/DEBT.md`'s dispatcher-side handling), and
+     * the worker pushes nothing.
+     */
+    pushUrl: z.string().min(1).optional(),
   })
   .meta({ id: 'ManagerAssignMessage' });
 

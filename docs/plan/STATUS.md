@@ -1,6 +1,6 @@
 # STATUS — start here
 
-*Last updated: 2026-08-24*
+*Last updated: 2026-08-25*
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -24,7 +24,7 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), and 5.8/5.9 from group B are done; group B still has 5.10–5.12 ahead, and
+group A (5.1–5.7), and 5.8–5.10 from group B are done; group B still has 5.11–5.12 ahead, and
 groups C and D haven't started.**
 
 ```
@@ -32,7 +32,7 @@ M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1–5.9 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1–5.10 done
 M06–M18 ............................. not started
 ```
 
@@ -120,11 +120,40 @@ regression-tested on POSIX), and the SIGINT/SIGTERM handler could call an alread
 `handle.stop()` a second time — unguarded, since `process.once` only deregisters the signal
 it fired on — crashing on the resulting unhandled rejection (fixed with an idempotency guard
 plus a caught `.catch()`, both watched failing against the exact defect first).
+And a real commit now automatically becomes a real draft pull request (5.10) — the
+automatic version of what 5.0b's tracer proved by hand. The push has to happen *inside* the
+worker, before `createProductionStageRunner`'s own teardown destroys the workspace and
+reclaims the branch with it, so the manager mints a fresh, short-lived, already-credentialed
+push URL once per dispatch (`scheduler/dispatcher.ts`'s new `DispatcherDeps.forge.pushCredential`)
+and threads it through `AssignMessage` as a new `pushUrl` field; a push failure is reported as
+the same `stage_error`/`provider_error` a workspace-creation failure already uses, never a
+false `committed`. Opening the change request stays in the manager:
+`worker-supervisor/supervisor.ts` gained `onDeveloperCommitted`, the first production reader
+of the `StageRunnerVerdict` envelope M04 left unread, wired in `daemon.ts` to a new
+`publish/draft-cr.ts`. **No DB migration** — idempotency ("don't open a second draft CR")
+is answered by asking the forge (`listOpenChangeRequests`, matched by the exact branch a real
+dispatch would push), the same "evaluate state, don't remember events" discipline 5.2/5.6
+already established. `packages/forge-github` gained `getPushToken()` (reusing the adapter's
+own `octokit` instance, no new dependency) and two pure helpers, `parseGithubRemoteUrl`/
+`githubPushUrl`. And `boot/cli-entry.ts` — the real `adl daemon start` — now builds a real
+`ForgeAdapter` and push credential from a new optional `repos[0].github_app` daemon-config
+block when one is configured, closing the gap 5.5 left open (`@adl/forge-github` is now a
+real runtime dependency of `@adl/manager`, not test-only); left absent by default, since no
+live GitHub App credentials exist yet (`DEBT.md` item 1.7, unchanged). **Deviation, confirmed
+with the maintainer before implementation:** 5.10's other stated half — promoting the draft
+to ready once every gate is green — is genuinely not buildable yet, since nothing in
+production produces an aggregate "every gate passed" verdict until group C's round loop
+exists; `forge.promoteToReady` (5.9) stays built and uncalled, exactly like
+`resetCrashCountOnSuccess`'s own documented-gap precedent, for 5.13 to wire in one line.
+Proven automatic and end to end by a new tracer,
+`packages/manager/test/tracer/draft-cr-wiring.test.ts`; 5.0b's own manual tracer still passes
+unmodified.
 
 **What does not exist yet:** promote-to-ready/sticky-comments/never-merge wiring
-(5.10–5.12), and the whole round loop — gates, send-back, protected-path enforcement
-(group C) — plus per-round accounting (group D). `dev-run` still fires a single synthetic
-`develop` stage by hand.
+(5.11–5.12, though `promoteToReady` and `upsertComment`'s marker-based find-or-create are
+already built and just need a caller), and the whole round loop — gates, send-back,
+protected-path enforcement (group C) — plus per-round accounting (group D). `dev-run` still
+fires a single synthetic `develop` stage by hand.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -135,16 +164,15 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-with group B's remainder — **5.10**
-(draft-at-round-1/promote-when-green wiring; `StartDaemonOptions.forge` is still absent from
-`bin.ts`'s own wiring, matching 5.5's "no live GitHub App credentials yet" precedent —
-`DEBT.md` item 1.7 — so 5.10 is also where that gets decided for the real entry point),
-**5.11** (sticky per-role comments — `upsertComment`'s marker-based find-or-create already
-exists in `@adl/forge-github`; 5.11 is *using* it from the loop, not building it again),
-**5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge method;
-5.12 is the assertion that reads its own shape and fails if one is ever added). Group C (the
-round loop itself) reuses `resolvePipeline` (`@adl/core/config`, still no caller). Group D
-(accounting) can run in parallel with C once a round exists to record against.
+with group B's remainder — **5.11** (sticky per-role comments — `upsertComment`'s
+marker-based find-or-create already exists in `@adl/forge-github`; 5.11 is *using* it from
+the loop, not building it again — note `@adl/forge-github`'s `upsertComment` does not
+paginate `issues.listComments`, `DEBT.md` § 4, owned by this step), **5.12** (the never-merge
+structural guard — `ForgeAdapter` already has no merge method; 5.12 is the assertion that
+reads its own shape and fails if one is ever added). Group C (the round loop itself) reuses
+`resolvePipeline` (`@adl/core/config`, still no caller) and is also where 5.10's deferred
+half — calling `forge.promoteToReady` once `aggregate()` says every gate passed — gets wired
+in. Group D (accounting) can run in parallel with C once a round exists to record against.
 
 **Before you plan M05 in detail, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled

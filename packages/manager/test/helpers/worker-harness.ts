@@ -105,3 +105,31 @@ export function withHeldWorker(
     execArgv: ['--import', 'tsx'],
   };
 }
+
+/**
+ * The M05 step 5.10 double's own entry module — see
+ * `scripted-committed-worker-entry.ts`'s docblock: it reports a real
+ * `StageRunnerVerdict` (`developer_outcome`/`committed`), unlike
+ * `scripted-worker-entry.ts`'s legacy placeholder shape.
+ */
+export const scriptedCommittedWorkerEntry = fileURLToPath(
+  new URL('./scripted-committed-worker-entry.ts', import.meta.url),
+);
+
+/**
+ * The fixed sha `scripted-committed-worker-entry.ts` reports — declared here
+ * rather than in that module so a test can import it without also importing
+ * that module's own `runWorker(...)` top-level side effect (registering
+ * `process.on('message')` in whichever process does the importing).
+ */
+export const SCRIPTED_COMMITTED_SHA = 'a'.repeat(40);
+
+export function withCommittedWorker(
+  options: { readonly cwd?: string } = {},
+): ScriptedWorkerConfig {
+  return {
+    entryPath: scriptedCommittedWorkerEntry,
+    cwd: options.cwd ?? process.cwd(),
+    execArgv: ['--import', 'tsx'],
+  };
+}

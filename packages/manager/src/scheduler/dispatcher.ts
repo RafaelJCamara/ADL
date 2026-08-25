@@ -136,6 +136,19 @@ export interface DispatcherDeps {
    * paused.
    */
   readonly controlState?: ControlState;
+  /**
+   * Mints a fresh, short-lived, already-credentialed push URL for this
+   * dispatch (M05 step 5.10) — `daemon.ts` supplies this from
+   * `StartDaemonOptions.forge.pushCredential` when configured. Optional so
+   * every earlier plan's tests (and any caller with no forge configured)
+   * keep constructing `DispatcherDeps` without one — absent, `assign` carries
+   * no `pushUrl` and the worker pushes nothing, matching `resolveAdlYml`'s
+   * own "injected, not derived here" discipline: this file decides *when* to
+   * ask, never *how* a credential is built.
+   */
+  readonly forge?: {
+    readonly pushCredential: () => Promise<string>;
+  };
 }
 
 /**
@@ -367,6 +380,23 @@ export async function dispatchOnce(
     { featureId: feature.id, stageId, stageIndex },
   );
 
+  // M05 step 5.10: mint a fresh push credential for this dispatch, when a
+  // forge is configured. A mint failure (the forge unreachable, an expired
+  // App installation, ...) degrades to dispatching with no `pushUrl` rather
+  // than failing the whole dispatch — publishing is a bonus to a real
+  // developer stage, never a precondition for one to run.
+  let pushUrl: string | undefined;
+  if (deps.forge !== undefined) {
+    try {
+      pushUrl = await deps.forge.pushCredential();
+    } catch (error) {
+      deps.logger?.warn(
+        { err: error, featureId: feature.id },
+        'dispatch: could not mint a push credential — dispatching without one',
+      );
+    }
+  }
+
   const assign: AssignMessage = {
     t: 'assign',
     featureId: feature.id,
@@ -383,6 +413,7 @@ export async function dispatchOnce(
     stageId: attempt.stageId,
     stageIndex: attempt.stageIndex,
     logsRoot: deps.logsRoot ?? join(dirname(deps.scratchRoot), 'logs'),
+    ...(pushUrl !== undefined ? { pushUrl } : {}),
   };
 
   deps.spawnWorker({
