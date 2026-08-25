@@ -14,6 +14,7 @@ import {
   mergeConfig,
   type AdlYml,
   type DaemonConfig,
+  type EffectiveConfig,
 } from '@adl/core/config';
 import {
   transition,
@@ -24,7 +25,7 @@ import type { WorkspaceBackendId } from '@adl/workspace';
 import type { AssignMessage } from '../ipc/protocol.js';
 import { isDispatchPaused, type ControlState } from '../control/state.js';
 import { openAttempt } from '../bookkeeping/attempt.js';
-import { pipelineFromEffectiveConfig } from '../stage-name.js';
+import { resolveSnapshotPipeline } from '../pipeline.js';
 
 /**
  * One dispatch attempt (D-15..17): pick the oldest admissible queued
@@ -160,7 +161,12 @@ export async function dispatchOnce(
   deps: DispatcherDeps,
 ): Promise<DispatchDecision> {
   const repo = featuresRepository(deps.db);
-  const queued = await repo.listQueued();
+  // M05 step 5.13: `queued` rows, plus features already inside the loop whose
+  // previous stage finished and released its lease. The candidate filter,
+  // concurrency cap and pause brake below are identical for both — a
+  // continuation is an ordinary dispatch that happens to start partway
+  // through a pipeline.
+  const queued = await repo.listDispatchable();
   if (queued.length === 0) {
     return { dispatched: false };
   }
@@ -232,25 +238,40 @@ export async function dispatchOnce(
     return { dispatched: false };
   }
 
+  // A feature already inside the loop is being leased for its *next* stage,
+  // not admitted for its first — so it keeps the configuration it was
+  // admitted under. Versioning rule 3 (`@adl/core/state`'s `feature-state.ts`)
+  // is exactly this: the effective configuration is snapshotted at lease time
+  // so that editing `adl.yml` mid-flight cannot change a running feature's
+  // pipeline. Re-merging here would do precisely what that rule forbids —
+  // silently hand round 2 a different pipeline from round 1's.
+  const isContinuation =
+    feature.state !== 'queued' && feature.effective_config_json !== null;
+
   // Snapshot the effective configuration at lease time (Phase 1's versioning
   // rule 3). `mergeConfig` already produces exactly the frozen resolved
   // object this needs; this is the one place this plan calls it.
-  const { config, report } = mergeConfig(
-    DEFAULT_CONFIG,
-    deps.daemonConfig,
-    deps.resolveAdlYml(feature),
-  );
-  if (report.clamped.length > 0 || report.discarded.length > 0) {
-    deps.logger?.warn(
-      {
-        featureId: feature.id,
-        clamped: report.clamped,
-        discarded: report.discarded,
-      },
-      'adl.yml requested fields outside its trust boundary',
-    );
-  }
-  const effectiveConfigJson = JSON.stringify(config);
+  const effectiveConfigJson = isContinuation
+    ? (feature.effective_config_json as string)
+    : (() => {
+        const { config, report } = mergeConfig(
+          DEFAULT_CONFIG,
+          deps.daemonConfig,
+          deps.resolveAdlYml(feature),
+        );
+        if (report.clamped.length > 0 || report.discarded.length > 0) {
+          deps.logger?.warn(
+            {
+              featureId: feature.id,
+              clamped: report.clamped,
+              discarded: report.discarded,
+            },
+            'adl.yml requested fields outside its trust boundary',
+          );
+        }
+        return JSON.stringify(config);
+      })();
+  const config = JSON.parse(effectiveConfigJson) as EffectiveConfig;
 
   // D-12's other half, made an explicit branch rather than left as an
   // always-derive expression: a feature with no `workspace_handle` yet is
@@ -265,6 +286,22 @@ export async function dispatchOnce(
   // handle survives dispatch unchanged.
   const isFirstAttempt = feature.workspace_handle === null;
   const workspaceHandle = feature.workspace_handle ?? feature.path;
+
+  if (isContinuation) {
+    // Nothing to transition: the feature is already in the state its next
+    // stage runs under, and `current_stage_index` already points at that
+    // stage — the round loop wrote both when the previous stage finished.
+    // Leasing it is the whole of this dispatch, so there is no CAS to lose
+    // and no audit row to append for a state change that is not happening.
+    return dispatchAssigned(deps, {
+      feature,
+      leaseToken,
+      effectiveConfigJson,
+      stageIndex: feature.current_stage_index,
+      workspaceHandle,
+      baseRef,
+    });
+  }
 
   const events = await repo.listEvents(feature.id);
   const lastEventSeq = events.reduce(
@@ -352,32 +389,88 @@ export async function dispatchOnce(
     return { dispatched: false };
   }
 
+  return dispatchAssigned(deps, {
+    feature: {
+      ...feature,
+      state: outcome.next,
+      round: feature.round + outcome.counters.round,
+      current_stage_index:
+        feature.current_stage_index + outcome.counters.currentStageIndex,
+      effective_config_json: effectiveConfigJson,
+      workspace_handle: workspaceHandle,
+    },
+    leaseToken,
+    effectiveConfigJson,
+    stageIndex:
+      feature.current_stage_index + outcome.counters.currentStageIndex,
+    workspaceHandle,
+    baseRef,
+  });
+}
+
+interface AssignedDispatch {
+  /** The feature row as it now stands — already carrying this dispatch's state. */
+  readonly feature: FeaturesTable;
+  readonly leaseToken: string;
+  readonly effectiveConfigJson: string;
+  readonly stageIndex: number;
+  readonly workspaceHandle: string;
+  readonly baseRef: string;
+}
+
+/**
+ * Everything a dispatch does once the lease is held and the row says what it
+ * is going to say: name the stage, open its attempt, mint a push credential,
+ * and fork.
+ *
+ * Factored out because there are now two ways to arrive here — admitting a
+ * `queued` feature, and re-leasing one already inside the loop for its next
+ * stage (M05 step 5.13) — and a second copy of this assembly is a second
+ * `AssignMessage` shape that could drift from the first. `daemon.ts` already
+ * refuses to build `DispatcherDeps` twice for exactly this reason.
+ */
+async function dispatchAssigned(
+  deps: DispatcherDeps,
+  params: AssignedDispatch,
+): Promise<DispatchDecision> {
+  const { feature, leaseToken, effectiveConfigJson, stageIndex } = params;
+
   // Every agent invocation gets a round and a stage attempt before it
   // starts (04-04 Task 2's must_have), so the transcript path and the spend
-  // ledger have real join keys rather than synthesised ones. The stage
-  // index/id come from the pipeline this dispatch just snapshotted, not a
-  // second read of it — a recovery dispatch (isFirstAttempt === false)
-  // resolves to the same stage index it was already at, so openAttempt's
-  // own ordinal logic makes that a second attempt in history (D-13), not a
-  // fresh round.
-  const stageIndex =
-    feature.current_stage_index + outcome.counters.currentStageIndex;
-  const pipeline = pipelineFromEffectiveConfig(effectiveConfigJson) ?? [];
-  const stageId = pipeline[stageIndex];
-  if (stageId === undefined) {
-    // Structurally shouldn't happen: `ctx.pipelineLength` above is this same
+  // ledger have real join keys rather than synthesised ones. The stage id
+  // comes from the pipeline this feature was admitted under, resolved through
+  // `@adl/core/config`'s `resolvePipeline` (M05 step 5.13's first production
+  // caller) rather than read as raw strings — so a pipeline naming a harness
+  // this build has no loader for is refused *here*, before a worker is forked
+  // to run a stage that does not exist.
+  const pipeline = resolveSnapshotPipeline(effectiveConfigJson);
+  if (!pipeline.ok) {
+    deps.logger?.error(
+      { featureId: feature.id, reason: pipeline.reason },
+      'dispatch: the snapshotted pipeline could not be resolved — releasing the lease rather than forking a worker',
+    );
+    await featuresRepository(deps.db).releaseLease({
+      id: feature.id,
+      leaseToken,
+    });
+    return { dispatched: false };
+  }
+
+  const stage = pipeline.stages[stageIndex];
+  if (stage === undefined) {
+    // Structurally shouldn't happen: `ctx.pipelineLength` is this same
     // pipeline's length, and transition() only ever advances the index
     // within it. An invariant violation, not an ordinary dispatch outcome —
     // daemon.ts's tick() already wraps this whole call and logs it.
     throw new Error(
-      `dispatch: resolved stage index ${stageIndex} has no entry in the ` +
-        `snapshotted pipeline (length ${pipeline.length}) for feature ${feature.id}`,
+      `dispatch: resolved stage index ${String(stageIndex)} has no entry in the ` +
+        `snapshotted pipeline (length ${String(pipeline.stages.length)}) for feature ${feature.id}`,
     );
   }
 
   const attempt = await openAttempt(
     { db: deps.db, now: deps.now },
-    { featureId: feature.id, stageId, stageIndex },
+    { featureId: feature.id, stageId: stage.id, stageIndex },
   );
 
   // M05 step 5.10: mint a fresh push credential for this dispatch, when a
@@ -401,12 +494,12 @@ export async function dispatchOnce(
     t: 'assign',
     featureId: feature.id,
     leaseToken,
-    workspaceHandle,
+    workspaceHandle: params.workspaceHandle,
     effectiveConfigJson,
     heartbeatIntervalMs: deps.heartbeatIntervalMs,
     mainRepo: deps.mainRepo,
     scratchRoot: deps.scratchRoot,
-    baseRef,
+    baseRef: params.baseRef,
     workspaceBackendId: deps.workspaceBackendId ?? 'worktree',
     roundId: attempt.roundId,
     stageAttemptId: attempt.stageAttemptId,
@@ -416,19 +509,7 @@ export async function dispatchOnce(
     ...(pushUrl !== undefined ? { pushUrl } : {}),
   };
 
-  deps.spawnWorker({
-    feature: {
-      ...feature,
-      state: outcome.next,
-      round: feature.round + outcome.counters.round,
-      current_stage_index:
-        feature.current_stage_index + outcome.counters.currentStageIndex,
-      effective_config_json: effectiveConfigJson,
-      workspace_handle: workspaceHandle,
-    },
-    leaseToken,
-    assign,
-  });
+  deps.spawnWorker({ feature, leaseToken, assign });
 
   return {
     dispatched: true,

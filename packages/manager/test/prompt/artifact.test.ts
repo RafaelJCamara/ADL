@@ -28,10 +28,8 @@ import {
   promptArtifactPathFor,
   writePromptArtifact,
 } from '../../src/prompt/artifact.js';
-import {
-  createProductionStageRunner,
-  type StageRunnerVerdict,
-} from '../../src/worker-entry/stage-runner.js';
+import type { StageRunnerVerdict } from '../../src/ipc/stage-verdict.js';
+import { createProductionStageRunner } from '../../src/worker-entry/stage-runner.js';
 import {
   TRANSCRIPT_EXTENSION,
   TranscriptAddressError,

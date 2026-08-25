@@ -50,6 +50,7 @@ import {
 } from './config/resolve-adl-yml.js';
 import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
+import { onStageCompleted } from './loop/round-runner.js';
 import { publishOnDeveloperCommitted } from './publish/on-developer-committed.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import { startGcSchedule } from './scheduler/gc-schedule.js';
@@ -480,6 +481,28 @@ export async function startDaemon(
           },
         }
       : {}),
+    // M05 step 5.13: the round loop. Wired unconditionally — unlike the
+    // publish hooks above, advancing a round is not a forge-dependent bonus
+    // but the loop itself, and a daemon that leased a feature and ran a stage
+    // owes that feature a decision whether or not a forge is configured.
+    // `options.forge` only decides whether a green round can also promote its
+    // change request to ready (FORGE-05).
+    onStageCompleted: (params) =>
+      onStageCompleted(
+        {
+          db,
+          logger,
+          ...(configuredForge !== undefined
+            ? {
+                forge: {
+                  adapter: configuredForge.adapter,
+                  repo: configuredForge.repo,
+                },
+              }
+            : {}),
+        },
+        params,
+      ),
     // 04-10, D-06: the one INSERT path for a `usage_events` row — through
     // the existing `usageRepository(db).record`, never a second writer. The
     // supervisor has already fenced the message and resolved the feature id

@@ -16,7 +16,7 @@
 // `worker-harness.ts` instead (`SCRIPTED_COMMITTED_SHA`) — importing it from
 // here would import this module's side effect into the test process itself.
 import { runWorker, type StageRunner } from '../../src/worker-entry/index.js';
-import type { StageRunnerVerdict } from '../../src/worker-entry/stage-runner.js';
+import type { StageRunnerVerdict } from '../../src/ipc/stage-verdict.js';
 import { SCRIPTED_COMMITTED_SHA } from './worker-harness.js';
 
 const delayMs = Number(process.env.ADL_TEST_STAGE_DELAY_MS ?? '50');

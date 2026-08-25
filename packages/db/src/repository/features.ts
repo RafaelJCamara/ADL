@@ -89,6 +89,29 @@ export interface FeaturesRepository {
   latestRound(featureId: string): Promise<RoundsTable | undefined>;
 
   /**
+   * Record a round's terminal outcome — the write `openAttempt`'s own docblock
+   * deferred to "the loop, which is Phase 5" (M05 step 5.13).
+   *
+   * `outcome` is the `RoundOutcome` **kind** and `outcomeJson` the whole
+   * payload, kept as two columns for the reason `verdicts` is a table rather
+   * than a blob: "which rounds sent back?" is a `WHERE`, not a scan that
+   * parses every stored round in application code.
+   *
+   * Idempotent by construction, exactly like `bookkeeping/attempt.ts`'s
+   * `closeAttempt`: the `UPDATE` is guarded by `ended_at is null`, so a
+   * replayed round completion — an at-least-once worker report arriving twice
+   * after a crash — matches zero rows and is a no-op rather than rewriting a
+   * verdict a pull request has already been rendered from. Returns whether
+   * this call is the one that closed it, so a caller can tell the two apart.
+   */
+  closeRound(input: {
+    id: string;
+    outcome: string;
+    outcomeJson: string;
+    endedAt: string;
+  }): Promise<boolean>;
+
+  /**
    * Acquire a lease on an unheld or expired feature.
    *
    * The guard admits a row whose `lease_token` is null (never leased) or
@@ -137,6 +160,24 @@ export interface FeaturesRepository {
 
   /** Every `queued` row, ordered by `id` — ULID order is FIFO (D-17). */
   listQueued(): Promise<FeaturesTable[]>;
+
+  /**
+   * Every row a dispatch may pick up: `queued`, plus a feature already inside
+   * the loop (`developing` or `gating`) whose lease has been released because
+   * the stage that held it finished (M05 step 5.13).
+   *
+   * The second half is what makes the loop turn. `transition()` draws no edge
+   * from `gating` back to `queued` other than `lease_expired` — deliberately,
+   * because a feature midway through its pipeline has not lost its position
+   * and must not be re-admitted as if it had. So the round loop leaves it in
+   * the state it reached, with its `current_stage_index` pointing at the stage
+   * that runs next, and the dispatcher leases it again from there.
+   *
+   * `publishing` is **not** included. A feature that reached it has passed
+   * every gate and is waiting on the forge, not on a stage; re-leasing it
+   * would run a pipeline entry against work that is already done.
+   */
+  listDispatchable(): Promise<FeaturesTable[]>;
 }
 
 export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
@@ -227,6 +268,19 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .orderBy('number', 'desc')
         .limit(1)
         .executeTakeFirst();
+    },
+
+    async closeRound({ id, outcome, outcomeJson, endedAt }) {
+      assertIsoTimestamp(endedAt, 'endedAt');
+
+      const result = await db
+        .updateTable('rounds')
+        .set({ outcome, outcome_json: outcomeJson, ended_at: endedAt })
+        .where('id', '=', id)
+        .where('ended_at', 'is', null)
+        .executeTakeFirst();
+
+      return Number(result.numUpdatedRows) === 1;
     },
 
     async acquireLease({
@@ -331,6 +385,23 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .selectFrom('features')
         .selectAll()
         .where('state', '=', 'queued')
+        .orderBy('id')
+        .execute();
+    },
+
+    listDispatchable() {
+      return db
+        .selectFrom('features')
+        .selectAll()
+        .where((eb) =>
+          eb.or([
+            eb('state', '=', 'queued'),
+            eb.and([
+              eb('state', 'in', ['developing', 'gating']),
+              eb('lease_token', 'is', null),
+            ]),
+          ]),
+        )
         .orderBy('id')
         .execute();
     },

@@ -52,22 +52,22 @@ const SEVERITY_RANK = new Map<string, number>(
  * Detail the publishing event itself carries that no table records.
  *
  * Today there is exactly one: the commit sha a `developer_outcome: committed`
- * reports. It is genuinely absent from the database — `rounds.outcome_json` is
- * the column that will hold a round's result and the loop runner (5.13) is what
- * will write it — so a round's *own* freshest fact would otherwise be the one
- * thing missing from the comment announcing it. Scoped to a single `roundId`
- * rather than applied to "the latest round" because the supervisor knows
- * exactly which round its worker was assigned, and "latest" is a guess that is
- * wrong the moment two rounds are ever in flight.
+ * reports. Scoped to a single `roundId` rather than applied to "the latest
+ * round" because the supervisor knows exactly which round its worker was
+ * assigned, and "latest" is a guess that is wrong the moment two rounds are
+ * ever in flight.
  *
- * **A note lives only as long as its round is the newest one.** The comment is
- * re-derived in full every round, so round 1's sha is absent from the comment
- * republished during round 2 — it was never in a table to be read back. The
- * alternative was fabricating a `RoundOutcome` in `rounds.outcome_json` to
- * hold it, which would corrupt the column 5.13's round loop is built on.
- * Recorded in `docs/plan/DEBT.md` § 3 with 5.13 as its owner, and asserted in
- * `test/publish/sticky-comment.test.ts` so it stays a decision rather than
- * drifting into an accident.
+ * **A note lives only as long as its round is the newest one**, and M05 step
+ * 5.13 narrowed that rather than removing it. A finished round now renders its
+ * real result from `rounds.outcome_json` — {@link describeRoundOutcome} — so a
+ * fold no longer degrades to a bare `send_back`. The **sha** specifically is
+ * still not read back, because the debt item that owned this
+ * (`docs/plan/DEBT.md` D-5-11-1) rested on a premise that turned out to be
+ * false: `RoundOutcome` has no field for a commit, so writing the real outcome
+ * could never have carried one. Its durable home is a `rounds.head_sha`
+ * column — a migration, and one with a second consumer waiting (a gate needs
+ * the diff between the base and exactly that commit), which is why it belongs
+ * to the step that adds the gate rather than being smuggled in here.
  */
 export interface RoundNote {
   readonly roundId: string;
@@ -86,6 +86,7 @@ interface AttemptRow {
   readonly roundId: string;
   readonly roundNumber: number;
   readonly roundOutcome: string | null;
+  readonly roundOutcomeJson: string | null;
   readonly attempt: number;
   readonly status: string;
   readonly errorKind: string | null;
@@ -135,15 +136,66 @@ function describeFinding(finding: FindingRow): string {
   return `  - \`${oneLine(finding.severity)}\` ${oneLine(finding.title)}${where}`;
 }
 
+/**
+ * A closed round's outcome, in the words a human folding it open wants —
+ * read from `rounds.outcome_json`, which M05 step 5.13's round loop writes.
+ *
+ * `rounds.outcome` alone is the bare kind, so a prior round used to fold away
+ * as `Round 1 — send_back` with no hint of *what* it sent back. The payload is
+ * the difference between that and `send_back — 2 findings`, and it is the only
+ * durable record of a finished round: the sticky comment is re-derived from the
+ * database every time (see this module's own docblock), so anything not in a
+ * column is simply gone by the next round.
+ *
+ * Falls back to the bare kind for a round closed before this column carried a
+ * payload, or for JSON this build cannot read — a fold that says less is much
+ * better than one that throws while rendering a pull request.
+ */
+function describeRoundOutcome(
+  outcome: string,
+  outcomeJson: string | null,
+): string {
+  if (outcomeJson === null) return oneLine(outcome);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outcomeJson) as unknown;
+  } catch {
+    return oneLine(outcome);
+  }
+  if (typeof parsed !== 'object' || parsed === null) return oneLine(outcome);
+
+  const payload = parsed as {
+    kind?: unknown;
+    reason?: unknown;
+    brief?: { findings?: unknown };
+    inconclusive?: unknown;
+  };
+  const findings = payload.brief?.findings;
+  if (payload.kind === 'send_back' && Array.isArray(findings)) {
+    return `send_back — ${String(findings.length)} finding${findings.length === 1 ? '' : 's'}`;
+  }
+  if (payload.kind === 'escalate' && typeof payload.reason === 'string') {
+    return `escalate — ${oneLine(payload.reason)}`;
+  }
+  if (payload.kind === 'unverified' && Array.isArray(payload.inconclusive)) {
+    const count = payload.inconclusive.length;
+    return `unverified — ${String(count)} gate${count === 1 ? '' : 's'} could not tell`;
+  }
+  return oneLine(outcome);
+}
+
 function deriveHeadline(
   rows: readonly AttemptRow[],
   roundOutcome: string | null,
+  roundOutcomeJson: string | null,
 ): string {
   const outcomes = rows
     .map((row) => row.verdictOutcome)
     .filter((outcome): outcome is string => outcome !== null);
   if (outcomes.length > 0) return outcomes[outcomes.length - 1] ?? '';
-  if (roundOutcome !== null) return oneLine(roundOutcome);
+  if (roundOutcome !== null) {
+    return describeRoundOutcome(roundOutcome, roundOutcomeJson);
+  }
 
   const last = rows[rows.length - 1];
   if (last === undefined) return '';
@@ -180,6 +232,7 @@ export async function readRoleRounds(
       'rounds.id as roundId',
       'rounds.number as roundNumber',
       'rounds.outcome as roundOutcome',
+      'rounds.outcome_json as roundOutcomeJson',
       'stage_attempts.attempt as attempt',
       'stage_attempts.status as status',
       'stage_attempts.error_kind as errorKind',
@@ -269,7 +322,9 @@ export async function readRoleRounds(
 
     rounds.push({
       number: first.roundNumber,
-      headline: noted?.headline ?? deriveHeadline(attempts, first.roundOutcome),
+      headline:
+        noted?.headline ??
+        deriveHeadline(attempts, first.roundOutcome, first.roundOutcomeJson),
       body: lines.join('\n'),
     });
   }

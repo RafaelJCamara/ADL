@@ -396,6 +396,37 @@ export {
   type PublishDraftChangeRequestDeps,
 } from './publish/draft-cr.js';
 
+// The branch every publish-side "which change request is this feature's?"
+// question joins on (5.10, 5.13) — one definition, two callers.
+export { changeRequestBranchFor } from './publish/branch.js';
+
+// FORGE-05's second half (5.13): promote the draft once a round comes back
+// green. Published for the same reason `publishDraftChangeRequest` is.
+export { promoteChangeRequestToReady } from './publish/promote.js';
+
+// The round loop (5.13, LOOP-01) — the database half of `@adl/core/loop`'s
+// decision, published so a test can drive one turn of the loop directly and
+// so `daemon.ts`'s `onStageCompleted` wiring has a stable import path.
+export {
+  onStageCompleted,
+  type RoundRunnerDeps,
+  type StageCompletedParams,
+} from './loop/round-runner.js';
+
+// `resolvePipeline`'s one production caller (5.13) — the snapshotted pipeline
+// both `dispatchOnce` and the round loop read, resolved the same way once.
+export { resolveSnapshotPipeline, type SnapshotPipeline } from './pipeline.js';
+
+// The `stage_result` wire envelope and its validated reader (5.13). Published
+// so a scripted worker double in a test builds the SAME shape a real worker
+// sends, rather than a hand-written object that could drift from it.
+export {
+  parseStageRunnerVerdict,
+  StageRunnerVerdictSchema,
+  type StageRunnerVerdict,
+  type StageRunnerVerdictParseResult,
+} from './ipc/stage-verdict.js';
+
 // `GET /stages/:id/logs?offset=N&follow=1` (04-06 history, 04-08 follow loop)
 // — published for the same reason every other route module is: so a test can
 // mount it directly. `TRANSCRIPT_POLL_INTERVAL_MS`/`LOG_STREAM_EVENTS` are

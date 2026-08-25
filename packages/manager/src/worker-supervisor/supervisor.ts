@@ -8,28 +8,24 @@ import {
   type UsageMessage,
 } from '../ipc/protocol.js';
 import { checkFence, type StaleRejectionCounter } from '../fencing.js';
-import type { StageRunnerVerdict } from '../worker-entry/stage-runner.js';
+import { parseStageRunnerVerdict } from '../ipc/stage-verdict.js';
 
 /**
  * The real commit sha, when a fence-matched `stage_result`'s `verdictJson`
  * reports `{kind:'developer_outcome', outcome:{kind:'committed'}}` — never
  * for `blocked` or a `stage_error` (M05 step 5.10). `worker-entry/**` owns
- * producing this envelope (`stage-runner.ts`'s own docblock); this is the
- * first production reader of it on the manager side. A structurally
- * malformed `verdictJson` (a crashed or malicious worker) is treated as "no
- * commit to publish," not thrown — mirroring `parseWorkerMessage`'s own
- * "an infrastructure failure, never trusted data" discipline just above.
+ * producing this envelope; the manager reads it back through
+ * `ipc/stage-verdict.ts`'s validated parser, so a structurally malformed
+ * `verdictJson` (a crashed or malicious worker) is "no commit to publish"
+ * rather than a half-believed field — the same "an infrastructure failure,
+ * never trusted data" discipline `parseWorkerMessage` applies one layer out.
  */
 function committedShaFromVerdict(verdictJson: string): string | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(verdictJson) as unknown;
-  } catch {
-    return undefined;
-  }
-  const verdict = parsed as Partial<StageRunnerVerdict>;
+  const parsed = parseStageRunnerVerdict(verdictJson);
+  if (!parsed.ok) return undefined;
+  const { verdict } = parsed;
   return verdict.kind === 'developer_outcome' &&
-    verdict.outcome?.kind === 'committed'
+    verdict.outcome.kind === 'committed'
     ? verdict.outcome.sha
     : undefined;
 }
@@ -217,6 +213,40 @@ export interface SupervisorDeps {
     readonly stageId: string;
     readonly sha: string;
   }) => void;
+  /**
+   * The round loop (M05 step 5.13) — called for **every** fence-matched
+   * `stage_result`, not only a committed one, and `await`ed so the round's
+   * own bookkeeping is settled before `closeAttempt` below runs.
+   *
+   * That ordering is the point. `closeAttempt` writes a terminal status
+   * guarded by `ended_at is null`, so whichever writer gets there first
+   * decides what the attempt's history says. The loop runner knows which of
+   * the three envelope kinds arrived and therefore whether the attempt
+   * reached a verdict or broke (D-12); this callback's `closeAttempt` knows
+   * only that a result arrived and calls everything `'verdict'`. Running the
+   * runner first makes the more informed writer win and leaves the call
+   * below as the fallback for a daemon with no loop runner wired — every
+   * pre-5.13 `createSupervisor` call site, unchanged.
+   *
+   * The identity fields come from THIS spawn's own `assign` closure, never
+   * from the message (T-4-38) — the same discipline `recordUsage` and
+   * `onDeveloperCommitted` already follow. A worker cannot name the round or
+   * stage attempt it is reporting against.
+   *
+   * Rejections are the caller's to handle: this is `await`ed inside the
+   * supervisor's own fire-and-forget message task, so an unhandled rejection
+   * here would take the daemon down. `daemon.ts` wires a runner that catches
+   * its own failures.
+   */
+  readonly onStageCompleted?: (params: {
+    readonly feature: FeaturesTable;
+    readonly leaseToken: string;
+    readonly roundId: string;
+    readonly stageAttemptId: string;
+    readonly stageId: string;
+    readonly stageIndex: number;
+    readonly verdictJson: string;
+  }) => Promise<void>;
   /**
    * Called when a forked worker's process exits without the manager having
    * accepted a `stage_result` from it or itself requesting the exit (D-04).
@@ -480,6 +510,18 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
                 sha: committedSha,
               });
             }
+            // M05 step 5.13: the round loop, before `closeAttempt` below —
+            // see `SupervisorDeps.onStageCompleted` for why that order is
+            // load-bearing rather than incidental.
+            await deps.onStageCompleted?.({
+              feature,
+              leaseToken,
+              roundId: assign.roundId,
+              stageAttemptId: assign.stageAttemptId,
+              stageId: assign.stageId,
+              stageIndex: assign.stageIndex,
+              verdictJson: message.verdictJson,
+            });
             // CR-01: a fence-matched stage_result is the one place the
             // manager KNOWS this attempt reached a verdict — `assign` (this
             // spawn() call's own closure) carries the stageAttemptId, never

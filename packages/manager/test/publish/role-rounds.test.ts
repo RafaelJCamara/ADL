@@ -70,10 +70,15 @@ async function endRound(
   db: Kysely<Database>,
   roundId: string,
   outcome: string,
+  outcomeJson?: string,
 ): Promise<void> {
   await db
     .updateTable('rounds')
-    .set({ outcome, ended_at: nowIso() })
+    .set({
+      outcome,
+      ...(outcomeJson !== undefined ? { outcome_json: outcomeJson } : {}),
+      ended_at: nowIso(),
+    })
     .where('id', '=', roundId)
     .execute();
 }
@@ -114,6 +119,69 @@ describe('readRoleRounds', () => {
       // falls back to describing its attempts.
       expect(rounds[0]?.headline).toBe('send_back');
       expect(rounds[1]?.headline).toBe('1 attempt');
+    });
+  });
+
+  it('renders a finished round’s real outcome from rounds.outcome_json (D-5-11-1)', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const feature = await seedFeature(db);
+
+      const attempt = await openAttempt(
+        { db },
+        { featureId: feature.id, stageId: DEVELOP, stageIndex: 0 },
+      );
+      await closeAttempt(
+        { db },
+        { stageAttemptId: attempt.stageAttemptId, status: 'verdict' },
+      );
+      // Exactly what M05 step 5.13's round loop writes when a round sends the
+      // developer back. The `outcome` column alone is the bare kind; the
+      // payload is the only durable record of *what* it sent back, and a
+      // comment re-derived from the database is the only reader there is.
+      await endRound(
+        db,
+        attempt.roundId,
+        'send_back',
+        JSON.stringify({
+          kind: 'send_back',
+          brief: {
+            findings: [{ title: 'one' }, { title: 'two' }, { title: 'three' }],
+          },
+        }),
+      );
+
+      const rounds = await readRoleRounds(db, {
+        featureId: feature.id,
+        stageId: DEVELOP,
+      });
+      expect(rounds[0]?.headline).toBe('send_back — 3 findings');
+    });
+  });
+
+  it('falls back to the bare outcome for a round closed before outcome_json carried a payload', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const feature = await seedFeature(db);
+
+      const attempt = await openAttempt(
+        { db },
+        { featureId: feature.id, stageId: DEVELOP, stageIndex: 0 },
+      );
+      await closeAttempt(
+        { db },
+        { stageAttemptId: attempt.stageAttemptId, status: 'verdict' },
+      );
+      // A round row an older build closed, and a payload no build can read —
+      // a fold that says less beats one that throws while rendering a public
+      // pull request.
+      await endRound(db, attempt.roundId, 'escalate', 'not json at all');
+
+      const rounds = await readRoleRounds(db, {
+        featureId: feature.id,
+        stageId: DEVELOP,
+      });
+      expect(rounds[0]?.headline).toBe('escalate');
     });
   });
 

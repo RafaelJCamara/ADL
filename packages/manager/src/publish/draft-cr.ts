@@ -23,33 +23,19 @@
 import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import { basename } from 'node:path';
-import { branchNameFor } from '@adl/workspace';
 import { reposRepository, type Database, type FeaturesTable } from '@adl/db';
 import type {
   ChangeRequest,
   ForgeAdapter,
   ForgeRepoRef,
 } from '@adl/core/forge';
-import { composeBranchFeatureId } from '../branch-identity.js';
+import { changeRequestBranchFor } from './branch.js';
 
 export interface PublishDraftChangeRequestDeps {
   readonly db: Kysely<Database>;
   readonly logger: Logger;
   readonly forge: ForgeAdapter;
   readonly forgeRepo: ForgeRepoRef;
-}
-
-/**
- * The real branch a committed dispatch for `feature` pushes —
- * `stage-runner.ts`'s own composition (DETECT-05, 5.6), recomputed here from
- * the same two inputs it started from (`feature.path`'s basename,
- * `feature.id`) rather than threaded through the verdict, so this function's
- * only required input beyond the feature row is the sha it already logs.
- */
-function branchFor(feature: FeaturesTable): string {
-  return branchNameFor(
-    composeBranchFeatureId(basename(feature.path), feature.id),
-  );
 }
 
 /**
@@ -70,7 +56,7 @@ export async function publishDraftChangeRequest(
   params: { readonly feature: FeaturesTable; readonly sha: string },
 ): Promise<ChangeRequest | undefined> {
   const { feature } = params;
-  const branch = branchFor(feature);
+  const branch = changeRequestBranchFor(feature);
 
   try {
     const open = await deps.forge.listOpenChangeRequests(deps.forgeRepo);

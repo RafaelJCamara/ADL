@@ -485,15 +485,118 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 ### C · The loop — the middle (AC2, AC3)
 
-- [ ] **5.13** — The round-loop runner. Wire `resolvePipeline` into production for the
+- [x] **5.13** — The round-loop runner. Wire `resolvePipeline` into production for the
       first time (it exists in `@adl/core/config` with no caller). develop → gates →
       `aggregate()` → advance or send back. Read back the `StageRunnerVerdict` envelope
       M04 left unread, and call `resetCrashCountOnSuccess` at the round-completion write
       site, in the same transaction as the round outcome.
+      **Shipped, and the loop turns:** `packages/manager/test/scenario/round-loop.test.ts`
+      drives a real `startDaemon()` through `develop → gate → green → publishing`, and —
+      the case AC2 says is the only one that proves anything — through
+      `develop → gate says send_back → round 2's developer runs again → gate passes →
+      publishing`, with one real forked worker process per stage.
+      **Split in two, as the house splits every decision from its I/O.**
+      `@adl/core/loop`'s new `planRoundStep` (pure, total, never throws) answers *which
+      lifecycle events a finished stage raises* and *whether the round is over, with what
+      `RoundOutcome`* — `aggregate()`'s first production caller. It decides no state:
+      `transition()` is still the only code that does, and this function feeds it
+      `FeatureEvent`s so a state change still cannot be issued without its audit row and
+      version guard. It knows no stage names either — an index, a length, and an opaque
+      id that travels straight onto the audit record (EXEC-07's discipline, verbatim from
+      `TransitionCtx`). `packages/manager/src/loop/round-runner.ts` is the other half:
+      record the evidence, apply the events, close the round.
+      **Three sequencing decisions that are the actual substance.**
+      (1) *Index 0 is the developer.* `stage/developer-outcome.ts` has stated this contract
+      since M01 — "the sequencer special-cases index 0" — and it is enforced rather than
+      assumed: a gate verdict arriving in the developer's slot, or a developer outcome in a
+      gate's, escalates instead of counting. That is what keeps self-approval from arriving
+      through the one door the `DeveloperOutcome` union was shaped to close. It also means a
+      pipeline of `develop` alone reaches `aggregate([])` and **escalates** — the developer
+      contributes no verdict, so a zero-gate pipeline reporting green is unreachable rather
+      than merely unlikely.
+      (2) *v1 stops on the first `send_back`.* ARCHITECTURE.md §3 defaults this **by cost
+      class** — cheap gates continue and merge findings, expensive ones stop — and neither
+      half is buildable: `Stage.costClass` has no implementations, and `OnSendBackSchema`'s
+      own `.describe()` records `on_send_back` as Phase 7's. Half a policy is worse than
+      none, so `ResolvedStage.onSendBack` is read by nothing and the conservative half
+      ships. It also keeps `gate_passed` honest — that event is emitted only when the stage
+      did not stop the pipeline. `fail` stops immediately regardless; `inconclusive`
+      deliberately does not, because `aggregate`'s own precedence says an inconclusive
+      beside real findings usually resolves once the code changes.
+      (3) *The pipeline position is written from the sequencer's answer, not from a counter
+      delta.* `TransitionResult.counters` expresses position as a delta and the developer's
+      step off index 0 is not one — `dev_committed`'s edge *resets* the index (its job is to
+      undo a send-back's position). Left to the delta alone, a committed round re-dispatches
+      the developer forever. Written absolutely in the same transaction, for the identical
+      reason `planRecovery`'s `resetStageIndexTo` is written outside `transition()`.
+      **What made the loop actually turn**, and it was not in the step's wording: nothing
+      dispatched a feature that was already inside the loop. `transition()` draws no edge
+      from `gating` back to `queued` — correctly, since a feature midway through its
+      pipeline has not lost its position — so `dispatchOnce`'s `listQueued()` could never
+      see it again. New `FeaturesRepository.listDispatchable()` adds "in `developing` or
+      `gating`, and unleased"; the round loop hands the lease back when a stage finishes and
+      the next tick leases it again from the stage it is on. A **continuation dispatch runs
+      no transition at all** and — this is the load-bearing half — **does not re-merge
+      `adl.yml`**: versioning rule 3 says the effective configuration is snapshotted at
+      lease time precisely so a mid-flight edit cannot change a running feature's pipeline,
+      and re-merging on every stage would have done exactly what that rule forbids.
+      `dispatchOnce`'s assign-assembly is factored into one `dispatchAssigned` both paths
+      call, so the two cannot drift.
+      **`StageRunnerVerdict` moved and grew a schema.** It lived in
+      `worker-entry/stage-runner.ts` and the manager's only reader was a cast that peeked at
+      one field — enough to answer "is there a sha to publish?", not enough to drive a round.
+      It is now `ipc/stage-verdict.ts` (a wire contract with two ends belongs beside
+      `protocol.ts`, not inside one end), a real Zod union, with a third member for a gate's
+      `Verdict`, and `parseStageRunnerVerdict` returns a discriminated result — an
+      unreadable payload becomes a `StageError` the loop routes, never a verdict it half
+      believes.
+      **The worker refuses what it cannot run.** `createProductionStageRunner` implements
+      index 0 and nothing else, so a later index now returns a non-retryable
+      `binary_missing` naming step 5.14 — before a workspace is created. Running the
+      developer agent again as a "gate" would have been self-approval with extra steps.
+      **5.10's deferred one-liner is wired**: `promoteChangeRequestToReady`
+      (`publish/promote.ts`) is called from exactly one place, reached only through
+      `RoundOutcome.kind === 'green'` — so "promoted only when every gate is green" is
+      structural, there being no other producer of `green`. Watched failing: promoting on
+      any completed round turned a `send_back` round's draft ready.
+      `publish/branch.ts` extracts the branch both publish-side callers join on, so there is
+      one answer to "which change request is this feature's?" rather than two.
+      **`resetCrashCountOnSuccess` finally has its caller** (`DEBT.md` § 5), in the same
+      transaction as the round close, per D-11's "the increment and the decision happen
+      together". Every *completed* round resets it, not only a green one: the counter
+      measures consecutive **crashes**, and a round that reached a `RoundOutcome` broke the
+      streak. A retryable stage error takes a different path entirely — `reapOne`, the same
+      function a dead worker's exit calls — so the consecutive-failure ceiling applies and a
+      provider outage cannot retry forever, and **no round is recorded at all**, because
+      nothing was judged (CORE-06, LOOP-07).
+      **`DEBT.md` D-5-11-1 is answered, and its premise was wrong.** The item said writing a
+      real `RoundOutcome` into `rounds.outcome_json` would stop a prior round losing its
+      commit sha. `RoundOutcome` has no field for a commit, so it never could have. What the
+      column *does* now carry is the round's real result, and `role-rounds.ts` reads it: a
+      finished round folds away as `send_back — 3 findings` or `escalate — <reason>` instead
+      of a bare kind. The sha specifically needs a `rounds.head_sha` column — a migration,
+      with a second consumer already waiting (a gate needs the diff between the base and
+      exactly that commit), so it moves to 5.14 rather than being smuggled in here.
+      **Found and not fixed:** the workspace does not survive a stage
+      (`Workspace.destroy()` runs in the stage runner's `finally` and `createWorktree`
+      refuses to attach to an existing worktree), so a real gate would branch from `baseRef`
+      and see none of the developer's work — and the same gap breaks crash recovery today.
+      `DEBT.md` § 3, **owner 5.14**, since that is the first step with a gate that needs one.
 - [ ] **5.14** — The command-gate stage. Runs `adl.yml`'s test command through
       `workspace.exec` and translates the exit code into a verdict. **Deterministic and
       forceable to fail on demand** — that is why the first gate is a command gate and not
       the reviewer agent: no agent nondeterminism confounding the send-back signal.
+      **Blocked on workspace continuity, which this step therefore owns** (`DEBT.md` § 3,
+      found by 5.13): today `createProductionStageRunner` destroys the worktree in its
+      `finally` and `createWorktree` **refuses** to attach to an existing one, so the gate
+      would branch from `baseRef` and judge a tree with none of the developer's work in it.
+      The same gap breaks crash recovery — a recovery dispatch re-creates over a surviving
+      worktree and throws. `WorkspaceBackend.attach` is the shape ARCHITECTURE.md §1 already
+      names ("recovery re-attaches to the existing workspace rather than recloning —
+      `WorkspaceBackend.attach(handle)` exists for exactly this"); it was never built.
+      Also inherits `rounds.head_sha` from 5.13 (`DEBT.md` D-5-11-1): a gate needs the diff
+      between the base and this round's commit, which is the same column a prior round's
+      sticky-comment fold needs to stop losing its sha.
 - [ ] **5.15** — Send-back carries the failing verdict into the next developer prompt as
       context (LOOP-02).
 - [ ] **5.16** — Protected-path enforcement (ROLE-11). Diff what the developer wrote; if
@@ -547,3 +650,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. Both list calls paginate as of 5.11. |
 | A sticky per-role comment | `@adl/core/forge`'s `renderStickyComment` (pure) + `packages/manager/src/publish/sticky-comment.ts` and `role-rounds.ts` (the DB half) — done, 5.11. A new role needs a `{key, title, stageId}` and a caller, nothing more. |
 | The never-merge guard | `@adl/core/forge`'s `FORGE_ADAPTER_MEMBERS` (the port half, compile-time) + `eslint.config.js`'s `adl/no-forge-merge` (the adapter half) — done, 5.12. A new forge package under `packages/forge-*` is governed automatically; a new merge verb is one entry in `FORGE_MERGE_MEMBERS` plus one case in the fixture. |
+| The round loop's decision | `@adl/core/loop`'s `planRoundStep` (pure) — done, 5.13. A new stage kind is a `StageCompletion` member; the events it raises still go through `transition()`. |
+| The round loop's writes | `packages/manager/src/loop/round-runner.ts`'s `onStageCompleted` — done, 5.13. Wired unconditionally in `daemon.ts`; `options.forge` only decides whether a green round also promotes. |
+| Re-dispatching a feature mid-pipeline | `FeaturesRepository.listDispatchable()` + `dispatchOnce`'s continuation path — done, 5.13. A continuation runs no transition and never re-merges `adl.yml`. |
+| The `stage_result` wire envelope | `packages/manager/src/ipc/stage-verdict.ts` — done, 5.13. A real Zod union with a validated parser; a gate reports `{kind:'verdict', verdict}`. |

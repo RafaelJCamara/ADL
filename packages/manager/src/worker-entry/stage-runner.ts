@@ -52,7 +52,6 @@ import {
   type AgentEvent,
   type AgentTask,
   type DeveloperOutcome,
-  type StageError,
   type StageErrorKind,
   type Workspace,
 } from '@adl/core/stage';
@@ -69,6 +68,7 @@ import {
 } from '@adl/agent-claude-code';
 import { composeBranchFeatureId } from '../branch-identity.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
+import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
 import { writePromptArtifact } from '../prompt/artifact.js';
 import { buildDeveloperPrompt } from '../prompt/build.js';
 import { openTranscriptWriter } from '../store/ndjson-log-store.js';
@@ -140,11 +140,6 @@ async function loadSpecFromWorktree(
     ? loadAdlTemplateSpec(raw, folderName)
     : loadGherkinSpec(raw, folderName, detected.entryFile);
 }
-
-/** Envelope carried over IPC as `verdictJson` — either channel `StageOutcome`/`DeveloperOutcome` sits astride (D-05, D-12). */
-export type StageRunnerVerdict =
-  | { readonly kind: 'developer_outcome'; readonly outcome: DeveloperOutcome }
-  | { readonly kind: 'stage_error'; readonly error: StageError };
 
 function stageErrorResult(
   kind: StageErrorKind,
@@ -226,6 +221,28 @@ export function createProductionStageRunner(
   const now = deps.now ?? (() => new Date().toISOString());
 
   return async (assign: AssignMessage): Promise<StageRunnerResult> => {
+    // M05 step 5.13: this runner implements pipeline index 0 — the developer,
+    // "always the implicit first mutator" (D-05,
+    // `@adl/core/stage/developer-outcome.ts`). It has no gate to run at any
+    // later index, and running the developer agent again there would report a
+    // gate verdict for work the developer just wrote — self-approval arriving
+    // through the back door the `DeveloperOutcome` union was shaped to close.
+    //
+    // So it refuses, before a workspace is even created, with the one
+    // classification that is true: the thing that should run is not installed.
+    // `binary_missing` is non-retryable (`stageErrorPolicy`), so the round
+    // loop escalates rather than looping on a stage that will never exist,
+    // and the escalation names the step that supplies it. M05 step 5.14 is
+    // the command gate that replaces this refusal with a real implementation.
+    if (assign.stageIndex !== 0) {
+      return stageErrorResult(
+        'binary_missing',
+        `no implementation exists yet for pipeline stage "${assign.stageId}" at index ` +
+          `${String(assign.stageIndex)} — this build ships the developer stage only ` +
+          '(M05 step 5.14 adds the command gate)',
+      );
+    }
+
     const registry = workspaceRegistry();
     const backend = registry.resolve(assign.workspaceBackendId);
 

@@ -204,17 +204,18 @@ describe('publishStickyComment', () => {
       expect(body).toContain('- Attempt 1 — completed');
 
       // Round 1 is re-derived from the database, NOT carried over from the
-      // comment it was previously rendered into: its headline is now the
-      // outcome `rounds` recorded, and the note it carried while it was the
-      // newest round — the commit sha, which no column holds — is gone.
+      // comment it was previously rendered into: its headline is the outcome
+      // `rounds` recorded, and the note it carried while it was the newest
+      // round — the commit sha — is gone.
       //
-      // That is this step's deliberate boundary, not an oversight. Persisting
-      // a round's result is `rounds.outcome_json`'s job and 5.13's to write;
-      // faking a `RoundOutcome` here to keep a sha would corrupt the column
-      // that step depends on. `docs/plan/DEBT.md` § 3 records the gap with
-      // 5.13 as its owner. Asserted rather than merely noted, so that when
-      // 5.13 does write round outcomes, this expectation fails and forces the
-      // question to be answered again instead of quietly staying lossy.
+      // M05 step 5.13 answered half of the question this assertion was left
+      // here to force (`docs/plan/DEBT.md` D-5-11-1). The round loop writes
+      // real outcomes now, so a finished round says what it decided rather
+      // than degrading — see the `renders a finished round's outcome` case
+      // below. The sha specifically is still absent, and that is now a
+      // *diagnosed* gap rather than an open question: `RoundOutcome` has no
+      // field for a commit, so no amount of writing `outcome_json` was ever
+      // going to carry one. Its home is a `rounds.head_sha` column.
       expect(body).not.toContain('Round 1 — committed `1111111`');
       expect(body).not.toContain('Committed `1111111`.');
     });
