@@ -25,7 +25,11 @@ import type { Logger } from 'pino';
 import { basename } from 'node:path';
 import { branchNameFor } from '@adl/workspace';
 import { reposRepository, type Database, type FeaturesTable } from '@adl/db';
-import type { ForgeAdapter, ForgeRepoRef } from '@adl/core/forge';
+import type {
+  ChangeRequest,
+  ForgeAdapter,
+  ForgeRepoRef,
+} from '@adl/core/forge';
 import { composeBranchFeatureId } from '../branch-identity.js';
 
 export interface PublishDraftChangeRequestDeps {
@@ -48,19 +52,33 @@ function branchFor(feature: FeaturesTable): string {
   );
 }
 
+/**
+ * The change request this feature's work belongs on, or `undefined` if there
+ * is none and none could be opened.
+ *
+ * Returning it rather than `void` is what lets M05 step 5.11 comment on the
+ * change request in the same breath as opening it, without a second
+ * `listOpenChangeRequests` round trip and — more importantly — without a
+ * second, independently-derived answer to "which change request is this
+ * feature's?". The idempotent path returns the *existing* one for exactly that
+ * reason: from round 2 onwards, "already open" is the normal case, and a
+ * caller that got `undefined` there would silently stop commenting after
+ * round 1.
+ */
 export async function publishDraftChangeRequest(
   deps: PublishDraftChangeRequestDeps,
   params: { readonly feature: FeaturesTable; readonly sha: string },
-): Promise<void> {
+): Promise<ChangeRequest | undefined> {
   const { feature } = params;
   const branch = branchFor(feature);
 
   try {
     const open = await deps.forge.listOpenChangeRequests(deps.forgeRepo);
-    if (open.some((cr) => cr.head === branch)) {
-      // Idempotent no-op: a previous round (or a retried publish) already
-      // opened one for this exact branch.
-      return;
+    const existing = open.find((cr) => cr.head === branch);
+    if (existing !== undefined) {
+      // Idempotent: a previous round (or a retried publish) already opened one
+      // for this exact branch. Handed back rather than swallowed — see above.
+      return existing;
     }
 
     const repoRow = await reposRepository(deps.db).findById(feature.repo_id);
@@ -69,7 +87,7 @@ export async function publishDraftChangeRequest(
         { featureId: feature.id, repoId: feature.repo_id },
         'publish: no repos row for this feature repo_id — refusing to open a change request rather than guess a base branch',
       );
-      return;
+      return undefined;
     }
 
     const folderName = basename(feature.path);
@@ -80,7 +98,8 @@ export async function publishDraftChangeRequest(
       title: `ADL: ${folderName}`,
       body:
         `Opened automatically by ADL from \`${folderName}\` at round 1.\n\n` +
-        'Per-role summaries land here once sticky comments are wired (M05 step 5.11).',
+        'Each role reports below in a single comment, edited in place each ' +
+        'round with earlier rounds folded away (FORGE-06).',
       draft: true,
     });
 
@@ -94,10 +113,12 @@ export async function publishDraftChangeRequest(
       },
       'publish: opened a draft change request',
     );
+    return changeRequest;
   } catch (error) {
     deps.logger.error(
       { err: error, featureId: feature.id, branch },
       'publish: could not open a draft change request',
     );
+    return undefined;
   }
 }

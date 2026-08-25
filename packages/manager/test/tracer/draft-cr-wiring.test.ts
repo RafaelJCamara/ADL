@@ -200,6 +200,31 @@ describe('tracer: a committed dev-run automatically pushes and opens a draft cha
               ])
             ).trim();
             expect(pushedSha).toMatch(/^[0-9a-f]{40}$/);
+
+            // M05 step 5.11: the developer's sticky comment lands on that same
+            // change request, from the same commit event, with no second
+            // trigger — the other half of what a human sees on the pull
+            // request the moment ADL opens one.
+            const number = open[0]!.number;
+            await waitUntil(
+              () =>
+                (githubServer.state.commentsByIssue.get(number) ?? []).length >
+                0,
+              { timeoutMs: 15_000 },
+            );
+
+            const comments =
+              githubServer.state.commentsByIssue.get(number) ?? [];
+            expect(comments).toHaveLength(1);
+            const commentBody = comments[0]?.body ?? '';
+            expect(commentBody).toContain('<!-- adl:role=developer -->');
+            expect(commentBody).toContain('### Developer');
+            expect(commentBody).toContain('**Round 1 — committed `');
+            // The real sha the worker actually pushed, abbreviated the way git
+            // does — not a placeholder, and not one this test supplied.
+            expect(commentBody).toContain(pushedSha.slice(0, 7));
+            // Round 1 only: nothing is folded away yet.
+            expect(commentBody).not.toContain('<details>');
           } finally {
             await handle.stop();
           }

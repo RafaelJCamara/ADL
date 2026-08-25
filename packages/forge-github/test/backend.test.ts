@@ -145,6 +145,74 @@ describe('githubForgeAdapter', () => {
     expect(comments[0]?.body).not.toContain('round 1 summary');
   });
 
+  it('finds its own marker past the first page of comments, rather than creating a duplicate (M05 step 5.11)', async () => {
+    const opened = await adapter.openChangeRequest({
+      repo: REPO,
+      head: 'adl/dark-mode',
+      base: 'main',
+      title: 'Dark mode',
+      body: 'body',
+      draft: true,
+    });
+
+    // A busy pull request first, so ADL's own comment lands well past page 1.
+    // GitHub's default page size is 30; anything beyond it is invisible to a
+    // first-page-only read, and the marker being *present but unread* is
+    // exactly the case that turns edit-in-place into append-one-per-round.
+    // Comments are appended in creation order, so this ordering — humans, then
+    // ADL — is what a real pull request that ADL joins late looks like.
+    const comments = server.state.commentsByIssue.get(opened.number) ?? [];
+    server.state.commentsByIssue.set(opened.number, comments);
+    for (let i = 0; i < 120; i += 1) {
+      comments.push({
+        id: server.state.nextCommentId++,
+        body: `human ${String(i)}`,
+      });
+    }
+
+    await adapter.upsertComment({
+      repo: REPO,
+      number: opened.number,
+      key: 'developer',
+      body: 'round 1 summary',
+    });
+    await adapter.upsertComment({
+      repo: REPO,
+      number: opened.number,
+      key: 'developer',
+      body: 'round 2 summary',
+    });
+
+    const after = server.state.commentsByIssue.get(opened.number) ?? [];
+    expect(after).toHaveLength(121);
+    const adlComments = after.filter((c) =>
+      c.body.includes('adl:role=developer'),
+    );
+    expect(adlComments).toHaveLength(1);
+    expect(adlComments[0]?.body).toContain('round 2 summary');
+    expect(adlComments[0]?.body).not.toContain('round 1 summary');
+  });
+
+  it('lists every open change request past the first page (5.10 idempotency, 5.2 reconciliation)', async () => {
+    for (let i = 0; i < 45; i += 1) {
+      await adapter.openChangeRequest({
+        repo: REPO,
+        head: `adl/feature-${String(i)}`,
+        base: 'main',
+        title: `feature ${String(i)}`,
+        body: 'body',
+        draft: true,
+      });
+    }
+
+    const open = await adapter.listOpenChangeRequests(REPO);
+
+    expect(open).toHaveLength(45);
+    // The last one opened is the one a first-page-only read would lose, and
+    // losing it is what makes a duplicate draft change request.
+    expect(open.map((cr) => cr.head)).toContain('adl/feature-44');
+  });
+
   it('creates a separate comment per role key', async () => {
     const opened = await adapter.openChangeRequest({
       repo: REPO,

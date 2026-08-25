@@ -73,10 +73,57 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return raw === '' ? {} : (JSON.parse(raw) as unknown);
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+function sendJson(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {},
+): void {
   const text = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    ...headers,
+  });
   res.end(text);
+}
+
+/**
+ * GitHub's list pagination, faithfully enough for `octokit.paginate` to follow
+ * it: `per_page`/`page` are honoured and a next page is advertised in a `Link`
+ * header, which is the only thing `octokit`'s paginator looks at (verified
+ * against the installed `octokit@5.0.5` with a throwaway paginating server
+ * before this was written).
+ *
+ * Without this, every list route here returned everything in one response, and
+ * an adapter that read only the first page looked identical to one that
+ * paginated — so the guard that `upsertComment` and `listOpenChangeRequests`
+ * really do paginate could not have been written at all.
+ */
+function paginate<T>(
+  items: readonly T[],
+  query: URLSearchParams,
+  req: IncomingMessage,
+  pathname: string,
+): { readonly page: readonly T[]; readonly headers: Record<string, string> } {
+  const perPage = Math.min(
+    100,
+    Math.max(1, Number(query.get('per_page') ?? '30') || 30),
+  );
+  const page = Math.max(1, Number(query.get('page') ?? '1') || 1);
+  const start = (page - 1) * perPage;
+  const slice = items.slice(start, start + perPage);
+
+  if (start + perPage >= items.length) return { page: slice, headers: {} };
+
+  const next = new URLSearchParams(query);
+  next.set('per_page', String(perPage));
+  next.set('page', String(page + 1));
+  return {
+    page: slice,
+    headers: {
+      link: `<http://${req.headers.host ?? '127.0.0.1'}${pathname}?${next.toString()}>; rel="next"`,
+    },
+  };
 }
 
 function toPullResponse(pr: MockPullRequest): Record<string, unknown> {
@@ -192,7 +239,8 @@ async function handle(
   if (method === 'GET' && match) {
     const wanted = query.get('state') ?? 'open';
     const filtered = state.pulls.filter((pr) => pr.state === wanted);
-    sendJson(res, 200, filtered.map(toPullResponse));
+    const { page, headers } = paginate(filtered, query, req, pathname);
+    sendJson(res, 200, page.map(toPullResponse), headers);
     return;
   }
 
@@ -254,7 +302,8 @@ async function handle(
     state.commentsByIssue.set(issueNumber, comments);
 
     if (method === 'GET') {
-      sendJson(res, 200, comments);
+      const { page, headers } = paginate(comments, query, req, pathname);
+      sendJson(res, 200, page, headers);
       return;
     }
     if (method === 'POST') {

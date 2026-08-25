@@ -50,7 +50,7 @@ import {
 } from './config/resolve-adl-yml.js';
 import { createControlState, parkOnRoundBoundary } from './control/state.js';
 import { createStaleRejectionCounter } from './fencing.js';
-import { publishDraftChangeRequest } from './publish/draft-cr.js';
+import { publishOnDeveloperCommitted } from './publish/on-developer-committed.js';
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import { startGcSchedule } from './scheduler/gc-schedule.js';
 import { startPollSchedule } from './scheduler/poll-schedule.js';
@@ -454,8 +454,9 @@ export async function startDaemon(
         'pause-park',
       );
     },
-    // M05 step 5.10: a real commit reported for a feature, with a forge
-    // configured — open (or confirm already-open) its draft change request.
+    // M05 steps 5.10 and 5.11: a real commit reported for a feature, with a
+    // forge configured — open (or confirm already-open) its draft change
+    // request, then republish the developer's sticky comment against it.
     // Absent `options.forge`, no callback at all: the same "absent means
     // skip" shape the poll schedule below already uses, and this daemon's
     // only forge-aware callback besides it.
@@ -463,9 +464,11 @@ export async function startDaemon(
       ? {
           onDeveloperCommitted: (params: {
             feature: FeaturesTable;
+            roundId: string;
+            stageId: string;
             sha: string;
           }) => {
-            void publishDraftChangeRequest(
+            void publishOnDeveloperCommitted(
               {
                 db,
                 logger,

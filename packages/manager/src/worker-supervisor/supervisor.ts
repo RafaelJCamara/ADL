@@ -198,13 +198,23 @@ export interface SupervisorDeps {
    * failure inside `stage-runner.ts` is reported as a `stage_error` instead
    * of a `committed` outcome (see that module's own docblock), so this
    * callback firing is itself the guarantee. `daemon.ts` wires this to
-   * `publish/draft-cr.ts`'s `publishDraftChangeRequest`, gated on
-   * `options.forge` being configured; absent here, no forge-aware caller —
-   * every earlier plan's `createSupervisor` call site keeps compiling
-   * unchanged, mirroring `onRoundBoundary`.
+   * `publish/on-developer-committed.ts`, gated on `options.forge` being
+   * configured; absent here, no forge-aware caller — every earlier plan's
+   * `createSupervisor` call site keeps compiling unchanged, mirroring
+   * `onRoundBoundary`.
+   *
+   * `roundId` and `stageId` come from THIS spawn's own `assign` closure, never
+   * from the message — the same identity discipline `recordUsage` follows
+   * (T-4-38). M05 step 5.11's sticky comment needs both: which round the
+   * commit belongs to, and which pipeline entry's `stage_attempts` rows are
+   * the developer's. Deriving either from "the feature's latest round" or from
+   * a hardcoded `'develop'` would be a second source of truth for something
+   * the supervisor already knows exactly.
    */
   readonly onDeveloperCommitted?: (params: {
     readonly feature: FeaturesTable;
+    readonly roundId: string;
+    readonly stageId: string;
     readonly sha: string;
   }) => void;
   /**
@@ -463,7 +473,12 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
             // publish", not thrown).
             const committedSha = committedShaFromVerdict(message.verdictJson);
             if (committedSha !== undefined) {
-              deps.onDeveloperCommitted?.({ feature, sha: committedSha });
+              deps.onDeveloperCommitted?.({
+                feature,
+                roundId: assign.roundId,
+                stageId: assign.stageId,
+                sha: committedSha,
+              });
             }
             // CR-01: a fence-matched stage_result is the one place the
             // manager KNOWS this attempt reached a verdict — `assign` (this

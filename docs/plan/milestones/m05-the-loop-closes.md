@@ -345,10 +345,70 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       commit → real push → real draft CR, with no manual stitching. 5.0b's own manual tracer
       (`detect-to-draft-cr-end-to-end.test.ts`) still passes unmodified — the pieces it
       proved compose by hand are the same pieces this step wired behind the scheduler.
-- [ ] **5.11** — Sticky per-role comments (FORGE-06). One comment per role, edited in
+- [x] **5.11** — Sticky per-role comments (FORGE-06). One comment per role, edited in
       place, prior rounds collapsed into `<details>`. Four gates over five rounds is twenty
       comments if you get this wrong — the AI-slop pattern maintainers are revolting
       against, and the exact shape GitHub's secondary rate limiter penalises.
+      **Shipped:** the two halves that already existed separately and had never met are now
+      joined by a real production caller. `@adl/core/forge`'s new `renderStickyComment`
+      (pure, and in core rather than in an adapter because `<details>`/`<summary>` is HTML
+      that GitHub, GitLab and Gitea all render — three adapters would otherwise reimplement
+      and drift) turns a role's rounds into one comment: the newest round expanded, every
+      earlier one folded newest-first. `packages/manager/src/publish/sticky-comment.ts` is
+      the caller, fired from the same `onDeveloperCommitted` event 5.10 already used, right
+      after the draft CR is opened or confirmed
+      (`publish/on-developer-committed.ts` orders the two; `publishDraftChangeRequest` now
+      **returns** the `ChangeRequest` — including on its idempotent path, which is the
+      normal case from round 2 on — so the comment is published against the change request
+      the first step resolved rather than a second, independently-derived answer).
+      **No DB migration, no `sticky_comments` table.** The comment is re-derived in full
+      from `rounds`/`stage_attempts`/`verdicts`/`findings` every round
+      (`publish/role-rounds.ts`) and overwritten — the same "evaluate state, don't remember
+      events" discipline 5.2/5.6/5.10 established, which also means a comment a human edited
+      or a change request that was deleted is repaired by the next round rather than
+      corrupted by it. A role is addressed by `stage_attempts.stage_id`, taken from the
+      dispatch that ran, never by a hardcoded `'develop'`.
+      **The renderer is where the substance is**, and both of its properties were watched
+      failing first. (1) *A round body cannot break the fold it is placed in.* Bodies are
+      agent-authored; a literal `</details>` in one closes the block early and spills every
+      prior round into view — the exact unreadable pull request FORGE-06 exists to prevent,
+      arriving through the mechanism meant to prevent it. `<details`/`</details` are escaped
+      to `&lt;…`, and **only outside code spans** — a forge already escapes HTML inside a
+      fence, an indented block, and an inline span, so escaping there would turn a correct
+      code sample into a visible `&lt;/details>`. Code-span offsets come from
+      `mdast-util-from-markdown` (already a `@adl/core` dependency), verified by probe to
+      report `position.*.offset` for all three node kinds before anything was written.
+      (2) *A comment edited in place forever grows without bound.* Every forge caps a body;
+      past the cap `upsertComment` starts failing and the comment silently freezes at
+      whichever round last fit. `maxLength` (default 60,000 — deliberately under GitHub's
+      documented 65,536, leaving room for the adapter's own hidden marker) makes that
+      bounded and *visible*: the newest round is kept whole, older folds are dropped
+      oldest-first with the count stated in the comment, the newest round's own body is
+      truncated with a notice if it alone overflows, and the returned string is **never**
+      longer than `maxLength` for any input — a final surrogate-safe clamp, asserted as a
+      property down to a one-character budget.
+      **The owned debt item is closed, and it was worse than filed.** `upsertComment` now
+      paginates `issues.listComments` (`octokit.paginate`, `per_page: 100`) — but so does
+      `listOpenChangeRequests`, which had the identical defect and a heavier consequence:
+      5.10's draft-CR idempotency check and 5.2's restart reconciliation both ask it "is one
+      already open for this branch?", so a repository with more than one page of open pull
+      requests would have answered "no" for a change request that plainly exists and opened
+      a duplicate draft every round. The mock GitHub server gained real `per_page`/`page` +
+      `Link: rel="next"` pagination so both fixes are *proven*, not asserted — without it a
+      first-page-only adapter and a paginating one were indistinguishable, and the guard
+      could not have been written at all. Both cases were watched failing against the
+      un-paginated code (the comment case only after the seed was corrected: ADL's marker
+      has to land *past* page 1, which an ADL-comments-first seed does not reproduce).
+      **Found and not fixed — `DEBT.md` D-5-11-1, owner 5.13:** a round's commit sha lives
+      only while that round is the newest. It arrives on the event, not from a table, so
+      republishing during round 2 renders round 1 from the database alone and its fold loses
+      the sha. The durable home is `rounds.outcome_json`, whose writer is 5.13's round loop;
+      fabricating a `RoundOutcome` here to hold a sha would corrupt the column that step is
+      built on. Asserted as current behaviour rather than merely noted, so 5.13 trips over it.
+      **Proof:** 24 renderer cases in `packages/core/test/forge/sticky-comment.test.ts`,
+      the DB reader and publisher in `packages/manager/test/publish/`, and 5.10's own tracer
+      (`test/tracer/draft-cr-wiring.test.ts`) extended — one real `startDaemon` run now ends
+      with a real developer comment carrying the real sha the worker actually pushed.
 - [ ] **5.12** — Never-merge guard (FORGE-10). A structural assertion that no code path
       can call merge — prefer "the adapter has no merge method" over "we don't call it".
 
@@ -413,4 +473,5 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | ADL's own git chokepoint | `packages/workspace/src/git/adl-git.ts` |
 | The `features/` scanner | `@adl/core/detect` (pure) + `packages/manager/src/detect/scanner.ts` (I/O) — done, 5.1 |
 | Branch push | `ManagerGitClient.push` (`packages/workspace/src/git/manager-git.ts`) — done, no credential-URL construction included |
-| The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. `upsertComment`'s sticky-marker find-or-create is already there for 5.11 to call. |
+| The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. Both list calls paginate as of 5.11. |
+| A sticky per-role comment | `@adl/core/forge`'s `renderStickyComment` (pure) + `packages/manager/src/publish/sticky-comment.ts` and `role-rounds.ts` (the DB half) — done, 5.11. A new role needs a `{key, title, stageId}` and a caller, nothing more. |

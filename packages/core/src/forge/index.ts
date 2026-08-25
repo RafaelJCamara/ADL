@@ -17,3 +17,10 @@ export {
   type ReadFileInput,
   type UpsertCommentInput,
 } from './forge.js';
+export {
+  DEFAULT_COMMENT_BODY_MAX_LENGTH,
+  escapeCollapsibleTags,
+  renderStickyComment,
+  type StickyCommentInput,
+  type StickyRound,
+} from './sticky-comment.js';

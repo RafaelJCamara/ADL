@@ -249,11 +249,25 @@ export function githubForgeAdapter(
       const marker = stickyMarker(input.key);
       const body = `${marker}\n${input.body}`;
 
-      const { data: comments } = await octokit.rest.issues.listComments({
-        owner: input.repo.owner,
-        repo: input.repo.repo,
-        issue_number: input.number,
-      });
+      // **Paginated, not first-page.** A single `listComments` call returns
+      // GitHub's default 30, and ADL's own marker is pushed off that page as
+      // soon as humans and other bots comment alongside it — at which point
+      // this method silently stops finding its prior comment and creates a
+      // SECOND one every round, which is the exact failure FORGE-06 exists to
+      // prevent, arriving through the mechanism meant to prevent it.
+      // `octokit.paginate` follows the `Link: rel="next"` header (verified
+      // against the installed `octokit@5.0.5` with a local paginating server
+      // before this was written); `per_page: 100` is GitHub's maximum, so the
+      // common case is still one request.
+      const comments = await octokit.paginate(
+        octokit.rest.issues.listComments,
+        {
+          owner: input.repo.owner,
+          repo: input.repo.repo,
+          issue_number: input.number,
+          per_page: 100,
+        },
+      );
       const existing = comments.find(
         (comment) =>
           typeof comment.body === 'string' && comment.body.includes(marker),
@@ -280,10 +294,19 @@ export function githubForgeAdapter(
     async listOpenChangeRequests(
       repo: ForgeRepoRef,
     ): Promise<readonly ChangeRequest[]> {
-      const { data } = await octokit.rest.pulls.list({
+      // Paginated for the same reason `upsertComment` is, and with worse
+      // consequences: both of this method's callers ask "is there already an
+      // open change request for this branch?" — `@adl/manager`'s
+      // `undevelopedFeatures` (DETECT-01's restart reconciliation) and its
+      // `publishDraftChangeRequest` (5.10's idempotency check). A repository
+      // with more open pull requests than one page would answer "no" for a
+      // change request that plainly exists, re-admitting a feature already in
+      // flight and opening a duplicate draft on every round.
+      const data = await octokit.paginate(octokit.rest.pulls.list, {
         owner: repo.owner,
         repo: repo.repo,
         state: 'open',
+        per_page: 100,
       });
       return data.map(toChangeRequest);
     },
