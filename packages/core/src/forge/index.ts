@@ -6,10 +6,12 @@
 export {
   CHANGE_REQUEST_STATES,
   COLLABORATOR_PERMISSIONS,
+  FORGE_ADAPTER_MEMBERS,
   type ChangeRequest,
   type ChangeRequestState,
   type CollaboratorPermission,
   type ForgeAdapter,
+  type ForgeAdapterMember,
   type ForgeRepoRef,
   type OpenChangeRequestInput,
   type PromoteToReadyInput,

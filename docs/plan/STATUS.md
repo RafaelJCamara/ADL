@@ -24,15 +24,14 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), and 5.8–5.11 from group B are done; group B has only 5.12 left, and
-groups C and D haven't started.**
+group A (5.1–5.7), and all of group B (5.8–5.12) are done; groups C and D haven't started.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + 5.1–5.11 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + groups A and B done
 M06–M18 ............................. not started
 ```
 
@@ -187,11 +186,35 @@ requests would have opened a duplicate draft every round. The mock GitHub server
 first-page-only adapter and a paginating one are indistinguishable, and the guard could not
 have been written at all.
 
-**What does not exist yet:** the never-merge structural guard (5.12), promote-to-ready
-wiring (`promoteToReady` is built and still uncalled — 5.13's one-liner), and the whole round
-loop — gates, send-back, protected-path enforcement (group C) — plus per-round accounting
-(group D). `dev-run` still fires a single synthetic `develop` stage by hand, so the sticky
-comment has exactly one round and one role to show today.
+And "ADL never merges" is now a build property rather than a sentence in `DECISIONS.md`
+(5.12, FORGE-10) — two guards, at the two layers, because the preferred one cannot reach the
+whole property alone. `ForgeAdapter` had never declared a merge method, but until this step
+that was a fact about what happened to be typed into `forge.ts`: adding `merge()` would have
+compiled, linted and shipped green. `@adl/core/forge`'s new `FORGE_ADAPTER_MEMBERS` pairs
+the interface with a frozen list of its own members in the house's
+`Exclude<T, Arr[number]> extends never` shape, so a merge method now has two independently
+locked doors in front of it — adding a member *without* listing it fails the **build**, and
+getting past that by listing `'merge'` fails the **suite**
+(`packages/core/test/forge/never-merge.test.ts`). Both were watched failing against the exact
+defect. That guard structurally cannot reach the second layer, though: a forge adapter
+doesn't merge through ADL's port, it merges through the *forge*, and `packages/forge-github`
+holds a live `octokit` whose `rest.pulls.merge()` exists regardless — `getPushToken` is the
+standing proof a forge package legitimately reaches past the neutral port when it has to. So
+`eslint.config.js` gained **`adl/no-forge-merge`**, scoped to `packages/forge-*` by package
+*prefix* so M14's GitLab and Gitea adapters are governed the day they're created. It bans
+**member expressions** rather than call expressions (aliasing the function first is a
+call-selector's blind spot) drawn from a **vocabulary list, never a substring search for
+`merge`** — GitLab spells it `accept` and `mergeWhenPipelineSucceeds`, while `backend.ts`
+legitimately reads `pr.merged_at` and `CHANGE_REQUEST_STATES` legitimately contains
+`'merged'`, so a substring ban flags the wrong things and gets switched off. Every selector
+was probed against the real eslint before being written; the precision guard was watched
+failing by widening one pattern, which immediately reported the adapter's own state literals.
+
+**What does not exist yet:** promote-to-ready wiring (`promoteToReady` is built and still
+uncalled — 5.13's one-liner), and the whole round loop — gates, send-back, protected-path
+enforcement (group C) — plus per-round accounting (group D). `dev-run` still fires a single
+synthetic `develop` stage by hand, so the sticky comment has exactly one round and one role
+to show today.
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -201,10 +224,8 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 
 ## What to do next
 
-Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and finish
-group B with **5.12** (the never-merge structural guard — `ForgeAdapter` already has no merge
-method; 5.12 is the assertion that reads its own shape and fails if one is ever added). It is
-small; the real next body of work is group C.
+Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and start
+**group C with 5.13** — the round-loop runner. Groups A and B are both closed.
 
 Group C (the round loop itself) reuses `resolvePipeline` (`@adl/core/config`, still no
 caller) and is where two deferred one-liners get wired in: 5.10's half — calling
@@ -286,8 +307,10 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 
 No `apps/` directory — the dashboard is M17 and unbuilt.
 
-**Architecture guards** live in `eslint.config.js` (662 annotated lines) and `test/`:
+**Architecture guards** live in `eslint.config.js` (784 annotated lines) and `test/`:
 `adl/no-direct-spawn`, `adl/core-purity`, `adl/verdict-schema`, `adl/worker-entry-no-db`,
+`adl/no-forge-merge` (5.12 — ADL never merges, paired with `@adl/core/forge`'s
+compile-time-exhaustive `FORGE_ADAPTER_MEMBERS`),
 plus `test/toolchain.test.ts` (TypeScript pinned to exactly 6.0.3),
 `test/ci-matrix.test.ts`, and `test/platform-gate-discipline.test.ts`. Each rule is proven
 by a deliberate-violation fixture in `test/lint/fixtures/`.

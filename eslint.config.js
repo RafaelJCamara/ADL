@@ -299,6 +299,152 @@ const SPAWN_SYNTAX = FORBIDDEN_SPAWN_SPECIFIERS.flatMap((specifier) => {
   ];
 });
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * `adl/no-forge-merge` — FORGE-10, M05 step 5.12
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `docs/plan/DECISIONS.md`: **"Human approves and merges the PR. ADL never
+ * merges."** Also listed under "Explicitly out of scope for v1". The milestone
+ * sets the standard: *prefer "the adapter has no merge method" over "we don't
+ * call it"* — and `@adl/core/forge`'s `FORGE_ADAPTER_MEMBERS` is that
+ * preferred guard, with a compile-time exhaustiveness proof behind it.
+ *
+ * This rule closes the residual that guard structurally cannot reach. A forge
+ * adapter does not merge by calling the port — it merges by calling the FORGE,
+ * and `packages/forge-github` holds a live `octokit` whose
+ * `rest.pulls.merge()` exists no matter what ADL's own interface declares.
+ * `getPushToken` is the standing proof that a forge package legitimately
+ * reaches past the neutral port when it has to, so "the port has no merge
+ * method" is not, by itself, the property FORGE-10 asks for.
+ *
+ * ── Why a vocabulary list rather than a search for "merge" ────────────────
+ *
+ * GitLab's client spells this operation `accept` and
+ * `mergeWhenPipelineSucceeds`; neither reads as a merge in a diff. And the
+ * inverse matters just as much: `ChangeRequestState` legitimately contains
+ * `'merged'`, `packages/forge-github/src/backend.ts` reads `pr.merged_at` and
+ * compares against `'MERGED'`, and a blanket ban on the substring would either
+ * flag all three or be switched off. Every selector below was verified
+ * empirically against this repository's own eslint before it was written —
+ * each of the eight real merge shapes fires, and `merged_at` / `'merged'` /
+ * `'MERGED'` / `markPullRequestReadyForReview` fire on none of them.
+ *
+ * Scoped to `packages/forge-*` because that is where a forge client lives.
+ * The glob names a package prefix rather than the one package that exists
+ * today, so `packages/forge-gitlab` and `packages/forge-gitea` (M14) are
+ * governed on the day they are created — the D-27 property of landing the
+ * rule before the thing it would have prevented.
+ */
+
+/**
+ * Method names that merge a change request, across every forge in scope.
+ *
+ * Banned as MEMBER EXPRESSIONS rather than call expressions, deliberately:
+ * `const m = octokit.rest.pulls.merge; await m({...})` is a call-expression
+ * selector's blind spot and an obvious way to arrive at a merge by accident
+ * while refactoring. Taking the reference is banned, so there is nothing to
+ * call later.
+ *
+ * `accept` is GitLab's spelling and is here for that reason alone. It is the
+ * broadest entry in the list, and that is the intended trade: a forge adapter
+ * with a non-merge method named `accept` is rare, a forge adapter that merges
+ * through one is FORGE-10 being violated, and the ban failing loudly on the
+ * rare case is the safe direction for a guard.
+ *
+ * Exported so `test/lint/no-restricted-imports.test.ts` can iterate it — a
+ * verb added here gains its resolved-config assertion automatically, and a
+ * verb whose selector is lost goes red without anyone remembering to add a
+ * case.
+ */
+export const FORGE_MERGE_MEMBERS = Object.freeze([
+  'merge',
+  'mergePullRequest',
+  'enablePullRequestAutoMerge',
+  'mergeWhenPipelineSucceeds',
+  'accept',
+]);
+
+/**
+ * The same operation reached as a STRING rather than as a method — the two
+ * forms a member-name ban cannot see.
+ *
+ * `octokit.request('PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge')`
+ * names the REST route directly, and `octokit.graphql(...)` carries the
+ * mutation name inside a template literal or a plain string, where it is
+ * opaque to every AST selector that looks at identifiers. Each pattern is
+ * anchored precisely — `\/merge$` matches a route suffix and not the word
+ * `merged`, and the two mutation names are `\b`-bounded — because an
+ * over-broad string ban here is the one that gets switched off.
+ *
+ * Each entry is `[label, regexSource]`: the label is what a message names, so
+ * a report says which merge route was reached rather than printing a regex.
+ */
+export const FORGE_MERGE_ROUTES = Object.freeze([
+  ['a REST merge route', '\\/merge$'],
+  ['the mergePullRequest GraphQL mutation', '\\bmergePullRequest\\b'],
+  [
+    'the enablePullRequestAutoMerge GraphQL mutation',
+    '\\benablePullRequestAutoMerge\\b',
+  ],
+]);
+
+const FORGE_MERGE_MESSAGE =
+  'ADL never merges (FORGE-10, docs/plan/DECISIONS.md: "Human approves and merges the PR"). A human approves and merges the change request; an unattended loop with write access to the target branch is not acceptable in v1, and it is the one failure a team cannot undo by closing a pull request. The neutral port declares no merge method either (@adl/core/forge\'s FORGE_ADAPTER_MEMBERS, proven exhaustive at compile time) — this rule is what stops an adapter reaching around it through the forge client it already holds. Promote the draft to ready with promoteToReady() and stop there.';
+
+/**
+ * Two selector families derived from the two tuples above, so the member layer
+ * and the string layer cannot come to cover different vocabularies — the same
+ * derivation, for the same reason, as `SPAWN_SYNTAX` above.
+ *
+ * `enablePullRequestAutoMerge` is worth one extra sentence: it is a merge that
+ * happens AFTER this process exits, so nothing in ADL's own logs, transcripts
+ * or accounting would record the moment the branch landed. A guard that caught
+ * the immediate form and not the deferred one would be worse than none, since
+ * the deferred one is the version somebody reaches for when the immediate one
+ * is refused.
+ */
+const FORGE_MERGE_SYNTAX = [
+  ...FORGE_MERGE_MEMBERS.map((member) => ({
+    selector: `MemberExpression[property.name='${member}']`,
+    message: `.${member}: ${FORGE_MERGE_MESSAGE}`,
+  })),
+  ...FORGE_MERGE_ROUTES.flatMap(([label, source]) => [
+    {
+      selector: `Literal[value=/${source}/]`,
+      message: `${label}: ${FORGE_MERGE_MESSAGE}`,
+    },
+    {
+      selector: `TemplateElement[value.raw=/${source}/]`,
+      message: `${label}: ${FORGE_MERGE_MESSAGE}`,
+    },
+  ]),
+];
+
+/**
+ * Forge adapter packages — the glob, and the only place a forge client lives.
+ * The whole package rather than `src/`, because a test that merges is a test
+ * that merged a real change request on somebody's repository.
+ */
+const FORGE_PACKAGES = [mod('packages/forge-*/**/*')];
+
+/**
+ * The rule object, with `SPAWN_SYNTAX` spread in FIRST — mandatory, not tidy.
+ *
+ * `adl/no-direct-spawn` matches `packages/forge-*` too (it is registered for
+ * `**\/*` and does not ignore them), and flat config REPLACES rather than merges
+ * per rule id for an overlapping glob (02-RESEARCH.md § Pitfall 1). Without
+ * this line, adding the merge ban would silently delete the spawn ban's
+ * `require()` / dynamic-`import()` layer from every forge package — a package
+ * that talks HTTP and must never talk to a subprocess (WORK-02, and `forge.ts`'s
+ * own docblock says so explicitly). `no-restricted-imports` is deliberately
+ * NOT configured here, so the static-import half keeps resolving from
+ * `adl/no-direct-spawn`; `test/lint/no-restricted-imports.test.ts` asserts both
+ * halves survive at a real forge source path.
+ */
+const FORGE_MERGE_RULES = {
+  'no-restricted-syntax': ['error', ...SPAWN_SYNTAX, ...FORGE_MERGE_SYNTAX],
+};
+
 /**
  * The one and only exemption from the spawn ban.
  *
@@ -609,6 +755,16 @@ export const architectureConfigs = [
     name: 'adl/no-direct-spawn-fixtures',
     files: [mod('test/lint/fixtures/spawn-*')],
     rules: SPAWN_BAN_RULES,
+  },
+  {
+    // FORGE-10 / 5.12 — see FORGE_MERGE_MEMBERS above for the full reasoning.
+    // Registered against the forge packages and against the fixture that
+    // proves each selector fires, exactly like every other rule in this file:
+    // the fixture exercises the same rule OBJECT the real adapters are linted
+    // with, rather than a parallel copy that can drift out of agreement.
+    name: 'adl/no-forge-merge',
+    files: [...FORGE_PACKAGES, mod('test/lint/fixtures/forge-*')],
+    rules: FORGE_MERGE_RULES,
   },
   {
     // D-01 / 03-04: the worker never opens the database — the manager is the

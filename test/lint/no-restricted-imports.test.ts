@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHITECTURE_RULE_IDS,
   FORBIDDEN_SPAWN_SPECIFIERS,
+  FORGE_MERGE_MEMBERS,
+  FORGE_MERGE_ROUTES,
   WORKSPACE_EXEMPTION,
   architectureConfigs,
   baseConfigs,
@@ -175,6 +177,20 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-imports',
     mentions: 'execa',
   },
+  // ── 05-12: ADL never merges (FORGE-10) ────────────────────────────────────
+  //
+  // The port half of this guard lives in @adl/core — `FORGE_ADAPTER_MEMBERS`
+  // plus a compile-time exhaustiveness proof, asserted by
+  // `packages/core/test/forge/never-merge.test.ts`. This fixture is the OTHER
+  // half: a forge adapter holds a live forge client, so "the port declares no
+  // merge method" does not by itself make a merge unreachable. The dedicated
+  // describe block near the end of this file is where every banned verb and
+  // route is checked individually.
+  {
+    file: 'test/lint/fixtures/forge-merge-call.ts',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'FORGE-10',
+  },
 ];
 
 /**
@@ -311,6 +327,20 @@ function anchoredPattern(specifier: string): string {
 const NON_EXEMPT_SOURCE = 'packages/db/src/index.ts';
 /** Inside the one exemption. Need not exist: resolution is by path. */
 const EXEMPT_SOURCE = 'packages/workspace/src/exec/run.ts';
+/** The one forge adapter that exists — where a live forge client is held. */
+const FORGE_SOURCE = 'packages/forge-github/src/backend.ts';
+/**
+ * A forge adapter that does NOT exist yet (M14's GitLab adapter).
+ *
+ * `calculateConfigForFile` resolves by path, so this measures the property
+ * that matters about `adl/no-forge-merge`'s glob: it names the package PREFIX,
+ * not the one package written so far. D-27's argument, applied to FORGE-10 —
+ * the rule that lands before the thing it would have prevented is the only
+ * kind that ever prevents it. GitLab is also the forge whose merge verbs
+ * (`accept`, `mergeWhenPipelineSucceeds`) read least like a merge, so it is
+ * the adapter most likely to arrive at one by accident.
+ */
+const FUTURE_FORGE_SOURCE = 'packages/forge-gitlab/src/backend.ts';
 /** Inside the exemption's one carve-out — workspace SOURCE, not workspace tests. */
 const WORKSPACE_SRC_SOURCE = 'packages/workspace/src/worktree/lifecycle.ts';
 
@@ -782,6 +812,10 @@ describe('the spawn boundary (WORK-02)', () => {
     NON_EXEMPT_SOURCE,
     'packages/plugin-sdk/src/index.ts',
     WORKSPACE_SRC_SOURCE,
+    // 05-12: `adl/no-forge-merge` overlaps `adl/no-direct-spawn` here, so this
+    // row is where a merge ban that REPLACED the spawn selectors instead of
+    // spreading them in would be caught.
+    FORGE_SOURCE,
   ])(
     'resolves exactly one architecture configuration for %s',
     async (source) => {
@@ -930,5 +964,189 @@ describe('the worker-entry @adl/db ban is scoped to worker-entry, not the whole 
       paths,
       'merging @adl/db into the worker-entry rule set must not silently drop the spawn ban it overlaps with (02-RESEARCH.md § Pitfall 1)',
     ).toContain('execa');
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * ADL never merges (FORGE-10, M05 step 5.12) — the adapter half
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `docs/plan/DECISIONS.md`: "Human approves and merges the PR. ADL never
+ * merges." The milestone prefers *"the adapter has no merge method"* to *"we
+ * don't call it"*, and that preferred guard is `@adl/core/forge`'s
+ * `FORGE_ADAPTER_MEMBERS` — a frozen list of the port's own members, proven
+ * exhaustive by a compile-time `Exclude<keyof ForgeAdapter, …> extends never`
+ * assertion and read by `packages/core/test/forge/never-merge.test.ts`.
+ *
+ * This block is the half that guard structurally cannot reach. A forge adapter
+ * does not merge by calling ADL's port — it merges by calling the FORGE, and
+ * `packages/forge-github` holds a live `octokit` whose `rest.pulls.merge()`
+ * exists no matter what ADL's interface declares. `getPushToken` is the
+ * standing proof that a forge package legitimately reaches past the neutral
+ * port when it has to, so the port's shape alone is not the property FORGE-10
+ * asks for.
+ *
+ * Every assertion below is driven off the exported tuples rather than
+ * hand-written per verb, for the reason the spawn suite already gives: a verb
+ * added to the ban gains its assertions automatically, and a verb whose
+ * selector is lost goes red without anyone remembering to add a case.
+ */
+describe('the never-merge guard (FORGE-10)', () => {
+  /** Every merge selector the config resolves for a path, by shape. */
+  async function mergeSelectorsFor(source: string): Promise<readonly string[]> {
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute(source),
+    );
+    return syntaxSelectors(resolved.rules ?? {});
+  }
+
+  it.each([FORGE_SOURCE, FUTURE_FORGE_SOURCE])(
+    'resolves a selector for every banned merge verb and route at %s',
+    async (source) => {
+      const selectors = await mergeSelectorsFor(source);
+
+      const uncovered: string[] = [];
+      for (const member of FORGE_MERGE_MEMBERS) {
+        // The MEMBER form, not the call form. `const m = octokit.rest.pulls.merge`
+        // followed by `m({...})` is a call-expression selector's blind spot,
+        // and an obvious way to arrive at a merge while refactoring.
+        if (
+          !selectors.includes(`MemberExpression[property.name='${member}']`)
+        ) {
+          uncovered.push(`${member}: no member-expression selector`);
+        }
+      }
+      for (const [label, source_] of FORGE_MERGE_ROUTES) {
+        if (!selectors.some((s) => s === `Literal[value=/${source_}/]`)) {
+          uncovered.push(`${label}: no string-literal selector`);
+        }
+        if (
+          !selectors.some(
+            (s) => s === `TemplateElement[value.raw=/${source_}/]`,
+          )
+        ) {
+          uncovered.push(`${label}: no template-literal selector`);
+        }
+      }
+
+      expect(
+        uncovered,
+        `every merge verb and route must be banned at ${source}, in both the member and the string form — a forge reached as a raw route string or a GraphQL mutation name is invisible to an identifier ban, and vice versa`,
+      ).toEqual([]);
+    },
+  );
+
+  it('does not silently delete the spawn ban it overlaps with (Pitfall 1)', async () => {
+    // `adl/no-forge-merge` configures `no-restricted-syntax` for a glob
+    // `adl/no-direct-spawn` also matches, and flat config REPLACES rather than
+    // merges per rule id. Without `...SPAWN_SYNTAX` spread into the merge rule
+    // object, forge packages would become the one place in the repository
+    // where `await import('execa')` lints clean — in a package whose own port
+    // docblock says a forge adapter talks HTTP and never a subprocess.
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute(FORGE_SOURCE),
+    );
+    const rules = resolved.rules ?? {};
+
+    const selectors = syntaxSelectors(rules);
+    for (const specifier of FORBIDDEN_SPAWN_SPECIFIERS) {
+      const pattern = anchoredPattern(specifier);
+      expect(
+        selectors.filter((selector) => selector.includes(pattern)),
+        `${FORGE_SOURCE} lost the require()/import() ban on ${specifier} — the merge rule set replaced SPAWN_SYNTAX instead of spreading it in`,
+      ).not.toHaveLength(0);
+    }
+
+    // And the static-import layer, which this entry deliberately does not
+    // configure at all so that it keeps resolving from `adl/no-direct-spawn`.
+    expect(
+      restrictedPathNames(rules),
+      `${FORGE_SOURCE} lost the static-import spawn ban — adl/no-forge-merge must not configure no-restricted-imports`,
+    ).toContain('execa');
+  });
+
+  it('leaves the real GitHub adapter clean — the vocabulary is precise, not a search for "merge"', async () => {
+    // The positive control, and the assertion most likely to catch an
+    // over-broad tightening. `packages/forge-github/src/backend.ts` reads
+    // `pr.merged_at`, compares against `'merged'` and `'MERGED'`, and sends a
+    // `markPullRequestReadyForReview` GraphQL mutation. A ban on the substring
+    // `merge` would flag all four — at which point the rule gets switched off,
+    // which is how a guard stops guarding.
+    const [result] = await realConfigLinter().lintFiles([
+      absolute(FORGE_SOURCE),
+    ]);
+
+    expect(result).toBeDefined();
+    const reported = (result!.messages ?? []).filter(
+      (message) => message.ruleId === 'no-restricted-syntax',
+    );
+    expect(
+      reported.map((m) => `line ${m.line}: ${m.message}`),
+      `${FORGE_SOURCE} must lint clean under adl/no-forge-merge. Reading a merged state is not causing one — observing the outcome a human produced is exactly what listOpenChangeRequests is for.`,
+    ).toEqual([]);
+  });
+
+  it('reports every banned verb and route on the fixture', async () => {
+    // The other direction from the resolved-config assertions above: those
+    // prove a selector EXISTS, this proves it FIRES. A selector that resolves
+    // but matches nothing — a mis-escaped regex, an attribute path that moved
+    // between parser versions — passes the first and fails here.
+    const [result] = await realConfigLinter().lintFiles([
+      absolute('test/lint/fixtures/forge-merge-call.ts'),
+    ]);
+
+    expect(result).toBeDefined();
+    const combined = (result!.messages ?? [])
+      .filter((message) => message.ruleId === 'no-restricted-syntax')
+      .map((message) => message.message)
+      .join('\n');
+
+    const silent: string[] = [];
+    for (const member of FORGE_MERGE_MEMBERS) {
+      // The trailing colon disambiguates: `.merge:` is not a prefix of
+      // `.mergePullRequest:`, so each verb is checked on its own.
+      if (!combined.includes(`.${member}: `)) silent.push(`.${member}`);
+    }
+    for (const [label] of FORGE_MERGE_ROUTES) {
+      if (!combined.includes(`${label}: `)) silent.push(label);
+    }
+
+    expect(
+      silent,
+      `these banned entries resolve a selector but never fired on the fixture: ${silent.join(', ')}. Either the selector matches nothing, or test/lint/fixtures/forge-merge-call.ts has no case for it — a banned entry nobody has watched fire is the Pitfall 8 shape this whole file exists to prevent.`,
+    ).toEqual([]);
+  });
+
+  it('is configured by exactly one flat-config entry, and its glob names the forge packages', () => {
+    // The count, for the same reason `WORKSPACE_EXEMPTION` has one: a second
+    // entry configuring these selectors over a wider glob would look like it
+    // was strengthening the ban while actually replacing this one, and every
+    // resolved-config assertion above would keep passing at the paths it
+    // happens to still cover.
+    const configuring = architectureConfigs.filter((config) => {
+      const entry = config.rules?.['no-restricted-syntax'];
+      const options = Array.isArray(entry) ? entry.slice(1) : [];
+      return options.some(
+        (option) =>
+          typeof option === 'object' &&
+          option !== null &&
+          typeof (option as SyntaxSelector).selector === 'string' &&
+          (option as SyntaxSelector).selector ===
+            `MemberExpression[property.name='merge']`,
+      );
+    });
+
+    expect(
+      configuring,
+      'exactly one architectureConfigs entry may configure the merge ban — a second is the T-2-40/CR-01 failure mode: the build stays green while the boundary moves',
+    ).toHaveLength(1);
+
+    const files =
+      (configuring[0] as { readonly files?: readonly string[] }).files ?? [];
+    expect(
+      files.some((glob) => glob.includes('packages/forge-*')),
+      `the merge ban must be scoped by package PREFIX (packages/forge-*), not to the one adapter that exists — M14 adds two more, and GitLab's merge verbs are the ones that read least like a merge. Got: ${files.join(', ')}`,
+    ).toBe(true);
   });
 });

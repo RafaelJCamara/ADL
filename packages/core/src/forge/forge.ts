@@ -171,8 +171,11 @@ export type CollaboratorPermission = (typeof COLLABORATOR_PERMISSIONS)[number];
  * **No merge method exists on this interface, anywhere, deliberately
  * (FORGE-10).** `docs/plan/DECISIONS.md`: "Human approves and merges the PR.
  * ADL never merges." The absence is the guard — "the adapter has no merge
- * method" is the structural version of "we don't call it" that step 5.12
- * asserts by reading this file's own shape.
+ * method" is the structural version of "we don't call it", and step 5.12 is
+ * what stops that absence being a fact about today's file: see
+ * {@link FORGE_ADAPTER_MEMBERS} directly below, which makes every member of
+ * this interface readable at runtime so a merge-shaped one cannot be added
+ * without two independent guards going red.
  */
 export interface ForgeAdapter {
   /** The registry id this adapter answers to — `'github'`, later `'gitlab'`, `'gitea'`. */
@@ -200,3 +203,63 @@ export interface ForgeAdapter {
    */
   authorPermission(input: ReadFileInput): Promise<CollaboratorPermission>;
 }
+
+/**
+ * Every member {@link ForgeAdapter} declares, as runtime data — the never-merge
+ * guard's other half (FORGE-10, M05 step 5.12).
+ *
+ * ── Why a *list* is the guard, and a comment is not ───────────────────────
+ *
+ * "ADL never merges" was, until this constant existed, a property of what
+ * happened to be typed into the interface above. A `merge(input): Promise<void>`
+ * added to it would have compiled, linted, typechecked and shipped green — the
+ * `docs/plan/DECISIONS.md` entry saying it must not exist is prose, and prose
+ * does not fail a build. The milestone's own wording is the standard being met
+ * here: *prefer "the adapter has no merge method" over "we don't call it"*.
+ *
+ * Pairing the interface with this frozen list puts two locked doors between a
+ * merge method and a green build, and they are locked by different mechanisms:
+ *
+ *  1. **Adding a member without listing it fails the BUILD.** The exhaustiveness
+ *     assertion below is `Exclude<keyof ForgeAdapter, …> extends never` — the
+ *     same construction `FEATURE_EVENT_KINDS` and `FEATURES_COLUMNS` already use
+ *     — so `merge()` on the interface alone stops `tsc` before any test runs.
+ *  2. **Listing it fails the SUITE.** `packages/core/test/forge/never-merge.test.ts`
+ *     reads this list and rejects any merge-shaped name in it. Getting past
+ *     door 1 by adding `'merge'` here lands squarely on door 2.
+ *
+ * The `satisfies` clause closes the third direction: a name here that is *not*
+ * a member of the interface — a stale entry left behind by a rename, which
+ * would quietly shrink what the test above is checking — is also a build error.
+ *
+ * **What this deliberately does NOT cover, and where that is covered.** An
+ * adapter package holds a live forge client (`packages/forge-github` holds an
+ * `octokit`), and that client has a merge call whether or not this port
+ * declares one. Reaching around the port is therefore the residual, and it is
+ * closed separately by `adl/no-forge-merge` in `eslint.config.js` — one guard
+ * per layer, because a single guard at either layer alone leaves the other
+ * layer's route open.
+ */
+export const FORGE_ADAPTER_MEMBERS = Object.freeze([
+  'id',
+  'openChangeRequest',
+  'promoteToReady',
+  'upsertComment',
+  'listOpenChangeRequests',
+  'readFile',
+  'readDiff',
+  'authorPermission',
+] as const) satisfies readonly (keyof ForgeAdapter)[];
+
+export type ForgeAdapterMember = (typeof FORGE_ADAPTER_MEMBERS)[number];
+
+/**
+ * Compile-time proof that {@link FORGE_ADAPTER_MEMBERS} omits no member of
+ * {@link ForgeAdapter} — door 1 above. A member added to the interface and not
+ * listed fails the **build**, not a test, which is what stops the never-merge
+ * assertion from silently narrowing to a subset of the port it claims to read.
+ */
+type _EveryForgeAdapterMemberListed =
+  Exclude<keyof ForgeAdapter, ForgeAdapterMember> extends never ? true : never;
+const _everyForgeAdapterMemberListed: _EveryForgeAdapterMemberListed = true;
+void _everyForgeAdapterMemberListed;

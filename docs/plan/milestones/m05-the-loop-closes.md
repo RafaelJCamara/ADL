@@ -409,8 +409,79 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       the DB reader and publisher in `packages/manager/test/publish/`, and 5.10's own tracer
       (`test/tracer/draft-cr-wiring.test.ts`) extended — one real `startDaemon` run now ends
       with a real developer comment carrying the real sha the worker actually pushed.
-- [ ] **5.12** — Never-merge guard (FORGE-10). A structural assertion that no code path
+- [x] **5.12** — Never-merge guard (FORGE-10). A structural assertion that no code path
       can call merge — prefer "the adapter has no merge method" over "we don't call it".
+      **Shipped as two guards at two layers, because the preferred one cannot reach the
+      whole property on its own.** `ForgeAdapter` has never declared a merge method, but
+      until this step that was a fact about what happened to be typed into `forge.ts` — a
+      `merge()` added to it would have compiled, linted, typechecked and shipped green, since
+      the `DECISIONS.md` entry forbidding it is prose and prose does not fail a build.
+      **Layer 1, the port (the preferred form).** `@adl/core/forge`'s new
+      `FORGE_ADAPTER_MEMBERS` pairs the interface with a frozen list of its own members, in
+      the house's `Exclude<T, Arr[number]> extends never` shape, putting two independently
+      locked doors between a merge method and a green build: adding a member *without*
+      listing it fails the **build** (the exhaustiveness assertion), and getting past that by
+      listing `'merge'` fails the **suite** (`packages/core/test/forge/never-merge.test.ts`,
+      which rejects any merge-shaped name in the list). The `satisfies readonly (keyof
+      ForgeAdapter)[]` clause closes the third direction — a stale name left behind by a
+      rename, which would quietly shrink what the test reads, is also a build error. Both
+      doors were watched failing against the exact defect before landing: `merge()` on the
+      interface alone reproduced `TS2322: Type 'true' is not assignable to type 'never'`, and
+      adding `'merge'` to the list turned typecheck green and the core test red, verbatim.
+      **Layer 2, the adapter (the residual layer 1 structurally cannot reach).** A forge
+      adapter does not merge by calling ADL's port — it merges by calling the *forge*, and
+      `packages/forge-github` holds a live `octokit` whose `rest.pulls.merge()` exists no
+      matter what ADL's interface declares. `getPushToken` is the standing proof that a forge
+      package legitimately reaches past the neutral port when it has to, so "the port has no
+      merge method" is not by itself the property FORGE-10 asks for. New
+      `eslint.config.js` rule **`adl/no-forge-merge`**, scoped to `packages/forge-*` (a
+      package *prefix*, so M14's GitLab and Gitea adapters are governed on the day they are
+      created — D-27's own argument, that the rule which lands before the thing it would have
+      prevented is the only kind that prevents it), banning two derived selector families
+      from two frozen tuples: `FORGE_MERGE_MEMBERS` (`merge`, `mergePullRequest`,
+      `enablePullRequestAutoMerge`, `mergeWhenPipelineSucceeds`, `accept`) and
+      `FORGE_MERGE_ROUTES` (the REST route suffix, and the two GraphQL mutation names in both
+      their template-literal and plain-string forms).
+      **Three design points that are the actual substance.** (1) Banned as **member
+      expressions**, not call expressions: `const m = octokit.rest.pulls.merge; await m({…})`
+      is a call-selector's blind spot and an obvious way to arrive at a merge while
+      refactoring — taking the reference is banned, so there is nothing to call later.
+      (2) A **vocabulary list, never a search for the substring `merge`**: GitLab spells this
+      `accept` and `mergeWhenPipelineSucceeds`, neither of which reads as a merge in a diff,
+      while `backend.ts` legitimately reads `pr.merged_at` and compares against `'merged'` /
+      `'MERGED'` and `CHANGE_REQUEST_STATES` legitimately contains `'merged'` — a substring
+      ban flags all of those, and a guard that noisy gets switched off. A dedicated assertion
+      keeps the real GitHub adapter linting clean, and it was watched failing by widening one
+      route pattern to `merge`, which immediately reported `backend.ts`'s own state literals.
+      (3) `enablePullRequestAutoMerge` is banned alongside the immediate form because it
+      merges *after this process exits* — nothing in ADL's logs, transcripts or accounting
+      would record the moment the branch landed, and the deferred form is exactly what
+      somebody reaches for when the immediate one is refused.
+      **Every selector was verified empirically against this repository's own eslint before
+      being written** (house convention 15): a throwaway probe confirmed all eight real merge
+      shapes fire and that `merged_at` / `'merged'` / `'MERGED'` /
+      `markPullRequestReadyForReview` fire on none of them. Two Pitfall-1 hazards are
+      handled and asserted: `SPAWN_SYNTAX` is spread into the new rule object (the new entry
+      overlaps `adl/no-direct-spawn`'s glob, and flat config replaces rather than merges, so
+      omitting it would have made forge packages the one place a dynamic `import('execa')`
+      lints clean — watched failing), and `no-restricted-imports` is deliberately left
+      unconfigured here so the static-import half keeps resolving from the spawn entry.
+      **The guard caught a gap in its own fixture on first run**, which is the fixture
+      arrangement working: `mergePullRequest` and `enablePullRequestAutoMerge` were banned as
+      member names but exercised only as GraphQL strings, so the "every banned verb fires"
+      assertion went red until a typed-SDK case was added for each.
+      **Found and not fixed:** `pnpm format` is red on `main` — 23 files, all under `docs/`,
+      none touched by this step (`DEBT.md` § 4). `.prettierignore` excludes `.planning/` for
+      reasoning that applies verbatim to `docs/plan/`, but that tree was never added. CI runs
+      `pnpm format`, so that leg is failing independently of any code change. Left for a
+      maintainer decision rather than resolved here.
+      **Proof:** 16 cases in `packages/core/test/forge/never-merge.test.ts` (including a
+      has-teeth control on the vocabulary matcher itself, and a vacuity control on the member
+      list), plus five assertions and one deliberate-violation fixture
+      (`test/lint/fixtures/forge-merge-call.ts`) in `test/lint/no-restricted-imports.test.ts`
+      — every one of them driven off the exported tuples rather than hand-written per verb,
+      so a verb added to the ban gains its assertions automatically and a verb whose selector
+      is lost goes red without anyone remembering to add a case.
 
 ### C · The loop — the middle (AC2, AC3)
 
@@ -475,3 +546,4 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | Branch push | `ManagerGitClient.push` (`packages/workspace/src/git/manager-git.ts`) — done, no credential-URL construction included |
 | The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. Both list calls paginate as of 5.11. |
 | A sticky per-role comment | `@adl/core/forge`'s `renderStickyComment` (pure) + `packages/manager/src/publish/sticky-comment.ts` and `role-rounds.ts` (the DB half) — done, 5.11. A new role needs a `{key, title, stageId}` and a caller, nothing more. |
+| The never-merge guard | `@adl/core/forge`'s `FORGE_ADAPTER_MEMBERS` (the port half, compile-time) + `eslint.config.js`'s `adl/no-forge-merge` (the adapter half) — done, 5.12. A new forge package under `packages/forge-*` is governed automatically; a new merge verb is one entry in `FORGE_MERGE_MEMBERS` plus one case in the fixture. |
