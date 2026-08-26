@@ -39,7 +39,7 @@ transcript the maintainer can watch as it happens.
   `computed`, never zero**.
 - **Transcript store with resumable byte offsets** — `manager/src/store/`.
   `transcriptPathFor` builds `logs/<feature>/<round>/<stage>/<attempt>.ndjson` as a pure
-  function of a **DB-resolved** address (a bare string is a compile error), *rejecting*
+  function of a **DB-resolved** address (a bare string is a compile error), _rejecting_
   rather than sanitising a hostile component. The next offset is re-`stat`'d after each
   write so offset-equals-file-size holds by construction; a partial final line is neither
   emitted nor counted, and is emitted exactly once when complete.
@@ -52,12 +52,12 @@ transcript the maintainer can watch as it happens.
   `GET /stages/:id/logs?offset=N&follow=1`. The untrusted `:id` resolves through
   `findAttempt` **before any path is built**. Termination is read from
   `stage_attempts.ended_at` — never inferred from the file going quiet. The CLI advances
-  its resume offset only *after* a batch is written to the sink.
+  its resume offset only _after_ a batch is written to the sink.
 - **Prompt determinism, proven from artifacts** — `manager/src/prompt/`. Single-pass
   function-replacer substitution (closing both the `$&` hazard and an order-dependent
   re-substitution hazard). The rendered prompt is persisted beside its transcript
   **before** the agent launches. `test/prompt/determinism.test.ts` compares real persisted
-  artifacts byte-for-byte across two real daemon *processes* on different working
+  artifacts byte-for-byte across two real daemon _processes_ on different working
   directories, with a negative control.
 - **Backend startup gate** — `boot/backend-preflight.ts`, wired into `daemon.ts` strictly
   before the supervisor, the API bind and the dispatch timer. A configured backend this
@@ -67,7 +67,7 @@ transcript the maintainer can watch as it happens.
   `roundId`, or `stageAttemptId` — a worker structurally cannot name a feature to
   attribute spend to. The supervisor supplies the join keys from its own assignment.
 - **D-2-08-1 fixed** — `writeScratchGitConfig` writes `safe.directory` entries for both
-  the worktree and the main repo *before any child launches*, so the agent can run git
+  the worktree and the main repo _before any child launches_, so the agent can run git
   inside its own worktree under the privilege drop.
 
 ## Deliberately excluded
@@ -80,7 +80,7 @@ transcript the maintainer can watch as it happens.
   `effectiveConfig.context.files` stays exactly what `adl.yml` declared.
 - Nothing on the manager side reads back the `StageRunnerVerdict` envelope — **that's M05's
   first real job.**
-- A capability/cost-report mismatch does *not* emit an `error` transcript event: it was
+- A capability/cost-report mismatch does _not_ emit an `error` transcript event: it was
   implemented per the plan's wording, found to convert successful runs into false
   `stage_error`s, and removed. `costSource: 'unknown'` is the honest signal.
 
@@ -93,13 +93,13 @@ faked, five separate times.
 
 Full detail in [`DEBT.md`](../DEBT.md). Summary:
 
-| Item | Closed by the credentialed run? |
-|---|---|
-| Capture real CLI transcript fixtures | Partly — a separate follow-up task |
-| Watch a real transcript stream live, confirm the commit | Yes |
-| `claudeVersionCheckRunner` against the real pinned binary | Yes, once PATH shadowing is fixed |
-| Reconcile a real `usage_events` row against billed usage | Yes |
-| D-2-08-1 Linux privilege-drop reproduction | No — needs a Linux host, not a credential |
+| Item                                                      | Closed by the credentialed run?           |
+| --------------------------------------------------------- | ----------------------------------------- |
+| Capture real CLI transcript fixtures                      | Partly — a separate follow-up task        |
+| Watch a real transcript stream live, confirm the commit   | Yes                                       |
+| `claudeVersionCheckRunner` against the real pinned binary | Yes, once PATH shadowing is fixed         |
+| Reconcile a real `usage_events` row against billed usage  | Yes                                       |
+| D-2-08-1 Linux privilege-drop reproduction                | No — needs a Linux host, not a credential |
 
 Plus four non-blocking code-review warnings (hardcoded 10-minute timeout, a missing
 containment check on `loadSpecFromWorktree`, no `--` argv separator, and a hardcoded

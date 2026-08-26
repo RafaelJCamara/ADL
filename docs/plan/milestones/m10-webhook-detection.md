@@ -8,7 +8,7 @@
 producing a second run.
 
 > Pure latency improvement — polling already works, so this can block nothing. That is
-> why it sits *after* the loop closes rather than before it.
+> why it sits _after_ the loop closes rather than before it.
 
 ---
 
@@ -18,7 +18,7 @@ producing a second run.
       seconds instead of at the next poll, **with polling still working** when the webhook
       is unreachable.
 - [ ] A mis-signed or replayed webhook payload is rejected **before it is parsed**,
-      verified over the *raw request body*.
+      verified over the _raw request body_.
 - [ ] Webhook and polling detecting the same new feature simultaneously produce exactly
       one run, and webhook health is visible in `adl status`.
 
@@ -26,7 +26,7 @@ producing a second run.
 
 ## Step sketch
 
-*Refine into small steps when this milestone starts.*
+_Refine into small steps when this milestone starts._
 
 - [ ] **10.1** — The webhook route on the manager's Hono app, reading the raw body via
       `await c.req.arrayBuffer()`.
@@ -46,11 +46,11 @@ chosen partly because `await c.req.arrayBuffer()` makes this trivial.
 
 Per-forge signing schemes (relevant now, and again in M14):
 
-| Forge | Header | Scheme |
-|-------|--------|--------|
-| GitHub | `X-Hub-Signature-256` | `sha256=` + HMAC-SHA256 hex of the raw body |
-| Gitea / Forgejo | `X-Gitea-Signature` (also sends the GitHub-compatible header) | lowercase hex HMAC-SHA256 of the raw body, **no prefix** |
-| GitLab | `X-Gitlab-Token` | **a plain shared secret compared verbatim — not an HMAC** |
+| Forge           | Header                                                        | Scheme                                                    |
+| --------------- | ------------------------------------------------------------- | --------------------------------------------------------- |
+| GitHub          | `X-Hub-Signature-256`                                         | `sha256=` + HMAC-SHA256 hex of the raw body               |
+| Gitea / Forgejo | `X-Gitea-Signature` (also sends the GitHub-compatible header) | lowercase hex HMAC-SHA256 of the raw body, **no prefix**  |
+| GitLab          | `X-Gitlab-Token`                                              | **a plain shared secret compared verbatim — not an HMAC** |
 
 `@octokit/webhooks` does constant-time verification and typed payloads for GitHub;
 the other two are small enough to hand-roll.

@@ -35,7 +35,7 @@ M05 cannot be designed against data that was never collected.
 
 - **Six-outcome verdict union** — `packages/core/src/verdict/verdict.ts`. Frozen
   `OUTCOMES`, discriminated `VerdictSchema`, `consumesRound()` true only for `send_back`.
-  `SkipVerdict` has no `checked` field at all, so a skipped gate is *structurally*
+  `SkipVerdict` has no `checked` field at all, so a skipped gate is _structurally_
   incapable of contributing criterion coverage.
 - **`aggregate()` proven exhaustively** — `packages/core/src/verdict/aggregate.ts`.
   Precedence `fail → send_back → inconclusive → green`; green reachable from exactly one
@@ -61,7 +61,7 @@ M05 cannot be designed against data that was never collected.
   Repo values clamp down-only; `agents.*.backend` / `.model` from a repo are discarded and
   the attempt reported. `interpolate.ts` never reads `process.env`.
 - **Lifecycle state machine** — `state/transition.ts`. 11 states × 15 event kinds = 165
-  pairs, all total and non-throwing. `SEND_BACK_ROUND_DELTA` is *computed* by calling
+  pairs, all total and non-throwing. `SEND_BACK_ROUND_DELTA` is _computed_ by calling
   `consumesRound()`, never restated.
 - **Database layer** — `packages/db`. Migrations `0001`–`0004`, 11 tables, a migration
   checksum guard proven by mutating a migration byte and watching the migrator refuse,
@@ -83,5 +83,5 @@ M05 cannot be designed against data that was never collected.
 ## Still open
 
 Nothing blocking. Two soft items live in [`DEBT.md`](../DEBT.md): fingerprint-normalisation
-*strength* is unproven (deferred to M06 evidence), and the `version: 1` "additive keys only"
+_strength_ is unproven (deferred to M06 evidence), and the `version: 1` "additive keys only"
 promise is untestable.

@@ -17,7 +17,7 @@ and code quality from fresh context, on exactly the interface a third party woul
 - [ ] The reviewer runs on that same interface with **no special-casing**: removing it from
       configuration removes it from the pipeline exactly like a third-party gate would be.
 - [ ] The reviewer's verdicts cite the specific spec clauses checked, and a `pass` citing
-      none is rejected as *malformed* rather than accepted as an approval.
+      none is rejected as _malformed_ rather than accepted as an approval.
 - [ ] A known-bad-diff fixture set runs in ADL's own CI and turns the build red if the
       reviewer approves it — so rubber-stamping is **measured**, not assumed.
 - [ ] Findings raised after the first review round arrive as PR follow-ups rather than
@@ -27,13 +27,13 @@ and code quality from fresh context, on exactly the interface a third party woul
 
 ## Step sketch
 
-*Refine into small steps when this milestone starts.*
+_Refine into small steps when this milestone starts._
 
 - [ ] **7.1** — Finalise the gate plugin interface against two real consumers (this
       reviewer, and M08's tester). Publish it through `@adl/plugin-sdk`.
 - [ ] **7.2** — Configuration-driven pipeline positioning — a gate declared in `adl.yml`
       lands anywhere in the pipeline with no lifecycle change. (M01's EXEC-07 test already
-      asserts this is *possible*; this makes it real.)
+      asserts this is _possible_; this makes it real.)
 - [ ] **7.3** — Plain-command gate contract (a gate that is just a program returning a verdict).
 - [ ] **7.4** — The reviewer agent itself, built on 7.1 with zero special-casing.
 - [ ] **7.5** — Fresh context enforced structurally — the reviewer never inherits the

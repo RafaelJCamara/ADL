@@ -17,7 +17,7 @@ existing tools becoming gates with configuration alone.
 - [ ] A security-checking harness ships working, in the box, built on **the same gate
       interface a third party would use** — no privileged access, no special-casing.
 - [ ] An existing tool (semgrep, CodeRabbit, or Greptile) is wired in as a gate with
-      *configuration rather than code*, and it can send a feature back to the developer.
+      _configuration rather than code_, and it can send a feature back to the developer.
 - [ ] A third-party gate's findings map onto acceptance-criterion IDs, so its output lands
       in the same coverage story as ADL's own gates.
 
@@ -34,9 +34,9 @@ existing tools becoming gates with configuration alone.
 
 ## Notes
 
-**Ship the *interface* only.** Registry, discovery, versioning and marketplace are
+**Ship the _interface_ only.** Registry, discovery, versioning and marketplace are
 explicitly out of scope for v1 — they are v2 (`ECO-02`).
 
 ADL does not compete with CodeRabbit, Greptile or semgrep. Those rest on years of
-code-graph investment. It *consumes* them. That is the whole strategic point of the gate
+code-graph investment. It _consumes_ them. That is the whole strategic point of the gate
 interface, and this milestone is where the claim becomes demonstrable.

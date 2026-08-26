@@ -18,16 +18,16 @@ handoff.
 
 - [ ] **AC1 — Detection → draft PR.** A feature folder is committed and, with no further
       action, a draft pull request appears on GitHub at round 1 carrying the developer's
-      work. Undeveloped features are identified by *evaluating repository state*, not by
+      work. Undeveloped features are identified by _evaluating repository state_, not by
       remembering events, and each feature is claimed exactly once even when detection
       re-runs or the daemon restarts mid-flight.
 - [ ] **AC2 — Send-back works.** A deliberately failing command gate (`npm test`) returns
       the developer to work carrying the failing verdict as context, and a subsequent
-      round passes and promotes the draft to ready. **The loop is *not* considered proven
+      round passes and promotes the draft to ready. **The loop is _not_ considered proven
       by a feature that passes first try.**
 - [ ] **AC3 — Gate integrity.** A developer that edits a spec, the gate configuration, or
-      a test that judges it has that round hard-failed — detected by *diffing what it
-      wrote*, not by asking. Gate context is assembled from spec, diff and repository
+      a test that judges it has that round hard-failed — detected by _diffing what it
+      wrote_, not by asking. Gate context is assembled from spec, diff and repository
       only; the developer's session and transcript are structurally unreachable.
 - [ ] **AC4 — The PR stays readable.** Each agent role's presence on the PR is one sticky
       comment edited in place with prior rounds collapsed — not one comment per role per
@@ -47,7 +47,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 - [x] **5.0** — **Supply-chain gate.** `octokit` and `@octokit/auth-app` are the first new
       runtime dependencies since M04. Every prior milestone opened by confirming
-      repository/org and version against the public registry *with a human in the loop*,
+      repository/org and version against the public registry _with a human in the loop_,
       **before** installing, and recorded the exact pins for the installing step to consume
       verbatim. Do that.
       **Approved 2026-08-24:** `octokit@5.0.5` (`github.com/octokit/octokit.js`) and
@@ -74,9 +74,9 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       inherits the config neutralisation for free.
       **Shipped:** `@adl/core/detect`'s `scanFeatureFolders` (pure) +
       `packages/manager/src/detect/scanner.ts`'s `listFeatureFolders` (the I/O half, through
-      a new `ManagerGitClient.listFiles`). The *undeveloped* predicate (5.2) is not built —
+      a new `ManagerGitClient.listFiles`). The _undeveloped_ predicate (5.2) is not built —
       this step only proves detection, not enqueueing.
-- [x] **5.2** — The *undeveloped* predicate. Cross-reference scanned folders against the
+- [x] **5.2** — The _undeveloped_ predicate. Cross-reference scanned folders against the
       `features` table and open ADL change requests. Pure and exhaustively testable —
       this is the heart of DETECT-01, and "evaluate state" rather than "remember events"
       is the whole point.
@@ -91,7 +91,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `@adl/workspace`'s `featureIdFromBranch` — `listOpenChangeRequests` had no way to
       report this before. Not yet wired into `daemon.ts`'s automatic dispatch (5.5's job).
 - [x] **5.3** — Trusted-path filter (SPEC-06). Default branch only; author must have write
-      permission; fork PRs ignored unless explicitly opted in. Reject *before* anything is
+      permission; fork PRs ignored unless explicitly opted in. Reject _before_ anything is
       enqueued.
       **Shipped:** `@adl/core/detect`'s `evaluateSpecTrust` (pure) +
       `packages/manager/src/detect/trust.ts`'s `evaluateFeatureTrust` (the I/O half). The
@@ -154,7 +154,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       appears via `GET /features` with no `adl dev-run` call, and does not when
       `options.forge` is absent).
 - [x] **5.6** — Exclusive claim + restart reconciliation (DETECT-05). A feature is claimed
-      exactly once across re-detection *and* a daemon restart mid-flight, reconciled
+      exactly once across re-detection _and_ a daemon restart mid-flight, reconciled
       against open ADL change requests. Build on the existing lease CAS in
       `packages/db/src/repository/features.ts` — don't invent a second claim mechanism.
       **Shipped:** the two mechanisms the milestone doc named — the lease CAS
@@ -167,7 +167,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       repository after the first is stopped — never a second `features` row for the same
       folder, and the recovered row is re-leaseable, not stuck.
       **The real finding, and the actual engineering work:** tracing `undevelopedFeatures`'s
-      lost-row reconciliation all the way through a *real* dispatch (`dispatchOnce` →
+      lost-row reconciliation all the way through a _real_ dispatch (`dispatchOnce` →
       `createProductionStageRunner` → `@adl/workspace`'s `createWorktree`) surfaced that it was
       built against a branch shape production never creates. `@adl/workspace`'s GC sweep
       (`gc.ts`'s `sweepOrphans`, Phase 2) reads a managed worktree's branch back through
@@ -225,7 +225,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       **The real finding:** the tracer test for this step (`packages/manager/test/boot/cli-entry.test.ts`,
       real `startDaemon`, a scripted `claude --version` double) is the first thing in this
       project ever to call `startDaemon` against a truly virgin `.adl/adl.db` — a file with
-      *zero tables*, not merely an unseeded-but-migrated one. Every prior test, and
+      _zero tables_, not merely an unseeded-but-migrated one. Every prior test, and
       `runStartupGate`'s own test suite, pre-ran `migrateToLatest` before ever touching
       `metaRepository`, so `meta.getSchemaVersion()`'s very first read had always already
       found the `meta` table (migration 0001's own work) waiting for it. Against a real fresh
@@ -234,11 +234,11 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       the honest gap this step exists to close would have reproduced itself one layer down,
       on literally the first real run. Watched failing for real (the raw `SqliteError` above,
       captured verbatim) before the fix: `packages/db/src/repository/meta.ts`'s shared `get()`
-      now catches SQLite's "no such table" (no distinguishable error *code* exists for it —
+      now catches SQLite's "no such table" (no distinguishable error _code_ exists for it —
       message-text matching, mirroring `daemon-config.ts`'s own `isEnoent()` precedent) and
       treats it exactly as the row-not-found case it already had a name for, self-healing
       through `runStartupGate`'s existing, unmodified copy-then-migrate path regardless of
-      *why* the table is missing. A regression test for the exact defect —
+      _why_ the table is missing. A regression test for the exact defect —
       `packages/db/test/repos-meta.test.ts`, deliberately with no `migrateToLatest` call —
       is now permanent.
       **Code review caught two more, both real.** (1) `ensureDaemonConfig`'s zero-config
@@ -279,7 +279,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       (FORGE-05).
       **Shipped, the draft-at-round-1 half:** a real commit now automatically pushes and
       opens a real draft change request, with no manual stitching — the automatic version of
-      what 5.0b's tracer proved by hand. The push has to happen *inside* the worker, before
+      what 5.0b's tracer proved by hand. The push has to happen _inside_ the worker, before
       `createProductionStageRunner`'s own `finally` destroys the workspace (`Workspace.destroy()`
       reclaims the branch along with the worktree), so the manager mints a fresh,
       short-lived, already-credentialed URL once per dispatch
@@ -304,7 +304,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       established, rather than a new `features` column or table.
       **`packages/forge-github` gained one new capability and two pure helpers:**
       `githubForgeAdapter` now also returns `getPushToken()` (via `octokit.auth({type:
-      'installation'})`, reusing the adapter's own already-configured `octokit` instance —
+'installation'})`, reusing the adapter's own already-configured `octokit` instance —
       no second `createAppAuth` call, no new dependency), exposed through a new
       `GithubForgeAdapter` type (`ForgeAdapter` plus this one GitHub-specific extension,
       never added to the neutral port itself — FORGE-10's minimal-interface spirit). New
@@ -322,7 +322,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       of 5.5's poll schedule dependency. `@adl/forge-github` moved from `devDependencies` to
       a real runtime `dependencies` entry of `@adl/manager`. **No live GitHub App credentials
       are configured yet** — `DEBT.md` item 1.7 is unchanged; this only makes the real binary
-      *capable*.
+      _capable_.
       **Scope decision, confirmed with the maintainer before implementation:** the
       "promoted to ready only when every gate is green" half is genuinely not buildable yet —
       group C (5.13's round loop) is what will ever produce an aggregate "every gate is
@@ -330,7 +330,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       stays built (5.9) and uncalled, exactly like `resetCrashCountOnSuccess`'s own
       documented-gap precedent — a one-line call site for 5.13 once `aggregate()` exists.
       **No state-machine change.** `publishing`/`cr_opened`/`pr_open`
-      (`@adl/core/state/feature-state.ts`) model the loop's *final* hand-off to a human,
+      (`@adl/core/state/feature-state.ts`) model the loop's _final_ hand-off to a human,
       entered only after `all_gates_passed` — which nothing fires yet. A draft CR opened
       early, during `gating`, is a side artifact for visibility, not a lifecycle state; its
       existence is fully answerable by asking the forge, exactly as this step's idempotency
@@ -369,7 +369,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       corrupted by it. A role is addressed by `stage_attempts.stage_id`, taken from the
       dispatch that ran, never by a hardcoded `'develop'`.
       **The renderer is where the substance is**, and both of its properties were watched
-      failing first. (1) *A round body cannot break the fold it is placed in.* Bodies are
+      failing first. (1) _A round body cannot break the fold it is placed in._ Bodies are
       agent-authored; a literal `</details>` in one closes the block early and spills every
       prior round into view — the exact unreadable pull request FORGE-06 exists to prevent,
       arriving through the mechanism meant to prevent it. `<details`/`</details` are escaped
@@ -378,11 +378,11 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       code sample into a visible `&lt;/details>`. Code-span offsets come from
       `mdast-util-from-markdown` (already a `@adl/core` dependency), verified by probe to
       report `position.*.offset` for all three node kinds before anything was written.
-      (2) *A comment edited in place forever grows without bound.* Every forge caps a body;
+      (2) _A comment edited in place forever grows without bound._ Every forge caps a body;
       past the cap `upsertComment` starts failing and the comment silently freezes at
       whichever round last fit. `maxLength` (default 60,000 — deliberately under GitHub's
       documented 65,536, leaving room for the adapter's own hidden marker) makes that
-      bounded and *visible*: the newest round is kept whole, older folds are dropped
+      bounded and _visible_: the newest round is kept whole, older folds are dropped
       oldest-first with the count stated in the comment, the newest round's own body is
       truncated with a notice if it alone overflows, and the returned string is **never**
       longer than `maxLength` for any input — a final surrogate-safe clamp, asserted as a
@@ -394,11 +394,11 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       already open for this branch?", so a repository with more than one page of open pull
       requests would have answered "no" for a change request that plainly exists and opened
       a duplicate draft every round. The mock GitHub server gained real `per_page`/`page` +
-      `Link: rel="next"` pagination so both fixes are *proven*, not asserted — without it a
+      `Link: rel="next"` pagination so both fixes are _proven_, not asserted — without it a
       first-page-only adapter and a paginating one were indistinguishable, and the guard
       could not have been written at all. Both cases were watched failing against the
       un-paginated code (the comment case only after the seed was corrected: ADL's marker
-      has to land *past* page 1, which an ADL-comments-first seed does not reproduce).
+      has to land _past_ page 1, which an ADL-comments-first seed does not reproduce).
       **Found and not fixed — `DEBT.md` D-5-11-1, owner 5.13:** a round's commit sha lives
       only while that round is the newest. It arrives on the event, not from a table, so
       republishing during round 2 renders round 1 from the database alone and its fold loses
@@ -419,23 +419,23 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       **Layer 1, the port (the preferred form).** `@adl/core/forge`'s new
       `FORGE_ADAPTER_MEMBERS` pairs the interface with a frozen list of its own members, in
       the house's `Exclude<T, Arr[number]> extends never` shape, putting two independently
-      locked doors between a merge method and a green build: adding a member *without*
+      locked doors between a merge method and a green build: adding a member _without_
       listing it fails the **build** (the exhaustiveness assertion), and getting past that by
       listing `'merge'` fails the **suite** (`packages/core/test/forge/never-merge.test.ts`,
       which rejects any merge-shaped name in the list). The `satisfies readonly (keyof
-      ForgeAdapter)[]` clause closes the third direction — a stale name left behind by a
+ForgeAdapter)[]` clause closes the third direction — a stale name left behind by a
       rename, which would quietly shrink what the test reads, is also a build error. Both
       doors were watched failing against the exact defect before landing: `merge()` on the
       interface alone reproduced `TS2322: Type 'true' is not assignable to type 'never'`, and
       adding `'merge'` to the list turned typecheck green and the core test red, verbatim.
       **Layer 2, the adapter (the residual layer 1 structurally cannot reach).** A forge
-      adapter does not merge by calling ADL's port — it merges by calling the *forge*, and
+      adapter does not merge by calling ADL's port — it merges by calling the _forge_, and
       `packages/forge-github` holds a live `octokit` whose `rest.pulls.merge()` exists no
       matter what ADL's interface declares. `getPushToken` is the standing proof that a forge
       package legitimately reaches past the neutral port when it has to, so "the port has no
       merge method" is not by itself the property FORGE-10 asks for. New
       `eslint.config.js` rule **`adl/no-forge-merge`**, scoped to `packages/forge-*` (a
-      package *prefix*, so M14's GitLab and Gitea adapters are governed on the day they are
+      package _prefix_, so M14's GitLab and Gitea adapters are governed on the day they are
       created — D-27's own argument, that the rule which lands before the thing it would have
       prevented is the only kind that prevents it), banning two derived selector families
       from two frozen tuples: `FORGE_MERGE_MEMBERS` (`merge`, `mergePullRequest`,
@@ -454,7 +454,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       keeps the real GitHub adapter linting clean, and it was watched failing by widening one
       route pattern to `merge`, which immediately reported `backend.ts`'s own state literals.
       (3) `enablePullRequestAutoMerge` is banned alongside the immediate form because it
-      merges *after this process exits* — nothing in ADL's logs, transcripts or accounting
+      merges _after this process exits_ — nothing in ADL's logs, transcripts or accounting
       would record the moment the branch landed, and the deferred form is exactly what
       somebody reaches for when the immediate one is refused.
       **Every selector was verified empirically against this repository's own eslint before
@@ -494,11 +494,11 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       drives a real `startDaemon()` through `develop → gate → green → publishing`, and —
       the case AC2 says is the only one that proves anything — through
       `develop → gate says send_back → round 2's developer runs again → gate passes →
-      publishing`, with one real forked worker process per stage.
+publishing`, with one real forked worker process per stage.
       **Split in two, as the house splits every decision from its I/O.**
-      `@adl/core/loop`'s new `planRoundStep` (pure, total, never throws) answers *which
-      lifecycle events a finished stage raises* and *whether the round is over, with what
-      `RoundOutcome`* — `aggregate()`'s first production caller. It decides no state:
+      `@adl/core/loop`'s new `planRoundStep` (pure, total, never throws) answers _which
+      lifecycle events a finished stage raises_ and _whether the round is over, with what
+      `RoundOutcome`_ — `aggregate()`'s first production caller. It decides no state:
       `transition()` is still the only code that does, and this function feeds it
       `FeatureEvent`s so a state change still cannot be issued without its audit row and
       version guard. It knows no stage names either — an index, a length, and an opaque
@@ -506,7 +506,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `TransitionCtx`). `packages/manager/src/loop/round-runner.ts` is the other half:
       record the evidence, apply the events, close the round.
       **Three sequencing decisions that are the actual substance.**
-      (1) *Index 0 is the developer.* `stage/developer-outcome.ts` has stated this contract
+      (1) _Index 0 is the developer._ `stage/developer-outcome.ts` has stated this contract
       since M01 — "the sequencer special-cases index 0" — and it is enforced rather than
       assumed: a gate verdict arriving in the developer's slot, or a developer outcome in a
       gate's, escalates instead of counting. That is what keeps self-approval from arriving
@@ -514,7 +514,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       pipeline of `develop` alone reaches `aggregate([])` and **escalates** — the developer
       contributes no verdict, so a zero-gate pipeline reporting green is unreachable rather
       than merely unlikely.
-      (2) *v1 stops on the first `send_back`.* ARCHITECTURE.md §3 defaults this **by cost
+      (2) _v1 stops on the first `send_back`._ ARCHITECTURE.md §3 defaults this **by cost
       class** — cheap gates continue and merge findings, expensive ones stop — and neither
       half is buildable: `Stage.costClass` has no implementations, and `OnSendBackSchema`'s
       own `.describe()` records `on_send_back` as Phase 7's. Half a policy is worse than
@@ -523,9 +523,9 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       did not stop the pipeline. `fail` stops immediately regardless; `inconclusive`
       deliberately does not, because `aggregate`'s own precedence says an inconclusive
       beside real findings usually resolves once the code changes.
-      (3) *The pipeline position is written from the sequencer's answer, not from a counter
-      delta.* `TransitionResult.counters` expresses position as a delta and the developer's
-      step off index 0 is not one — `dev_committed`'s edge *resets* the index (its job is to
+      (3) _The pipeline position is written from the sequencer's answer, not from a counter
+      delta._ `TransitionResult.counters` expresses position as a delta and the developer's
+      step off index 0 is not one — `dev_committed`'s edge _resets_ the index (its job is to
       undo a send-back's position). Left to the delta alone, a committed round re-dispatches
       the developer forever. Written absolutely in the same transaction, for the identical
       reason `planRecovery`'s `resetStageIndexTo` is written outside `transition()`.
@@ -563,7 +563,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       one answer to "which change request is this feature's?" rather than two.
       **`resetCrashCountOnSuccess` finally has its caller** (`DEBT.md` § 5), in the same
       transaction as the round close, per D-11's "the increment and the decision happen
-      together". Every *completed* round resets it, not only a green one: the counter
+      together". Every _completed_ round resets it, not only a green one: the counter
       measures consecutive **crashes**, and a round that reached a `RoundOutcome` broke the
       streak. A retryable stage error takes a different path entirely — `reapOne`, the same
       function a dead worker's exit calls — so the consecutive-failure ceiling applies and a
@@ -572,7 +572,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       **`DEBT.md` D-5-11-1 is answered, and its premise was wrong.** The item said writing a
       real `RoundOutcome` into `rounds.outcome_json` would stop a prior round losing its
       commit sha. `RoundOutcome` has no field for a commit, so it never could have. What the
-      column *does* now carry is the round's real result, and `role-rounds.ts` reads it: a
+      column _does_ now carry is the round's real result, and `role-rounds.ts` reads it: a
       finished round folds away as `send_back — 3 findings` or `escalate — <reason>` instead
       of a bare kind. The sha specifically needs a `rounds.head_sha` column — a migration,
       with a second consumer already waiting (a gate needs the diff between the base and
@@ -600,9 +600,9 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       **Shipped, and a real gate now turns the loop:**
       `packages/manager/test/scenario/command-gate-loop.test.ts` drives a real
       `startDaemon()` through `develop → test fails → send back → round 2's developer →
-      test passes → publishing`, with the **real** `createProductionStageRunner` in four
+test passes → publishing`, with the **real** `createProductionStageRunner` in four
       real forked workers and only the billed `claude` binary doubled. 5.13's own scenario
-      proved the same shape against a *scripted* worker; the difference is that nothing in
+      proved the same shape against a _scripted_ worker; the difference is that nothing in
       it ever ran a command, so nothing ever needed the developer's commit to still exist —
       which is exactly why D-5-13-1 was found by reading code rather than by a red test.
       **Workspace continuity, the half this step actually owns.** The port was missing two
@@ -646,13 +646,13 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       fire for the pipelines this milestone exists to run. `RoundNote` now carries the raw
       sha rather than rendered text, so the event and the column go through one formatter.
       **A race found and removed while doing it:** the first cut derived a round's headline
-      from `roundOutcome === null`, and `onDeveloperCommitted` fires *unawaited, before*
+      from `roundOutcome === null`, and `onDeveloperCommitted` fires _unawaited, before_
       `onStageCompleted` — so whether a round was closed at render time depended on which
       of two concurrent tasks won, and the tracer caught the resulting flip. The note's
       presence is the deterministic signal and stays the headline's source.
       **Everything load-bearing was watched failing first** (convention 13): reverting
       `detach()` to `destroy()` turned the gate's own case red with `expected 'send_back'
-      to be 'pass'` — a gate judging a `baseRef` tree, D-5-13-1 exactly; making `detach()`
+to be 'pass'` — a gate judging a `baseRef` tree, D-5-13-1 exactly; making `detach()`
       destroy the worktree turned three contract cases red on both backends; dropping the
       `head_sha` read reproduced D-5-11-1's `- Attempt 1 — completed` fold. The six
       `expect(worktree).toBe(false)` assertions in `stage-runner.test.ts` went red on the
@@ -662,7 +662,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       rev** and prints two lines, so `attachWorktree` uses `symbolic-ref --short` — which
       honours `--end-of-options` and exits 128 on a detached HEAD, where `rev-parse` prints
       the string `HEAD` and exits 0. And `fake-claude-success.mjs` had to start appending a
-      *distinct* line: round 2's developer now attaches to a worktree already containing
+      _distinct_ line: round 2's developer now attaches to a worktree already containing
       round 1's commit, so a double writing identical content staged nothing, `git commit`
       exited non-zero, and the round retried forever — reproduced on the new scenario's
       first run.
@@ -698,10 +698,10 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       **A real ordering bug found before it shipped, and the reason it needed its own DB
       method.** `openAttempt` — called moments later in the same function — reuses a
       feature's open round or **opens a new one**. Reading "the prior round" with the
-      existing `latestRound` *after* that call would, on an ordinary first attempt at round
+      existing `latestRound` _after_ that call would, on an ordinary first attempt at round
       2's developer, still be correct — but on a **crash-recovery retry of that same
       dispatch**, round 2's own row already exists and is still open, so `latestRound` would
-      return *that* row instead of round 1's closed `send_back`, and the brief would silently
+      return _that_ row instead of round 1's closed `send_back`, and the brief would silently
       vanish on exactly the retry where it still applies. Closed by a new
       `FeaturesRepository.latestClosedRound` (`packages/db`) — "the newest round with
       `ended_at` set", immune to whether an even newer round is currently open, because only
@@ -733,7 +733,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       nowhere else — including the crash-recovery-retry case above — and
       `test/rounds.test.ts` gained four cases for `latestClosedRound` itself. End to end:
       `test/scenario/command-gate-loop.test.ts` (5.14's own real-worker, real-gate scenario)
-      now reads round 2's *persisted* prompt artifact off disk and asserts it contains round
+      now reads round 2's _persisted_ prompt artifact off disk and asserts it contains round
       1's real finding's title and detail verbatim — the same file's round 1 artifact is read
       too, as the negative control proving the placeholder is what "no brief yet" actually
       renders. **No DB migration** — `sendBackBriefFromClosedRound` reads `rounds.outcome_json`
@@ -764,7 +764,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       round). This is the first real consumer of `rounds.head_sha`: the diff base is the
       previous round's `head_sha` (`FeaturesRepository.latestClosedRound`, 5.15's own
       method) or, for round 1, the repo's `default_branch` — one `ManagerGitClient
-      .diffNameOnly(base, head)` expression covers both, because git's `base...head`
+.diffNameOnly(base, head)` expression covers both, because git's `base...head`
       (three-dot) diffs against the merge base rather than `base`'s own tip, which is what
       makes it correct even when `default_branch` has moved on for unrelated reasons since
       the feature forked. A worktree shares its parent repository's object database, so
@@ -818,21 +818,21 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       gate never even dispatched (`stage_attempts` has no row for stage index 1 at all).
 - [x] **5.17** — Fresh-context gate isolation (ROLE-03). Gate context is assembled from
       spec + diff + repository only. Make the developer's session and transcript
-      *structurally* unreachable from a gate — a type the gate cannot name, not a rule it
+      _structurally_ unreachable from a gate — a type the gate cannot name, not a rule it
       is asked to follow.
       **Shipped as a type, an assembly, and a lint rule — the same two-layer shape 5.12
       needed for FORGE-10, for the same reason.** `@adl/core/stage`'s new `GateContext`
       (`gate-context.ts`) is what a gate takes: `stageId`, `workspace`, `spec`, `diff`,
       `onEvent`, `signal`, and **nothing else**. There is no member on it through which a
       `sessionRef`, a transcript, a `logsRoot`, a rendered prompt or a send-back brief can
-      be *named* — which is the property AC3 asks for expressed as a parameter list rather
+      be _named_ — which is the property AC3 asks for expressed as a parameter list rather
       than as a rule somebody has to follow. Every one of those exists in this codebase and
       every one is reachable from the `AssignMessage` a worker receives, which is exactly
       why a gate is no longer handed one.
       **Two doors, as in 5.12.** `GATE_CONTEXT_MEMBERS` (plus `GATE_DIFF_MEMBERS`, because
       `GateDiff` is nested and a member-name guard is blind through a nested type) pairs
       each interface with a frozen list in the house's
-      `Exclude<keyof T, Arr[number]> extends never` shape: adding a member *without* listing
+      `Exclude<keyof T, Arr[number]> extends never` shape: adding a member _without_ listing
       it fails the **build**, and getting past that by listing a forbidden name fails the
       **suite** (`packages/core/test/stage/gate-context.test.ts`, with a has-teeth control on
       the vocabulary matcher and a vacuity control on both list lengths). Both were watched
@@ -847,7 +847,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       instead: four of its nine members are still forward declarations nothing supplies, no
       production code implements `Stage` at all, and an `Exclude<>` assertion over opaque
       placeholders proves nothing. `FeatureView` specifically could not simply be filled in
-      passing — its declared shape wants the round *number*, which is not on the worker's
+      passing — its declared shape wants the round _number_, which is not on the worker's
       wire at all, only the round id.
       **The assembly is one function and it is the boundary.**
       `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` is the single
@@ -861,20 +861,20 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `unparseable` (it will not load next time either), a failed `git` invocation is
       retryable `provider_error` (CORE-06 — a gate that could not run must not cost a round).
       `runCommandGate` now takes `(gate: GateContext, config: CommandGateConfig)` and moved
-      to `worker-entry/gates/`; it *ignores* `spec` and `diff`, which is the point — what a
+      to `worker-entry/gates/`; it _ignores_ `spec` and `diff`, which is the point — what a
       gate cannot do is reach for context it was not given.
       **Layer 2, `eslint.config.js`'s new `adl/gate-fresh-context`**, is the residual the
       type structurally cannot reach, and it is the identical argument `adl/no-forge-merge`
       rests on: a gate does not have to arrive at the developer's transcript through its
       parameters — it can `import { transcriptPathFor }` and rebuild the path out of ids it
       legitimately knows. Scoped to `packages/manager/src/worker-entry/gates/**` — a
-      **directory**, so a gate is a *place* rather than a filename convention and M07's
+      **directory**, so a gate is a _place_ rather than a filename convention and M07's
       reviewer is governed the day it is written (D-27, and ROLE-03's own wording is about
       the reviewer, so a guard reaching only the command gate would be scoped to the one gate
       the requirement does not name). It bans four module groups (`**/store/*`,
-      `**/prompt/*`, `**/loop/*`, `**/ipc/protocol.js` — named as a *file* because
+      `**/prompt/*`, `**/loop/*`, `**/ipc/protocol.js` — named as a _file_ because
       `ipc/stage-verdict.js` sits beside it and is exactly what a gate must import) and six
-      member names, and the narrowing function itself deliberately lives *outside* that
+      member names, and the narrowing function itself deliberately lives _outside_ that
       directory because it has to import the thing it narrows.
       **Every selector was verified empirically against this repository's own eslint before
       being written (convention 15), and two probe findings changed what got written.**
@@ -889,7 +889,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       one residual no static selector can reach — a fully dynamic `a[k]` — is stated in the
       rule's own comment rather than left for a reader to discover.
       **Both flat-config merges are mandatory and both were watched failing.**
-      `worker-entry/gates/**` is matched by `adl/no-direct-spawn` (`**/*`) *and* is a strict
+      `worker-entry/gates/**` is matched by `adl/no-direct-spawn` (`**/*`) _and_ is a strict
       subset of `adl/worker-entry-no-db`'s glob, and flat config REPLACES per rule id — so
       the new entry re-merges `FORBIDDEN_SPAWN`, `SPAWN_SYNTAX` and D-01's `@adl/db` ban, and
       must be registered **after** `adl/worker-entry-no-db` or it is silently overwritten for
@@ -897,7 +897,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       entry earlier, were each reproduced red.
       **The one link in the fresh-context argument that lives outside the type is asserted,
       not argued.** `GateContext.workspace` is a live filesystem handle and looks like the
-      widest member here; that it is not comes down entirely to transcripts living *outside*
+      widest member here; that it is not comes down entirely to transcripts living _outside_
       a workspace root — `logsRootFor(db)` is `dirname(db)/logs` while a workspace root is
       `<scratchRoot>/<id>` under `dirname(db)/scratch`, two independent derivations in two
       modules that happen to be siblings. `packages/manager/test/worker-entry/gate-context.test.ts`
@@ -909,9 +909,9 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       that defect was reproduced too.
       **`DEBT.md` WR-02 is closed and D-2-R-3 is now live.** Both belong to this step
       because gate-context assembly reads the spec out of a worktree the developer's agent
-      has already written to — the first read in this project to happen *after* an agent had
+      has already written to — the first read in this project to happen _after_ an agent had
       write access to the directory being walked, which is the precondition D-2-R-3 has been
-      waiting on since M02 (5.16 looked and correctly reported *not this one*). WR-02 is
+      waiting on since M02 (5.16 looked and correctly reported _not this one_). WR-02 is
       closed at the source: one shared `spec-from-worktree.ts` (the developer stage and the
       gate must not read two different documents) resolves the directory through
       `resolveWithinRoot` and reads the file through `Workspace.read`, so the content read
@@ -920,23 +920,23 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       case is done — `packages/workspace/src/paths.ts`'s docblock now says outright that the
       realpath walk cannot see a symlink planted after the check, which was the actual harm
       (its four-rejection list read as a complete answer). Bounded by ROLE-11: the attack
-      needs an *uncommitted* working-tree swap, since a committed one hard-fails the round
+      needs an _uncommitted_ working-tree swap, since a committed one hard-fails the round
       before the gate is dispatched. **Owner M15.**
       **Found and not fixed:** nothing new. The negative control in
       `test/lint/no-restricted-imports.test.ts` needed a one-line correction — it counted
-      `FIXTURES` entries where ESLint returns one result per *file*, and this step's fixture
+      `FIXTURES` entries where ESLint returns one result per _file_, and this step's fixture
       is the first to be listed twice (it violates two independently-escapable rule ids).
 
 ### D · Accounting and proof (AC5, AC2)
 
-- [x] **5.18** — Record tokens and cost for *every* agent invocation in the loop
+- [x] **5.18** — Record tokens and cost for _every_ agent invocation in the loop
       (BACK-09). M04 built the recording path and proved it for `dev-run`; extend it to
       every role and round. Degrade visibly to `cost_source: 'unknown'` — never silently.
       **Shipped, and the word that mattered turned out to be "silently".** The recording
       path M04 built was already correct for the case it was proven against, and already
       fires for every round — the developer stage is dispatched afresh each round with its
       own `roundId`/`stageAttemptId`, and the supervisor takes both from its own assignment
-      rather than the message (T-4-38). What was missing was a *proof* that it does, and
+      rather than the message (T-4-38). What was missing was a _proof_ that it does, and
       one real degradation that was silent rather than visible.
       **The silent case, and it is the substance.** `claudeCodeBackend` attached a
       `usageRecord` only when the run reached its terminal `result` event. A CLI killed by
@@ -964,7 +964,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       assignability to restate a property that is asserted directly anyway.
       **A gate reports nothing, and that is now a checked property rather than an accident
       of the code path.** A command gate runs `adl.yml`'s test command, not an agent, so a
-      zero-token row for it would be a *claim* that an agent ran for free — the exact shape
+      zero-token row for it would be a _claim_ that an agent ran for free — the exact shape
       of lie D-31 exists to prevent, and one `spendByCategory` would fold into the totals as
       confirmed spend. `test/scenario/command-gate-loop.test.ts` asserts zero usage rows
       against both gate attempts; watched failing by adding a zero-valued `sendUsage` to the
@@ -976,9 +976,9 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       rejection that takes the manager down**. Not hypothetical: a `usage` message is
       delivered moments before the `stage_result` that ends the round, which is precisely
       when a stopping daemon closes the database. Watched failing for real (`Unhandled
-      Rejection: simulated ledger write failure`, captured verbatim) before the fix, and
+Rejection: simulated ledger write failure`, captured verbatim) before the fix, and
       watched recovering after it (the error logged with the feature and attempt identity,
-      daemon still running). A dropped spend row is a real loss and is therefore *reported*
+      daemon still running). A dropped spend row is a real loss and is therefore _reported_
       at `error`, never swallowed quietly; crashing the manager over it would lose the round
       as well as the row. **No permanent regression test** — `startDaemon` has no seam for
       making one repository write fail — filed as a coverage gap in `DEBT.md` § 4 covering
@@ -987,17 +987,17 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `packages/agent-claude-code/test/usage.test.ts` (non-zero exit, killed run, ADL's own
       model selection, and the spawn-failure negative control) plus two for
       `unknownUsageRecord` itself, one of which asserts the two producers agree on every
-      field that is *not* the point of the distinction. End to end:
+      field that is _not_ the point of the distinction. End to end:
       `test/usage/recording.test.ts` drives a real `startDaemon` against
       `fake-claude-nonzero.mjs` — a CLI that really runs and exits 7 with no terminal event
       — and asserts every resulting row is `unknown`/null and still fully attributed to its
       round and attempt. And `test/scenario/command-gate-loop.test.ts` — the real two-round,
-      two-role loop — asserts exactly two rows, one per round, each joined to *that* round's
+      two-role loop — asserts exactly two rows, one per round, each joined to _that_ round's
       developer attempt, each carrying real tokens and a real reported cost. **No migration,
       no new IPC field**; `UsageMessageSchema` already carried `'unknown'` in its
       `costSource` enum, which is what made the honest answer expressible without one.
       **Found and not fixed:** `DEBT.md` **D-5-18-1** (a second agent-invoking role — M07's
-      reviewer, which is a *gate* — would have to remember to report its spend, since
+      reviewer, which is a _gate_ — would have to remember to report its spend, since
       `GateContext` correctly has no member to report through; the fix belongs in the stage
       runner, one level above the role, and needs a producer to shape it against). The
       cost-accounting spike (`DEBT.md` item 1.2) is **unmoved**: reconciling a reported
@@ -1026,32 +1026,32 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 ## Where the seams already are
 
-| You need | It already exists at |
-|---|---|
-| A pipeline resolver | `packages/core/src/config/pipeline.ts` — `resolvePipeline`, no caller yet |
-| Verdict aggregation | `packages/core/src/verdict/aggregate.ts` |
-| Round / attempt rows | `packages/manager/src/bookkeeping/attempt.ts` |
-| A stage runner | `packages/manager/src/worker-entry/stage-runner.ts` |
-| Exclusive claim (CAS) | `packages/db/src/repository/features.ts` |
-| A scheduled-sweep pattern to copy | `packages/manager/src/scheduler/gc-schedule.ts` |
-| Cost recording | `packages/db/src/repository/usage.ts` + the `usage` IPC message |
-| ADL's own git chokepoint | `packages/workspace/src/git/adl-git.ts` |
-| The `features/` scanner | `@adl/core/detect` (pure) + `packages/manager/src/detect/scanner.ts` (I/O) — done, 5.1 |
-| Branch push | `ManagerGitClient.push` (`packages/workspace/src/git/manager-git.ts`) — done, no credential-URL construction included |
-| The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. Both list calls paginate as of 5.11. |
-| A sticky per-role comment | `@adl/core/forge`'s `renderStickyComment` (pure) + `packages/manager/src/publish/sticky-comment.ts` and `role-rounds.ts` (the DB half) — done, 5.11. A new role needs a `{key, title, stageId}` and a caller, nothing more. |
-| The never-merge guard | `@adl/core/forge`'s `FORGE_ADAPTER_MEMBERS` (the port half, compile-time) + `eslint.config.js`'s `adl/no-forge-merge` (the adapter half) — done, 5.12. A new forge package under `packages/forge-*` is governed automatically; a new merge verb is one entry in `FORGE_MERGE_MEMBERS` plus one case in the fixture. |
-| The round loop's decision | `@adl/core/loop`'s `planRoundStep` (pure) — done, 5.13. A new stage kind is a `StageCompletion` member; the events it raises still go through `transition()`. |
-| The round loop's writes | `packages/manager/src/loop/round-runner.ts`'s `onStageCompleted` — done, 5.13. Wired unconditionally in `daemon.ts`; `options.forge` only decides whether a green round also promotes. |
-| Re-dispatching a feature mid-pipeline | `FeaturesRepository.listDispatchable()` + `dispatchOnce`'s continuation path — done, 5.13. A continuation runs no transition and never re-merges `adl.yml`. |
-| The `stage_result` wire envelope | `packages/manager/src/ipc/stage-verdict.ts` — done, 5.13. A real Zod union with a validated parser; a gate reports `{kind:'verdict', verdict}`. |
-| Workspace continuity across stages | `WorkspaceBackend.attach` + `Workspace.detach` (`@adl/core/stage`) — done, 5.14. A stage does `attach(spec) ?? create(spec)` and ends with `detach()`; nothing in the loop calls `destroy()`, which is the GC sweep's decision from feature state. |
-| A gate implementation | `packages/manager/src/worker-entry/command-gate.ts` — done, 5.14. A new gate kind is an entry in `stage-runner.ts`'s `GATE_IMPLEMENTATIONS` plus a runner; an unlisted stage id is refused with a non-retryable `binary_missing`. |
-| The commit a round produced | `rounds.head_sha` (`0005_rounds_head_sha.ts`) — done, 5.14. Written when the developer stage reports `committed`, never at round close. |
-| Send-back context into the next prompt | `packages/manager/src/loop/send-back-brief.ts` (both directions, pure) + `FeaturesRepository.latestClosedRound` (the DB half) — done, 5.15. `AssignMessage.sendBackBriefJson` is the wire crossing; `buildDeveloperPrompt`'s `sendBackBrief` field is the renderer. |
-| A round's diff, by path list only | `ManagerGitClient.diffNameOnly` (`packages/workspace/src/git/manager-git.ts`) — done, 5.16. `base...head` (three-dot); needs only two shas/refs reachable from `mainRepo`'s object database, no worktree checkout. `packages/manager/src/loop/protected-paths-check.ts` is the one production caller. |
-| Protected-path classification | `@adl/core/loop`'s `violatedProtectedPaths` + `matchesGlob` (pure) — done, 5.16. Structural (spec folder, `adl.yml`) plus `EffectiveConfig.protected_paths` (maintainer-declared globs). |
-| What a gate may see | `@adl/core/stage`'s `GateContext` + `GATE_CONTEXT_MEMBERS`/`GATE_DIFF_MEMBERS` (pure, compile-time exhaustive) — done, 5.17. A new field is a member plus a list entry, and it has to survive the forbidden-vocabulary test; `@adl/plugin-sdk` deliberately does not republish it. |
-| Turning a dispatch into gate context | `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` — done, 5.17. The one place an `AssignMessage` is narrowed; returns a classified `StageError` kind rather than throwing. A new gate goes in `worker-entry/gates/`, which `adl/gate-fresh-context` governs on the day it is created. |
-| An invocation that reported no spend | `@adl/agent-claude-code`'s `unknownUsageRecord` — done, 5.18. The counterpart to `usageFromResult`: all-null counters and `costSource: 'unknown'`, produced only once the CLI process has actually been spawned. `AgentRunResultWithUsage.usageRecord` absent means "no process ever started" and nothing else. |
-| The spec, out of the worktree | `packages/manager/src/worker-entry/spec-from-worktree.ts` — done, 5.17. Shared by the developer stage and gate-context assembly so the two cannot read different documents; contained through `resolveWithinRoot` + `Workspace.read` (WR-02 closed, D-2-R-3 accepted). |
+| You need                                        | It already exists at                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A pipeline resolver                             | `packages/core/src/config/pipeline.ts` — `resolvePipeline`, no caller yet                                                                                                                                                                                                                                           |
+| Verdict aggregation                             | `packages/core/src/verdict/aggregate.ts`                                                                                                                                                                                                                                                                            |
+| Round / attempt rows                            | `packages/manager/src/bookkeeping/attempt.ts`                                                                                                                                                                                                                                                                       |
+| A stage runner                                  | `packages/manager/src/worker-entry/stage-runner.ts`                                                                                                                                                                                                                                                                 |
+| Exclusive claim (CAS)                           | `packages/db/src/repository/features.ts`                                                                                                                                                                                                                                                                            |
+| A scheduled-sweep pattern to copy               | `packages/manager/src/scheduler/gc-schedule.ts`                                                                                                                                                                                                                                                                     |
+| Cost recording                                  | `packages/db/src/repository/usage.ts` + the `usage` IPC message                                                                                                                                                                                                                                                     |
+| ADL's own git chokepoint                        | `packages/workspace/src/git/adl-git.ts`                                                                                                                                                                                                                                                                             |
+| The `features/` scanner                         | `@adl/core/detect` (pure) + `packages/manager/src/detect/scanner.ts` (I/O) — done, 5.1                                                                                                                                                                                                                              |
+| Branch push                                     | `ManagerGitClient.push` (`packages/workspace/src/git/manager-git.ts`) — done, no credential-URL construction included                                                                                                                                                                                               |
+| The `ForgeAdapter` port + a real GitHub adapter | `@adl/core/forge` + `packages/forge-github` — done, 5.8/5.9. Both list calls paginate as of 5.11.                                                                                                                                                                                                                   |
+| A sticky per-role comment                       | `@adl/core/forge`'s `renderStickyComment` (pure) + `packages/manager/src/publish/sticky-comment.ts` and `role-rounds.ts` (the DB half) — done, 5.11. A new role needs a `{key, title, stageId}` and a caller, nothing more.                                                                                         |
+| The never-merge guard                           | `@adl/core/forge`'s `FORGE_ADAPTER_MEMBERS` (the port half, compile-time) + `eslint.config.js`'s `adl/no-forge-merge` (the adapter half) — done, 5.12. A new forge package under `packages/forge-*` is governed automatically; a new merge verb is one entry in `FORGE_MERGE_MEMBERS` plus one case in the fixture. |
+| The round loop's decision                       | `@adl/core/loop`'s `planRoundStep` (pure) — done, 5.13. A new stage kind is a `StageCompletion` member; the events it raises still go through `transition()`.                                                                                                                                                       |
+| The round loop's writes                         | `packages/manager/src/loop/round-runner.ts`'s `onStageCompleted` — done, 5.13. Wired unconditionally in `daemon.ts`; `options.forge` only decides whether a green round also promotes.                                                                                                                              |
+| Re-dispatching a feature mid-pipeline           | `FeaturesRepository.listDispatchable()` + `dispatchOnce`'s continuation path — done, 5.13. A continuation runs no transition and never re-merges `adl.yml`.                                                                                                                                                         |
+| The `stage_result` wire envelope                | `packages/manager/src/ipc/stage-verdict.ts` — done, 5.13. A real Zod union with a validated parser; a gate reports `{kind:'verdict', verdict}`.                                                                                                                                                                     |
+| Workspace continuity across stages              | `WorkspaceBackend.attach` + `Workspace.detach` (`@adl/core/stage`) — done, 5.14. A stage does `attach(spec) ?? create(spec)` and ends with `detach()`; nothing in the loop calls `destroy()`, which is the GC sweep's decision from feature state.                                                                  |
+| A gate implementation                           | `packages/manager/src/worker-entry/command-gate.ts` — done, 5.14. A new gate kind is an entry in `stage-runner.ts`'s `GATE_IMPLEMENTATIONS` plus a runner; an unlisted stage id is refused with a non-retryable `binary_missing`.                                                                                   |
+| The commit a round produced                     | `rounds.head_sha` (`0005_rounds_head_sha.ts`) — done, 5.14. Written when the developer stage reports `committed`, never at round close.                                                                                                                                                                             |
+| Send-back context into the next prompt          | `packages/manager/src/loop/send-back-brief.ts` (both directions, pure) + `FeaturesRepository.latestClosedRound` (the DB half) — done, 5.15. `AssignMessage.sendBackBriefJson` is the wire crossing; `buildDeveloperPrompt`'s `sendBackBrief` field is the renderer.                                                 |
+| A round's diff, by path list only               | `ManagerGitClient.diffNameOnly` (`packages/workspace/src/git/manager-git.ts`) — done, 5.16. `base...head` (three-dot); needs only two shas/refs reachable from `mainRepo`'s object database, no worktree checkout. `packages/manager/src/loop/protected-paths-check.ts` is the one production caller.               |
+| Protected-path classification                   | `@adl/core/loop`'s `violatedProtectedPaths` + `matchesGlob` (pure) — done, 5.16. Structural (spec folder, `adl.yml`) plus `EffectiveConfig.protected_paths` (maintainer-declared globs).                                                                                                                            |
+| What a gate may see                             | `@adl/core/stage`'s `GateContext` + `GATE_CONTEXT_MEMBERS`/`GATE_DIFF_MEMBERS` (pure, compile-time exhaustive) — done, 5.17. A new field is a member plus a list entry, and it has to survive the forbidden-vocabulary test; `@adl/plugin-sdk` deliberately does not republish it.                                  |
+| Turning a dispatch into gate context            | `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` — done, 5.17. The one place an `AssignMessage` is narrowed; returns a classified `StageError` kind rather than throwing. A new gate goes in `worker-entry/gates/`, which `adl/gate-fresh-context` governs on the day it is created.        |
+| An invocation that reported no spend            | `@adl/agent-claude-code`'s `unknownUsageRecord` — done, 5.18. The counterpart to `usageFromResult`: all-null counters and `costSource: 'unknown'`, produced only once the CLI process has actually been spawned. `AgentRunResultWithUsage.usageRecord` absent means "no process ever started" and nothing else.     |
+| The spec, out of the worktree                   | `packages/manager/src/worker-entry/spec-from-worktree.ts` — done, 5.17. Shared by the developer stage and gate-context assembly so the two cannot read different documents; contained through `resolveWithinRoot` + `Workspace.read` (WR-02 closed, D-2-R-3 accepted).                                              |

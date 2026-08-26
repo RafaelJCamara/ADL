@@ -16,7 +16,7 @@ that agent output cannot carry secrets out or writes escape unnoticed.
 ## Done when
 
 - [ ] Writes outside expected paths during a round are detected and surfaced to the
-      maintainer *after that round*, rather than discovered later.
+      maintainer _after that round_, rather than discovered later.
 - [ ] Agent output is secret-scanned and size-capped before it can reach a forge — a
       credential planted in agent output never appears in a PR comment.
 - [ ] The maintainer reads a published threat model and `SECURITY.md` stating plainly that
@@ -50,7 +50,7 @@ that agent output cannot carry secrets out or writes escape unnoticed.
 M02 accepted **D-2-R-4** for v1 and named M15 as its owner: an attacker-named
 `filter.<driver>.clean`, selected by a committed `.gitattributes`, executes an arbitrary
 program during ADL's own `snapshot()` — **with full config neutralisation in force.** This
-is not argued; there is a *passing* test demonstrating it
+is not argued; there is a _passing_ test demonstrating it
 (`packages/workspace/test/git/neutralisation-residual-risk.test.ts`).
 
 **The problem:** this milestone's success criteria, as originally written, are about write

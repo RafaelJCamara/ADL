@@ -5,7 +5,7 @@
 **Requirements:** none — this is a validation gate over M01–M11, not new scope
 
 **Goal:** ADL ships a real feature into its own repository, unattended, ending in a pull
-request the maintainer is *willing to merge*.
+request the maintainer is _willing to merge_.
 
 > **This is a precondition, not a milestone label.** A verdict-schema change costs roughly
 > 8× more once it must propagate through three forge adapters, four backend adapters and a
@@ -23,8 +23,8 @@ request the maintainer is *willing to merge*.
       distribution, cost variance, and human-found defects in the merged PR are recorded as
       the baseline every later change is compared against.
 - [ ] The "looks done but isn't" checklist passes: no `inconclusive` was rendered as green,
-      no protected path was written, and the PR's coverage table matches what was *actually
-      executed*.
+      no protected path was written, and the PR's coverage table matches what was _actually
+      executed_.
 
 ---
 

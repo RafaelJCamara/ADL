@@ -7,8 +7,8 @@
 **Goal:** a reviewer arriving cold reconstructs the entire run from the pull request alone
 in about a minute, and no crash ever duplicates a comment or a pull request.
 
-> **The PR comment *is* the product.** The value proposition is measured in review time
-> saved, but the delivered artefact is *more code to review*. If ADL does not demonstrably
+> **The PR comment _is_ the product.** The value proposition is measured in review time
+> saved, but the delivered artefact is _more code to review_. If ADL does not demonstrably
 > reduce human review effort, it is negative value regardless of how well the loop works.
 
 ---
@@ -23,17 +23,17 @@ in about a minute, and no crash ever duplicates a comment or a pull request.
 - [ ] The reviewer sees what the feature cost.
 - [ ] Killing the daemon mid-post and restarting it produces no duplicate comment and no
       duplicate pull request.
-- [ ] Under forge rate limiting — including GitHub's *secondary* limits — ADL backs off
+- [ ] Under forge rate limiting — including GitHub's _secondary_ limits — ADL backs off
       and completes rather than being throttled into failure.
 
 ---
 
 ## Step sketch
 
-*Refine into small steps when this milestone starts.*
+_Refine into small steps when this milestone starts._
 
-- [ ] **9.1** — The transactional outbox: every forge side effect written in the *same
-      transaction* as the state change that caused it. (M01 deliberately left the outbox
+- [ ] **9.1** — The transactional outbox: every forge side effect written in the _same
+      transaction_ as the state change that caused it. (M01 deliberately left the outbox
       table out, with a `DEFERRED_TABLES` test asserting its absence — this is where it
       lands.)
 - [ ] **9.2** — Outbox drain with idempotency keys. The git commit is the checkpoint;
@@ -52,7 +52,7 @@ in about a minute, and no crash ever duplicates a comment or a pull request.
 ## Notes
 
 - **Unverified must be visibly unverified.** M01 made `inconclusive` structurally
-  incapable of producing green; this is where that becomes something a human can *see*.
+  incapable of producing green; this is where that becomes something a human can _see_.
 - Secondary rate limits are the ones that bite: they are triggered by comment volume and
   burst patterns, which is exactly what a multi-role multi-round loop produces. M05's
   sticky-comment model is the primary mitigation; backoff is the backstop.

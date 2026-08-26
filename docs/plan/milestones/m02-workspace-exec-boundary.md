@@ -24,7 +24,7 @@ rule.
 - [x] Forge tokens and model API keys are absent from the worker's ambient environment —
       asserted by dumping a child process's environment in a test.
 - [ ] **Deferred:** the cross-feature isolation reproduction (D-2-R-1) runs on a real
-      Linux host. See [`DEBT.md`](../DEBT.md) — the risk is *accepted for v1*, but the
+      Linux host. See [`DEBT.md`](../DEBT.md) — the risk is _accepted for v1_, but the
       acceptance rests on reasoning rather than a demonstration.
 
 ---
@@ -56,14 +56,14 @@ rule.
 - **Containment stronger than the research prescribed** — `src/paths.ts`.
   `assertWithinRoot` realpaths the **deepest existing prefix**, not the parent (the
   parent-only version leaves `root/link -> /etc` open; watched failing). `ContainmentError`
-  is a *sibling* of `WorkspaceError`, not a subclass, so "refused" and "not found" stay
+  is a _sibling_ of `WorkspaceError`, not a subclass, so "refused" and "not found" stay
   distinguishable.
 - **Swappability proven, not claimed** — `src/registry.ts` is the sole backend-factory
   site (`worktree`, `stub`, `host-git`), enforced by a structural source-tree guard.
   `describeWorkspaceContract` runs the same 13 cases against both backends with zero
   branching.
 - **Real OS privilege drop on Linux** — `src/exec/privilege.ts`. CI green on both legs
-  with **zero skips**, and the assertion compares the child's *supplementary group list*,
+  with **zero skips**, and the assertion compares the child's _supplementary group list_,
   not just its uid.
 - **Poisoned git configuration closed and demonstrated** — `src/git/manager-git.ts` holds
   `NEUTRALISED_CONFIG` (8 executable keys) spliced ahead of every subcommand by a private
@@ -88,7 +88,7 @@ rule.
 Six tracked items, all in [`DEBT.md`](../DEBT.md). The two that matter:
 
 - **D-2-R-1** — one worker identity for every concurrent feature, so features are not
-  isolated from *each other*. Accepted for v1 with four named revisit triggers. **High.**
+  isolated from _each other_. Accepted for v1 with four named revisit triggers. **High.**
 - **D-2-R-4** — an attacker-named `filter.<driver>.clean` from a committed
   `.gitattributes` still executes during ADL's own `snapshot()`. Demonstrated by a
-  *passing* test. Accepted for v1; owner M15.
+  _passing_ test. Accepted for v1; owner M15.

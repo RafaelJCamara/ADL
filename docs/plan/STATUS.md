@@ -1,6 +1,6 @@
 # STATUS — start here
 
-*Last updated: 2026-08-26*
+_Last updated: 2026-08-26_
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -39,15 +39,15 @@ M06–M18 ............................. not started
 **What actually works today:** a real Claude Code agent, driven through a bounded workspace,
 makes a real commit in a per-feature git worktree, streamed live to `adl logs -f`, with its
 cost recorded — all supervised by a crash-surviving manager you can pause and kill. On top
-of that, as of this session: a `features/` folder committed to a repo is *detected* by
+of that, as of this session: a `features/` folder committed to a repo is _detected_ by
 evaluating real repository state (`@adl/core/detect` + `ManagerGitClient.listFiles`); a
-branch can be *pushed* to a remote (`ManagerGitClient.push`); and a real `ForgeAdapter`
+branch can be _pushed_ to a remote (`ManagerGitClient.push`); and a real `ForgeAdapter`
 (`@adl/forge-github`, a real GitHub App auth flow via `octokit` + `@octokit/auth-app`) opens
 a real draft change request, proven end to end in
 `packages/manager/test/tracer/detect-to-draft-cr-end-to-end.test.ts` against a local mock
 GitHub server (live GitHub credentials are deliberately deferred — see `DEBT.md` § 1 item 1.7).
 And the scanner's output can now be told apart from what ADL already knows about: the
-*undeveloped* predicate (`@adl/core/detect`'s `undevelopedFeatureFolders` +
+_undeveloped_ predicate (`@adl/core/detect`'s `undevelopedFeatureFolders` +
 `packages/manager/src/detect/undeveloped.ts`'s `undevelopedFeatures`) cross-references a scan
 against both the `features` table and every open change request, so a folder is only ever
 admitted once — even across a lost `features` row, so long as its change request is still
@@ -66,7 +66,7 @@ invalid — the same refuse-before-the-API-binds shape the schema and backend-pr
 already use. It is the default now, used whenever a caller doesn't inject its own
 `resolveAdlYml` (every pre-5.4 test still does, unchanged). And the polling loop
 (`packages/manager/src/scheduler/poll-schedule.ts`'s `runPollOnce` + `startPollSchedule`)
-is now the first production caller of 5.1's scanner, 5.2's *undeveloped* predicate, and
+is now the first production caller of 5.1's scanner, 5.2's _undeveloped_ predicate, and
 5.3's trust filter, composed together: on a croner cadence (`daemonConfig.poll.interval_ms`,
 default 60s, `startGcSchedule`'s exact shape), it scans the watched repository's default
 branch, filters to undeveloped and then trusted folders, and enqueues each as a `queued`
@@ -83,7 +83,7 @@ database and repository: never a second `features` row for the same folder. Buil
 proof surfaced a real bug in the mechanism 5.2 shipped: a real dispatch's worktree branch
 was named from the `features` row's bare ULID (`assign.featureId`), but DETECT-05's
 lost-row reconciliation — and `@adl/workspace`'s own GC sweep — each need to recover a
-*different* identity back out of that same branch (GC needs the ULID, reconciliation needs
+_different_ identity back out of that same branch (GC needs the ULID, reconciliation needs
 the folder name, precisely when the row and its ULID are the thing that's gone). Fixed by
 composing both into the branch a real dispatch creates
 (`packages/manager/src/branch-identity.ts`'s `composeBranchFeatureId`, plus its
@@ -121,7 +121,7 @@ regression-tested on POSIX), and the SIGINT/SIGTERM handler could call an alread
 it fired on — crashing on the resulting unhandled rejection (fixed with an idempotency guard
 plus a caught `.catch()`, both watched failing against the exact defect first).
 And a real commit now automatically becomes a real draft pull request (5.10) — the
-automatic version of what 5.0b's tracer proved by hand. The push has to happen *inside* the
+automatic version of what 5.0b's tracer proved by hand. The push has to happen _inside_ the
 worker, before `createProductionStageRunner`'s own teardown destroys the workspace and
 reclaims the branch with it, so the manager mints a fresh, short-lived, already-credentialed
 push URL once per dispatch (`scheduler/dispatcher.ts`'s new `DispatcherDeps.forge.pushCredential`)
@@ -159,31 +159,31 @@ and no `sticky_comments` table:** the comment is re-derived in full from
 `rounds`/`stage_attempts`/`verdicts`/`findings` every round
 (`packages/manager/src/publish/role-rounds.ts`) and overwritten — the same "evaluate state,
 don't remember events" discipline 5.2/5.6/5.10 established, which also means a comment a
-human edited, or one lost with a deleted change request, is *repaired* by the next round
+human edited, or one lost with a deleted change request, is _repaired_ by the next round
 rather than corrupted by it. A role is addressed by `stage_attempts.stage_id` taken from the
 dispatch that ran, never a hardcoded `'develop'`, so a new role is a `{key, title, stageId}`
 and a caller — nothing more.
 The substance is the pure renderer, `@adl/core/forge`'s `renderStickyComment` (in core, not
 in an adapter: `<details>` is HTML that all three forges render, so three adapters would
 otherwise reimplement and drift). Two properties carry it, both watched failing first.
-*A round body cannot break its own fold* — bodies are agent-authored, and a literal
+_A round body cannot break its own fold_ — bodies are agent-authored, and a literal
 `</details>` in one closes the block early and spills every prior round into view, the exact
 unreadable PR FORGE-06 exists to prevent arriving through the mechanism meant to prevent it;
 `<details`/`</details` are escaped, and **only outside code spans**, since a forge already
 escapes HTML inside a fence, an indented block or an inline span (offsets from
-`mdast-util-from-markdown`, already a core dependency, verified by probe first). *And a
-comment edited in place forever grows without bound* — past a forge's cap `upsertComment`
+`mdast-util-from-markdown`, already a core dependency, verified by probe first). _And a
+comment edited in place forever grows without bound_ — past a forge's cap `upsertComment`
 starts failing and the comment silently freezes at whichever round last fit, so a
 `maxLength` budget (default 60,000, under GitHub's documented 65,536, leaving room for the
 adapter's own hidden marker) keeps the newest round whole, drops older folds oldest-first
-*with the count stated in the comment*, and guarantees the output is never longer than the
+_with the count stated in the comment_, and guarantees the output is never longer than the
 budget for any input — asserted as a property down to a one-character budget.
 **The debt item this step owned is closed, and it was worse than filed:** `upsertComment`
 paginates now, but so does `listOpenChangeRequests`, which had the identical defect and a
 heavier consequence — 5.10's idempotency check and 5.2's reconciliation both ask it "is one
 already open for this branch?", so a repository with more than one page of open pull
 requests would have opened a duplicate draft every round. The mock GitHub server gained real
-`per_page`/`page` + `Link` pagination so both fixes are *proven*: without it a
+`per_page`/`page` + `Link` pagination so both fixes are _proven_: without it a
 first-page-only adapter and a paginating one are indistinguishable, and the guard could not
 have been written at all.
 
@@ -194,15 +194,15 @@ that was a fact about what happened to be typed into `forge.ts`: adding `merge()
 compiled, linted and shipped green. `@adl/core/forge`'s new `FORGE_ADAPTER_MEMBERS` pairs
 the interface with a frozen list of its own members in the house's
 `Exclude<T, Arr[number]> extends never` shape, so a merge method now has two independently
-locked doors in front of it — adding a member *without* listing it fails the **build**, and
+locked doors in front of it — adding a member _without_ listing it fails the **build**, and
 getting past that by listing `'merge'` fails the **suite**
 (`packages/core/test/forge/never-merge.test.ts`). Both were watched failing against the exact
 defect. That guard structurally cannot reach the second layer, though: a forge adapter
-doesn't merge through ADL's port, it merges through the *forge*, and `packages/forge-github`
+doesn't merge through ADL's port, it merges through the _forge_, and `packages/forge-github`
 holds a live `octokit` whose `rest.pulls.merge()` exists regardless — `getPushToken` is the
 standing proof a forge package legitimately reaches past the neutral port when it has to. So
 `eslint.config.js` gained **`adl/no-forge-merge`**, scoped to `packages/forge-*` by package
-*prefix* so M14's GitLab and Gitea adapters are governed the day they're created. It bans
+_prefix_ so M14's GitLab and Gitea adapters are governed the day they're created. It bans
 **member expressions** rather than call expressions (aliasing the function first is a
 call-selector's blind spot) drawn from a **vocabulary list, never a substring search for
 `merge`** — GitLab spells it `accept` and `mergeWhenPipelineSucceeds`, while `backend.ts`
@@ -221,14 +221,14 @@ total — given the stage that just finished, which `FeatureEvent`s it raises an
 round is over with what `RoundOutcome` (`aggregate()`'s first production caller) — and
 `packages/manager/src/loop/round-runner.ts`'s `onStageCompleted` records the evidence,
 applies the events through `transition()` (still the only code that decides a state), and
-closes the round. Three sequencing decisions carry it. *Index 0 is the developer*, enforced
+closes the round. Three sequencing decisions carry it. _Index 0 is the developer_, enforced
 rather than assumed — a gate verdict in the developer's slot, or a developer outcome in a
 gate's, escalates; which is also why a pipeline of `develop` alone reaches `aggregate([])`
-and **escalates** rather than reporting a green round that verified nothing. *v1 stops on the
-first `send_back`* — ARCHITECTURE's cost-class defaults need a `Stage.costClass` that has no
+and **escalates** rather than reporting a green round that verified nothing. _v1 stops on the
+first `send_back`_ — ARCHITECTURE's cost-class defaults need a `Stage.costClass` that has no
 implementations, and half a policy is worse than none, so the conservative half ships and
-`gate_passed` stays honest (emitted only when the stage did not stop the pipeline). And *the
-pipeline position is written absolutely, from the sequencer's answer* — `dev_committed`'s
+`gate_passed` stays honest (emitted only when the stage did not stop the pipeline). And _the
+pipeline position is written absolutely, from the sequencer's answer_ — `dev_committed`'s
 edge **resets** the index rather than advancing it, so left to the counter delta alone a
 committed round would re-dispatch the developer forever; written in the same transaction,
 for the identical reason `planRecovery`'s `resetStageIndexTo` is written outside
@@ -249,7 +249,7 @@ as a "gate" would be self-approval with extra steps. 5.10's deferred one-liner i
 `promoteChangeRequestToReady` is reached only through `RoundOutcome.kind === 'green'`, so
 "promoted only when every gate is green" is structural rather than promised. And
 `resetCrashCountOnSuccess` finally has its caller, in the same transaction as the round close
-(D-11); a *retryable* stage error takes `reapOne` instead, so the consecutive-failure ceiling
+(D-11); a _retryable_ stage error takes `reapOne` instead, so the consecutive-failure ceiling
 applies and **no round is recorded at all**, because nothing was judged (CORE-06, LOOP-07).
 `DEBT.md` D-5-11-1 turned out to rest on a false premise — `RoundOutcome` has no field for a
 commit, so writing it could never have carried a sha. What the column does now carry is the
@@ -260,7 +260,7 @@ and moves to 5.14 alongside its second consumer.
 And there is now a **real gate** (5.14, and it is the step the milestone's own AC2 turns
 on). `packages/manager/test/scenario/command-gate-loop.test.ts` drives a real
 `startDaemon()` through `develop → the test command fails → send back → round 2's developer
-→ the test command passes → publishing`, with the *real* `createProductionStageRunner` in
+→ the test command passes → publishing`, with the _real_ `createProductionStageRunner` in
 four real forked workers and only the billed `claude` binary doubled. 5.13 proved that shape
 against a **scripted** worker; the difference is that nothing in it ever ran a command, so
 nothing ever needed the developer's commit to still exist — which is exactly why
@@ -269,7 +269,7 @@ nothing ever needed the developer's commit to still exist — which is exactly w
 rather than one method: `create ↔ destroy` reclaims the **workspace**, `attach ↔ detach`
 reclaims the **run**. `WorkspaceBackend.attach(spec)` (the method ARCHITECTURE.md §1 has
 named since before M01 and that was never built) returns `Workspace | undefined` —
-`undefined` for the ordinary "nothing here" first-stage case, and a *throw* for a
+`undefined` for the ordinary "nothing here" first-stage case, and a _throw_ for a
 half-present workspace, since reporting the second as the first would send the caller to
 `create()` and silently replace an agent's committed work. `Workspace.detach()` reclaims the
 scratch `HOME` and leaves the worktree. The stage runner now does
@@ -277,7 +277,7 @@ scratch `HOME` and leaves the worktree. The stage runner now does
 at all** — reclaiming a workspace is a decision made from feature state (D-16) and `gc.ts`'s
 sweep is what makes it. That also fixes crash recovery, which `dispatchOnce` has preserved
 `workspace_handle` for since M03 with nothing to attach with. **Maintainer decision:**
-`detach()` widens `Workspace`, which *is* republished through `@adl/plugin-sdk` and so is
+`detach()` widens `Workspace`, which _is_ republished through `@adl/plugin-sdk` and so is
 one-way (D-01) — the debt item claimed `WorkspaceBackend` was the published half and it is
 not, inverting which method is expensive; added now, before that package ships (M18), for
 D-27's reason.
@@ -311,7 +311,7 @@ same dispatch reads back "the prior round" — reading the existing `latestRound
 would return round 2's own still-open row instead of round 1's closed `send_back`, silently
 dropping the brief on exactly the retry where it still applies. Closed by a new
 `FeaturesRepository.latestClosedRound` (immune to whether a newer round is currently open,
-since only one round is ever open at a time) read *before* `openAttempt` runs. Watched failing
+since only one round is ever open at a time) read _before_ `openAttempt` runs. Watched failing
 twice — swapping `latestClosedRound` back to `latestRound` reproduced the crash-recovery-retry
 case exactly, and reverting the worker's read of `assign.sendBackBriefJson` reproduced the
 real end-to-end scenario's persisted prompt artifact still carrying the placeholder — both
@@ -365,13 +365,13 @@ was never the right signal for "the manager's own async work is done".
 **D-2-R-3 is unmoved by this step** — the diff reads git's object database through
 `ManagerGitClient`, never a worktree path through `assertWithinRoot`, so this is not that
 debt item's live TOCTOU instance; it stays open for whichever future step first reads
-agent-influenced worktree files (5.17's gate context, most likely). *(It was — see below.)*
+agent-influenced worktree files (5.17's gate context, most likely). _(It was — see below.)_
 
 And a gate now works from fresh context **because of what it is handed, not because it was
 asked to** (5.17, ROLE-03, AC3). `@adl/core/stage`'s new `GateContext` is a gate's whole
 parameter list — `stageId`, `workspace`, `spec`, `diff`, `onEvent`, `signal` — and it has no
 member through which a `sessionRef`, a transcript, a `logsRoot`, a rendered prompt or a
-send-back brief can be *named*. Every one of those exists in this codebase and every one
+send-back brief can be _named_. Every one of those exists in this codebase and every one
 rides on the `AssignMessage` a worker receives, which is exactly why a gate is no longer
 handed one: `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` is the
 single narrowing point, reading three fields off the message (`stageId`, `workspaceHandle`,
@@ -385,26 +385,26 @@ through a nested type) each pair their interface with a frozen list in the house
 session-, transcript- or prompt-shaped name in either list, so getting past door 1 by listing
 one lands on it. **Layer 2, the residual a type cannot reach:** `eslint.config.js`'s new
 `adl/gate-fresh-context`, scoped to `packages/manager/src/worker-entry/gates/**` — a
-*directory*, so M07's reviewer is governed the day it is written — bans four module groups
-(`store/`, `prompt/`, `loop/`, and `ipc/protocol.js` by *file*, since `ipc/stage-verdict.js`
+_directory_, so M07's reviewer is governed the day it is written — bans four module groups
+(`store/`, `prompt/`, `loop/`, and `ipc/protocol.js` by _file_, since `ipc/stage-verdict.js`
 beside it is exactly what a gate must import) and six member names, because a gate does not
 have to reach the developer's transcript through its parameters: it can import
 `transcriptPathFor` and rebuild the path from ids it legitimately knows. That is the identical
 argument `adl/no-forge-merge` rests on. `runCommandGate` now takes
-`(gate: GateContext, config: CommandGateConfig)` and lives in `gates/`; it *ignores* `spec`
+`(gate: GateContext, config: CommandGateConfig)` and lives in `gates/`; it _ignores_ `spec`
 and `diff`, which is the point — what a gate cannot do is reach for context it was not given.
 **Two probe findings changed what got written** (convention 15): `no-restricted-imports`'
-`patterns` does match *relative* specifiers, which the documented examples never show and the
+`patterns` does match _relative_ specifiers, which the documented examples never show and the
 whole import layer rested on; and `MemberExpression[property.name=…]` alone lints
 `const { logsRoot } = assign` clean — the destructuring analogue of 5.12's aliasing blind
 spot — so each name carries three selector families. Both flat-config merges are mandatory
-(`gates/**` is matched by `adl/no-direct-spawn` *and* is a strict subset of
+(`gates/**` is matched by `adl/no-direct-spawn` _and_ is a strict subset of
 `adl/worker-entry-no-db`'s glob) and the entry must be registered **after** the latter or it
 is silently overwritten while still looking configured; dropping each merge and moving the
 entry earlier were each watched failing.
 **The one link that lives outside the type is asserted rather than argued.**
 `GateContext.workspace` is a live filesystem handle and looks like the widest member here;
-that it is not comes down entirely to transcripts living *outside* a workspace root —
+that it is not comes down entirely to transcripts living _outside_ a workspace root —
 `logsRootFor(db)` is `dirname(db)/logs` while a workspace root sits under
 `dirname(db)/scratch`, two independent derivations in two modules that happen to be siblings.
 `packages/manager/test/worker-entry/gate-context.test.ts` asserts that separation with
@@ -413,13 +413,13 @@ that spread the whole `AssignMessage` in typechecks fine, since a wider object s
 narrower interface everywhere except at a fresh object literal, and that defect was
 reproduced.
 **`DEBT.md` WR-02 is closed and D-2-R-3 is now live** — both because this is the first read
-in the project to happen *after* an agent has had write access to the directory being walked.
+in the project to happen _after_ an agent has had write access to the directory being walked.
 WR-02 is closed at the source: one shared `worker-entry/spec-from-worktree.ts` (the developer
 stage and the gate must not read two different documents) resolves through `resolveWithinRoot`
 and reads through `Workspace.read`'s own `assertWithinRoot`. D-2-R-3's check-then-use race is
 **accepted**, with the entry's own nominated deliverable done — `paths.ts`'s docblock now says
 outright that the realpath walk cannot see a symlink planted after the check. Bounded by
-ROLE-11: the attack needs an *uncommitted* working-tree swap, since a committed one hard-fails
+ROLE-11: the attack needs an _uncommitted_ working-tree swap, since a committed one hard-fails
 the round before the gate is dispatched. Owner M15.
 
 And every agent invocation in the loop is now on the spend ledger, **including the ones that
@@ -436,13 +436,13 @@ ledger from a stage that never invoked an agent**. New `unknownUsageRecord`
 `costSource: 'unknown'`, resolved once after `flush()` and shared by all three post-exec
 return paths. **The negative half is the load-bearing half:** the property is not "always
 produce a record" but "produce one exactly when an agent process ran", so the spawn-failure
-path still reports nothing — its cost is *zero, not unknown*, and a `'unknown'` row there
+path still reports nothing — its cost is _zero, not unknown_, and a `'unknown'` row there
 would put a phantom invocation on the ledger every time the pinned binary is missing.
-A gate reporting nothing is now a *checked* property rather than an accident of the code
+A gate reporting nothing is now a _checked_ property rather than an accident of the code
 path: a command gate runs `adl.yml`'s test command, not an agent, and a zero-token row would
 be a claim that an agent ran for free — one `spendByCategory` would fold into the totals as
 confirmed spend. `test/scenario/command-gate-loop.test.ts` — the real two-round, two-role
-loop — asserts exactly two rows, one per round, each joined to *that* round's developer
+loop — asserts exactly two rows, one per round, each joined to _that_ round's developer
 attempt, and zero against either gate attempt; watched failing by adding a zero-valued
 `sendUsage` to the gate branch (2 rows became 4). **A real bug found doing it, in the same
 class 5.16 found on `closeAttempt`:** `daemon.ts`'s `recordUsage` had no try/catch, and both
@@ -456,7 +456,7 @@ enum, which is what made the honest answer expressible without one.
 
 **What does not exist yet:** the milestone's own end-to-end proof (5.19).
 
-The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
+The two 🟡 milestones are _not_ unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
 batched deliberately into an end-of-project verification pass. See [`DEBT.md`](./DEBT.md) § 1.
 
@@ -483,6 +483,7 @@ ledger, but every one of them came from a replay double; the reconciliation need
 `ANTHROPIC_API_KEY` and belongs to the end-of-project batch with the rest of § 1.
 
 **Before you start, skim:**
+
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
 - [`DEBT.md`](./DEBT.md) § 3 — **D-5-14-2** (a worker whose `stage_result` was accepted is
   still logged as "exited without an accepted result") and **D-5-13-2** (`features.round` and
@@ -542,16 +543,16 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 
 ## Repo map
 
-| Package | Does | Depends on |
-|---------|------|------------|
-| `packages/core` | The settled vocabulary — verdicts, findings, criterion IDs, normalized specs, `adl.yml`/`EffectiveConfig`, the lifecycle state machine, **the round loop's decision** (5.13, `@adl/core/loop`), **what a gate may see** (5.17, `@adl/core/stage`'s `GateContext`), and the port *declarations* (`Workspace`, `AgentRunner`, `Stage`). **Pure and I/O-free, lint-enforced.** | nothing, deliberately |
-| `packages/plugin-sdk` | The small published contract a third-party gate depends on. Re-exports `@adl/core`; **defines nothing of its own.** | core |
-| `packages/db` | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`. | core (dev) |
-| `packages/workspace` | **The exec boundary.** Worktree lifecycle — including `attach`/`detach`, so a workspace outlives the stage that created it (5.14) — zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
-| `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s, and one invocation's spend into a `usage_events`-shaped record — `usageFromResult` when the run reported one, `unknownUsageRecord` when it ran and did not (5.18). Receives a `Workspace`, never constructs one. | core |
-| `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`) and for the credentialed publish side — push, open a draft change request, upsert each role's sticky comment (5.10, 5.11). Both list calls paginate. | core |
-| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, now `src/worker-entry/gates/command-gate.ts`), **the protected-path check** (5.16, `src/loop/protected-paths-check.ts` — runs in the manager, not a pipeline stage), **gate-context assembly** (5.17, `src/worker-entry/gate-context.ts` — the one place an `AssignMessage` is narrowed for a gate), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
-| `packages/cli` | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`). | nothing, by design |
+| Package                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Depends on                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `packages/core`              | The settled vocabulary — verdicts, findings, criterion IDs, normalized specs, `adl.yml`/`EffectiveConfig`, the lifecycle state machine, **the round loop's decision** (5.13, `@adl/core/loop`), **what a gate may see** (5.17, `@adl/core/stage`'s `GateContext`), and the port _declarations_ (`Workspace`, `AgentRunner`, `Stage`). **Pure and I/O-free, lint-enforced.**                                                                                                                                                                                                                                                                                     | nothing, deliberately                                                        |
+| `packages/plugin-sdk`        | The small published contract a third-party gate depends on. Re-exports `@adl/core`; **defines nothing of its own.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | core                                                                         |
+| `packages/db`                | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | core (dev)                                                                   |
+| `packages/workspace`         | **The exec boundary.** Worktree lifecycle — including `attach`/`detach`, so a workspace outlives the stage that created it (5.14) — zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`.                                                                                                                                                                                                                                                                                                                                           | core                                                                         |
+| `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s, and one invocation's spend into a `usage_events`-shaped record — `usageFromResult` when the run reported one, `unknownUsageRecord` when it ran and did not (5.18). Receives a `Workspace`, never constructs one.                                                                                                                                                                                                                                                                                                                                             | core                                                                         |
+| `packages/forge-github`      | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`) and for the credentialed publish side — push, open a draft change request, upsert each role's sticky comment (5.10, 5.11). Both list calls paginate.                                                                                                                                                                                                                                                                            | core                                                                         |
+| `packages/manager`           | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, now `src/worker-entry/gates/command-gate.ts`), **the protected-path check** (5.16, `src/loop/protected-paths-check.ts` — runs in the manager, not a pipeline stage), **gate-context assembly** (5.17, `src/worker-entry/gate-context.ts` — the one place an `AssignMessage` is narrowed for a gate), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
+| `packages/cli`               | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`).                                                                                                                                                                                                                                                                                                                                 | nothing, by design                                                           |
 
 No `apps/` directory — the dashboard is M17 and unbuilt.
 
@@ -581,7 +582,7 @@ Nothing blocks M05. Three things to know before you start:
    either a live `ANTHROPIC_API_KEY` + the unshadowed pinned CLI, or a Linux host. Batched
    by maintainer decision so they don't stall the roadmap.
    **M06 is blocked on one of them** (reconciling reported cost against a real bill) — the
-   natural moment to close it is *during* M05.
+   natural moment to close it is _during_ M05.
 2. **D-2-R-1** ([`DEBT.md`](./DEBT.md) § 2) — the highest-severity open item. Concurrent
    features are not isolated from each other. Accepted for v1, with "concurrency > 1 on a
    shared host" as an explicit revisit trigger.

@@ -26,7 +26,7 @@ silently — every limit reached ends in a human being told where they will see 
       feature once reached, and where a backend's usage reporting is unreliable the budget
       **visibly degrades** to round and wall-clock caps rather than silently ceasing to enforce.
 - [ ] A developer/reviewer stalemate is caught by repeated finding fingerprints and
-      escalated *before* the round cap is reached.
+      escalated _before_ the round cap is reached.
 - [ ] A provider outage, rate limit, or auth failure consumes neither a round nor budget,
       and the feature resumes rather than being marked failed.
 - [ ] Hitting any limit posts the full transcript and the disagreement to the pull request
@@ -36,7 +36,7 @@ silently — every limit reached ends in a human being told where they will see 
 
 ## Step sketch
 
-*Refine into small steps when this milestone starts.*
+_Refine into small steps when this milestone starts._
 
 - [ ] **6.1** — Close the cost-accounting spike: one real agent turn, reported cost
       reconciled against the provider's billed usage, degradation path decided.
@@ -46,10 +46,10 @@ silently — every limit reached ends in a human being told where they will see 
       built that shape deliberately as this milestone's template.
 - [ ] **6.4** — Global spend cap halting new dispatch across all features.
 - [ ] **6.5** — Visible degradation: when `cost_source` is `unknown`, fall back to round
-      and wall-clock caps and *say so* in status and on the PR.
+      and wall-clock caps and _say so_ in status and on the PR.
 - [ ] **6.6** — Stalemate detection over repeated finding fingerprints, independent of the
       round and budget caps. (This is where M01's deferred question about fingerprint
-      *strength* finally gets real evidence — see [`DEBT.md`](../DEBT.md).)
+      _strength_ finally gets real evidence — see [`DEBT.md`](../DEBT.md).)
 - [ ] **6.7** — Provider-failure classification (429 / 5xx / auth) that consumes neither a
       round nor budget, and resumes rather than failing.
 - [ ] **6.8** — Escalation: full transcript + the disagreement posted to the PR.

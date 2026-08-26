@@ -9,14 +9,14 @@ backend — a raw API where **ADL owns the loop** — before any other breadth i
 
 > **This is the sole breadth item permitted before the dogfood gate.** An adapter
 > interface with one implementation is unfalsifiable. The pairing must span the layer gap:
-> Claude plus an OpenAI *CLI* proves much less, GitHub plus GitLab proves less still.
+> Claude plus an OpenAI _CLI_ proves much less, GitHub plus GitLab proves less still.
 
 ---
 
 ## Done when
 
-- [ ] The same feature runs end to end on Claude Code headless (a *delegated* loop that
-      owns its own tools) **and** on the Anthropic API direct (a loop *ADL* owns), with
+- [ ] The same feature runs end to end on Claude Code headless (a _delegated_ loop that
+      owns its own tools) **and** on the Anthropic API direct (a loop _ADL_ owns), with
       identical core loop code.
 - [ ] One conformance suite runs against both adapter families in CI, and an adapter is
       considered finished only when it passes that suite.
@@ -29,7 +29,7 @@ backend — a raw API where **ADL owns the loop** — before any other breadth i
 
 ## Step sketch
 
-*Refine into small steps when this milestone starts.*
+_Refine into small steps when this milestone starts._
 
 - [ ] **11.1** — The `ModelBackend` port (raw model APIs, structured output, ADL owns the
       loop). M01 named this as the second of two ports for exactly this moment.
@@ -49,7 +49,7 @@ backend — a raw API where **ADL owns the loop** — before any other breadth i
   is what stops the core quietly becoming Claude-shaped — Gemini's CLI has no resume at
   all, and Gemini returns one JSON object at completion rather than a JSONL event stream.
   The `AgentEvent` type must already tolerate a backend with no incremental progress.
-- Agent Client Protocol is worth spiking as an *implementation* of delegated-loop
+- Agent Client Protocol is worth spiking as an _implementation_ of delegated-loop
   adapters — **never** as the core contract.
 - The lint rule in 11.5 matters more than it looks. It is the only thing that keeps
   criterion 3 true as M16 adds two more backends.

@@ -4,8 +4,8 @@
 **Depends on:** M07
 **Requirements:** ROLE-05…10 (6)
 
-**Goal:** behaviour is verified by an agent that *structurally cannot read the
-implementation*, against an app ADL starts and tears down itself, leaving tests the team
+**Goal:** behaviour is verified by an agent that _structurally cannot read the
+implementation_, against an app ADL starts and tears down itself, leaving tests the team
 keeps.
 
 > Simultaneously the highest-leverage feature and the highest-risk one. Thirty features
@@ -18,7 +18,7 @@ keeps.
 
 - [ ] The tester designs and runs tests from a workspace containing only the spec, the
       test directory, `adl.yml`, and the running app. **The implementation source is
-      *absent*, not merely forbidden by instruction.**
+      _absent_, not merely forbidden by instruction.**
 - [ ] ADL builds, starts, probes and tears down the app itself on an allocated port and
       reaps the process group. An app that never becomes ready yields `inconclusive`,
       never `pass`.
@@ -34,7 +34,7 @@ keeps.
 
 ## Step sketch
 
-*Refine into small steps when this milestone starts.*
+_Refine into small steps when this milestone starts._
 
 - [ ] **8.1** — Composed workspace: build a workspace view containing spec + test dir +
       `adl.yml` + the running app, with implementation source physically absent. This is a
@@ -52,7 +52,7 @@ keeps.
 
 ## Notes
 
-- ⚠️ **Research flagged.** Tester prompt design under the *structural* code-blind
+- ⚠️ **Research flagged.** Tester prompt design under the _structural_ code-blind
   constraint has no public exemplar. Budget a spike.
 - **The code-blindness must be structural.** A tester that can read the implementation
   starts approving intent instead of outcomes — which is exactly the failure the
@@ -62,6 +62,6 @@ keeps.
   green noise.
 - This is where ImpossibleBench's finding bites hardest: frontier models exploit
   conflicting tests up to 76% of the time, and Claude-family models specifically prefer
-  to *modify the tests*. Committing agent-authored tests is exactly the surface that
+  to _modify the tests_. Committing agent-authored tests is exactly the surface that
   exposes. M01's protected paths and the honest "this gate is wrong" exit are the
   mitigations already in place.

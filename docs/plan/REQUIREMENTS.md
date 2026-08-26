@@ -25,77 +25,77 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ✅ **SPEC-03** Declare build / start / test / teardown commands in `adl.yml`
 - ✅ **SPEC-04** Declare an explicit readiness signal and timeout in `adl.yml`
 - ✅ **SPEC-05** Point `adl.yml` at extra context files; else cascade `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` → `README.md`
-- ⬜ **SPEC-06** *(M05)* Act only on specs from a trusted path — default branch, write-permission authors; ignore fork-PR specs unless opted in
+- ⬜ **SPEC-06** _(M05)_ Act only on specs from a trusted path — default branch, write-permission authors; ignore fork-PR specs unless opted in
 
 ## Detection & Scheduling — M05 · M10
 
-- ⬜ **DETECT-01** *(M05)* Identify undeveloped feature folders by evaluating repository state, not by remembering events
-- ⬜ **DETECT-02** *(M10)* Immediate pickup via forge webhooks where reachable
-- ⬜ **DETECT-03** *(M05)* Still detect new features via polling when webhooks are unavailable
-- ⬜ **DETECT-04** *(M10)* Webhook and polling detecting the same feature simultaneously results in one run, not two
-- ⬜ **DETECT-05** *(M05)* A feature is claimed exclusively while in flight, reconciled against open ADL PRs so a restart never duplicates work
+- ⬜ **DETECT-01** _(M05)_ Identify undeveloped feature folders by evaluating repository state, not by remembering events
+- ⬜ **DETECT-02** _(M10)_ Immediate pickup via forge webhooks where reachable
+- ⬜ **DETECT-03** _(M05)_ Still detect new features via polling when webhooks are unavailable
+- ⬜ **DETECT-04** _(M10)_ Webhook and polling detecting the same feature simultaneously results in one run, not two
+- ⬜ **DETECT-05** _(M05)_ A feature is claimed exclusively while in flight, reconciled against open ADL PRs so a restart never duplicates work
 
 ## The Loop — M05 · M06 · M07
 
-- ⬜ **LOOP-01** *(M05)* developer → code review → harness gates → behaviour test → PR, without human orchestration
-- ⬜ **LOOP-02** *(M05)* A failed gate returns work to the developer carrying the failing verdict as context
-- ⬜ **LOOP-03** *(M06)* Maximum round count per feature
-- ⬜ **LOOP-04** *(M06)* Token/cost budget per feature, enforced **before** dispatching the next turn
-- ⬜ **LOOP-05** *(M06)* Global spend cap above the per-feature caps
-- ⬜ **LOOP-06** *(M06)* Stalemate detected by repeated findings, independently of round and budget limits
-- ⬜ **LOOP-07** *(M06)* Provider outage / rate limit / auth failure consumes neither a round nor budget
-- ⬜ **LOOP-08** *(M06)* Hitting any limit escalates to a human with full transcript and the disagreement, where they will see it
-- ⬜ **LOOP-09** *(M07)* Findings raised after round 1 become follow-ups, not new send-backs
+- ⬜ **LOOP-01** _(M05)_ developer → code review → harness gates → behaviour test → PR, without human orchestration
+- ⬜ **LOOP-02** _(M05)_ A failed gate returns work to the developer carrying the failing verdict as context
+- ⬜ **LOOP-03** _(M06)_ Maximum round count per feature
+- ⬜ **LOOP-04** _(M06)_ Token/cost budget per feature, enforced **before** dispatching the next turn
+- ⬜ **LOOP-05** _(M06)_ Global spend cap above the per-feature caps
+- ⬜ **LOOP-06** _(M06)_ Stalemate detected by repeated findings, independently of round and budget limits
+- ⬜ **LOOP-07** _(M06)_ Provider outage / rate limit / auth failure consumes neither a round nor budget
+- ⬜ **LOOP-08** _(M06)_ Hitting any limit escalates to a human with full transcript and the disagreement, where they will see it
+- ⬜ **LOOP-09** _(M07)_ Findings raised after round 1 become follow-ups, not new send-backs
 
 ## Agent Roles — M05 · M07 · M08
 
-- ⬜ **ROLE-01** *(M05)* Developer agent implements a feature from its spec and commits
-- ⬜ **ROLE-02** *(M07)* Code reviewer judges implementation against spec and code quality
-- ⬜ **ROLE-03** *(M05)* Reviewer works from fresh context — never inherits the developer's session or transcript
-- ⬜ **ROLE-04** *(M07)* Reviewer cites the spec clauses it checked; an approval citing none is malformed
-- ⬜ **ROLE-05** *(M08)* Behaviour tester designs and runs tests, judging behaviour only
-- ⬜ **ROLE-06** *(M08)* Tester structurally cannot read implementation source — enforced by workspace composition, not instruction
-- ⬜ **ROLE-07** *(M08)* ADL starts, probes and tears down the app itself, allocating a port and reaping the process group
-- ⬜ **ROLE-08** *(M08)* Results read from structured runner output; zero tests executed reports `inconclusive`
-- ⬜ **ROLE-09** *(M08)* Tester's tests are committed as permanent regression coverage
-- ⬜ **ROLE-10** *(M08)* Committed tests meet an assertion floor, link a spec clause, pass stability runs, and fail against the pre-feature commit
-- ⬜ **ROLE-11** *(M05)* The developer cannot modify specs, gate config, or the tests that judge it — enforced by diffing, not by asking
+- ⬜ **ROLE-01** _(M05)_ Developer agent implements a feature from its spec and commits
+- ⬜ **ROLE-02** _(M07)_ Code reviewer judges implementation against spec and code quality
+- ⬜ **ROLE-03** _(M05)_ Reviewer works from fresh context — never inherits the developer's session or transcript
+- ⬜ **ROLE-04** _(M07)_ Reviewer cites the spec clauses it checked; an approval citing none is malformed
+- ⬜ **ROLE-05** _(M08)_ Behaviour tester designs and runs tests, judging behaviour only
+- ⬜ **ROLE-06** _(M08)_ Tester structurally cannot read implementation source — enforced by workspace composition, not instruction
+- ⬜ **ROLE-07** _(M08)_ ADL starts, probes and tears down the app itself, allocating a port and reaping the process group
+- ⬜ **ROLE-08** _(M08)_ Results read from structured runner output; zero tests executed reports `inconclusive`
+- ⬜ **ROLE-09** _(M08)_ Tester's tests are committed as permanent regression coverage
+- ⬜ **ROLE-10** _(M08)_ Committed tests meet an assertion floor, link a spec clause, pass stability runs, and fail against the pre-feature commit
+- ⬜ **ROLE-11** _(M05)_ The developer cannot modify specs, gate config, or the tests that judge it — enforced by diffing, not by asking
 
 ## Harness Extensibility — M07 · M13
 
-- ⬜ **HARN-01** *(M07)* Add a gate stage returning a verdict, without modifying ADL's lifecycle
-- ⬜ **HARN-02** *(M07)* A gate may be an AI agent or a plain command — the loop consumes only the verdict
-- ⬜ **HARN-03** *(M07)* Position a gate anywhere in the pipeline
-- ⬜ **HARN-04** *(M07)* Reviewer and tester are implemented on the same interface third parties use
-- ⬜ **HARN-05** *(M13)* A security-checking harness ships as a working reference implementation
-- ⬜ **HARN-06** *(M13)* Run an existing tool (semgrep, CodeRabbit, Greptile) as a gate with configuration rather than code
+- ⬜ **HARN-01** _(M07)_ Add a gate stage returning a verdict, without modifying ADL's lifecycle
+- ⬜ **HARN-02** _(M07)_ A gate may be an AI agent or a plain command — the loop consumes only the verdict
+- ⬜ **HARN-03** _(M07)_ Position a gate anywhere in the pipeline
+- ⬜ **HARN-04** _(M07)_ Reviewer and tester are implemented on the same interface third parties use
+- ⬜ **HARN-05** _(M13)_ A security-checking harness ships as a working reference implementation
+- ⬜ **HARN-06** _(M13)_ Run an existing tool (semgrep, CodeRabbit, Greptile) as a gate with configuration rather than code
 
 ## Model Backends — M04 🟡 · M05 · M11 · M16
 
 - ✅ **BACK-01** Drive agentic CLIs through an `AgentBackend` port
-- ⬜ **BACK-02** *(M11)* Drive raw model APIs, owning the loop, through a `ModelBackend` port
-- ⬜ **BACK-03** *(M11)* One conformance suite passed by every adapter in both families, in CI
-- ⬜ **BACK-04** *(M11)* Backend-specific behaviour confined to adapters — the core loop never branches on backend identity
+- ⬜ **BACK-02** _(M11)_ Drive raw model APIs, owning the loop, through a `ModelBackend` port
+- ⬜ **BACK-03** _(M11)_ One conformance suite passed by every adapter in both families, in CI
+- ⬜ **BACK-04** _(M11)_ Backend-specific behaviour confined to adapters — the core loop never branches on backend identity
 - ✅ **BACK-05** Claude Code headless works as a backend
-- ⬜ **BACK-06** *(M11)* Anthropic API direct works as a backend
-- ⬜ **BACK-07** *(M16)* OpenAI works, via API and Codex CLI
-- ⬜ **BACK-08** *(M16)* Gemini works, via API and CLI
-- ⬜ **BACK-09** *(M05)* Per-invocation token and cost recorded for every backend, degrading visibly where reporting is unreliable
+- ⬜ **BACK-06** _(M11)_ Anthropic API direct works as a backend
+- ⬜ **BACK-07** _(M16)_ OpenAI works, via API and Codex CLI
+- ⬜ **BACK-08** _(M16)_ Gemini works, via API and CLI
+- ⬜ **BACK-09** _(M05)_ Per-invocation token and cost recorded for every backend, degrading visibly where reporting is unreliable
 
 ## Forge Integration — M05 · M09 · M14
 
-- ⬜ **FORGE-01** *(M05)* Branches, change requests and comments through one interface, designed to the narrowest forge's capabilities
-- ⬜ **FORGE-02** *(M05)* GitHub works end to end
-- ⬜ **FORGE-03** *(M14)* GitLab works end to end
-- ⬜ **FORGE-04** *(M14)* Gitea works end to end
-- ⬜ **FORGE-05** *(M05)* Draft PR opens at round 1, promoted to ready only when every gate is green
-- ⬜ **FORGE-06** *(M05)* Each role maintains one sticky comment, edited in place, prior rounds collapsed
-- ⬜ **FORGE-07** *(M09)* A single rollup: what was built, challenged, redone, and how behaviour was verified
-- ⬜ **FORGE-08** *(M09)* A coverage table mapping every criterion to the test that verified it
-- ⬜ **FORGE-09** *(M09)* The reviewer sees what the feature cost
-- ⬜ **FORGE-10** *(M05)* A human approves and merges — ADL never merges
-- ⬜ **FORGE-11** *(M09)* Forge side effects survive crashes without duplicating comments or PRs
-- ⬜ **FORGE-12** *(M09)* Back off correctly under forge rate limiting rather than being throttled into failure
+- ⬜ **FORGE-01** _(M05)_ Branches, change requests and comments through one interface, designed to the narrowest forge's capabilities
+- ⬜ **FORGE-02** _(M05)_ GitHub works end to end
+- ⬜ **FORGE-03** _(M14)_ GitLab works end to end
+- ⬜ **FORGE-04** _(M14)_ Gitea works end to end
+- ⬜ **FORGE-05** _(M05)_ Draft PR opens at round 1, promoted to ready only when every gate is green
+- ⬜ **FORGE-06** _(M05)_ Each role maintains one sticky comment, edited in place, prior rounds collapsed
+- ⬜ **FORGE-07** _(M09)_ A single rollup: what was built, challenged, redone, and how behaviour was verified
+- ⬜ **FORGE-08** _(M09)_ A coverage table mapping every criterion to the test that verified it
+- ⬜ **FORGE-09** _(M09)_ The reviewer sees what the feature cost
+- ⬜ **FORGE-10** _(M05)_ A human approves and merges — ADL never merges
+- ⬜ **FORGE-11** _(M09)_ Forge side effects survive crashes without duplicating comments or PRs
+- ⬜ **FORGE-12** _(M09)_ Back off correctly under forge rate limiting rather than being throttled into failure
 
 ## Execution & State — M01 ✅ · M03 ✅
 
@@ -116,11 +116,11 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - 🟡 **WORK-05** Worker runs as a dedicated unprivileged OS user with a per-run scratch home
 - 🟡 **WORK-06** Credentials never enter the worker's ambient environment
 - 🟡 **WORK-07** Agent-written configuration cannot persist to the host or affect ADL's own git operations
-- ⬜ **WORK-08** *(M15)* Writes outside expected paths are detected and surfaced after each round
-- ⬜ **WORK-09** *(M15)* Agent output is secret-scanned and size-capped before it reaches a forge
-- ⬜ **WORK-10** *(M15)* A published threat model states the trust boundary plainly
+- ⬜ **WORK-08** _(M15)_ Writes outside expected paths are detected and surfaced after each round
+- ⬜ **WORK-09** _(M15)_ Agent output is secret-scanned and size-capped before it reaches a forge
+- ⬜ **WORK-10** _(M15)_ A published threat model states the trust boundary plainly
 
-> M02's 🟡 is the *milestone's* deferred Linux reproduction, not a per-requirement gap —
+> M02's 🟡 is the _milestone's_ deferred Linux reproduction, not a per-requirement gap —
 > every implementation is merged, tested and CI-green. See [`DEBT.md`](./DEBT.md) § 1.
 
 ## Observability & Control — M03 ✅ · M04 ✅ · M06 · M17 · M18
@@ -129,10 +129,10 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ✅ **OBS-02** Follow a running agent's transcript live
 - ✅ **OBS-03** Pause work
 - ✅ **OBS-04** Kill a single feature, one repo, or everything
-- ⬜ **OBS-05** *(M06)* See spend per feature and per role
-- ⬜ **OBS-06** *(M17)* An HTTP API exposes everything the CLI can do
-- ⬜ **OBS-07** *(M17)* A web dashboard presents the same information over that API
-- ⬜ **OBS-08** *(M18)* Diagnose a broken installation before running a feature through it
+- ⬜ **OBS-05** _(M06)_ See spend per feature and per role
+- ⬜ **OBS-06** _(M17)_ An HTTP API exposes everything the CLI can do
+- ⬜ **OBS-07** _(M17)_ A web dashboard presents the same information over that API
+- ⬜ **OBS-08** _(M18)_ Diagnose a broken installation before running a feature through it
 
 ## Distribution & Adoption — M18
 

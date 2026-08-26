@@ -38,7 +38,7 @@ Testing recovery semantics with zero AI in the loop is the cheapest this will ev
 - **The manager→worker fork seam** — `packages/workspace/src/exec/fork.ts`. `forkWorker`
   with an explicit `WORKER_ENV_ALLOWLIST` and a synthetic `'error'` event for a missing
   entry module (verified: `fork()` raises none). The spawn-ban exemption count is
-  *measured* at exactly one.
+  _measured_ at exactly one.
 - **Zod-validated IPC** — `packages/manager/src/ipc/protocol.ts`. Two discriminated
   unions plus a frozen `IPC_MESSAGE_KINDS` with compile-time exhaustiveness; parse
   failures return `{ok: false, reason}` and an unparseable message triggers **no**
@@ -82,7 +82,7 @@ Testing recovery semantics with zero AI in the loop is the cheapest this will ev
 - **Repo-scoped pause deliberately does not survive a restart** (only the global flag
   does); the asymmetry is documented.
 - **No budget gate** — `dispatchOnce`'s check-before-dispatch cap shape is the template
-  M06 is meant to *extend*, not restructure.
+  M06 is meant to _extend_, not restructure.
 - `resetCrashCountOnSuccess` is exported and unit-tested but has no caller — there is no
   gate pipeline to complete a round from yet. It belongs at M05's round-completion write
   site, in the same transaction as the round outcome.

@@ -36,14 +36,14 @@ Largely parallelisable with M13, M14, M15 and M17 once the gate passes.
 
 **The asymmetry to design for — and M11 should already have absorbed it:**
 
-| | Claude Code | Codex CLI | Gemini CLI |
-|---|---|---|---|
-| Headless invoke | `claude -p` | `codex exec` | `gemini -p` |
-| Event stream | `--output-format stream-json` (JSONL) | `--json` (JSONL) | ❌ **one JSON object at the end** |
-| Structured result | `--output-format json` | `--output-schema <file>` | `--output-format json` |
-| Resume | `--resume <id>` | `codex exec resume <id>` | ❌ **none** |
-| Turn cap | `--max-turns N` | — (budget + timeout) | — |
-| Sandbox | permission modes / hooks | `--sandbox` | — |
+|                   | Claude Code                           | Codex CLI                | Gemini CLI                        |
+| ----------------- | ------------------------------------- | ------------------------ | --------------------------------- |
+| Headless invoke   | `claude -p`                           | `codex exec`             | `gemini -p`                       |
+| Event stream      | `--output-format stream-json` (JSONL) | `--json` (JSONL)         | ❌ **one JSON object at the end** |
+| Structured result | `--output-format json`                | `--output-schema <file>` | `--output-format json`            |
+| Resume            | `--resume <id>`                       | `codex exec resume <id>` | ❌ **none**                       |
+| Turn cap          | `--max-turns N`                       | — (budget + timeout)     | —                                 |
+| Sandbox           | permission modes / hooks              | `--sandbox`              | —                                 |
 
 Gemini is the one that breaks naive assumptions: no incremental progress and no resume.
 If `AgentEvent` cannot already tolerate that, the port was Claude-shaped and M11's
