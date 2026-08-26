@@ -11,7 +11,7 @@ import type {
 } from '@adl/core/stage';
 import { claudeCodeBackend } from '../src/backend.js';
 import { translateLine } from '../src/events.js';
-import { usageFromResult } from '../src/usage.js';
+import { unknownUsageRecord, usageFromResult } from '../src/usage.js';
 
 /**
  * `usageFromResult` is written against the *documented* real terminal-line
@@ -293,7 +293,20 @@ describe('claudeCodeBackend — usage capability reconciliation', () => {
     expect(result.usage.inputTokens).toBe(1000);
   });
 
-  it('an invocation whose backend reported no usage at all produces no usage record', async () => {
+  // -------------------------------------------------------------------------
+  // BACK-09 (M05 step 5.18): degrade visibly, never silently
+  //
+  // These two cases are the whole of the step's change to this package, and
+  // they are a pair on purpose — the property is not "always produce a record"
+  // but "produce one exactly when an agent process ran". Asserting only the
+  // first would be satisfied by a backend that fabricates a phantom
+  // invocation for a missing binary.
+  // -------------------------------------------------------------------------
+
+  it('a CLI that ran and exited non-zero before its terminal event still yields a record, with an honest unknown source', async () => {
+    // Before 5.18 this produced `undefined` and the invocation left no row on
+    // the ledger at all — a real, billed agent run indistinguishable from a
+    // stage that never invoked one.
     const workspace = fakeWorkspace(async () => ({
       exitCode: 1,
       durationMs: 1,
@@ -306,6 +319,110 @@ describe('claudeCodeBackend — usage capability reconciliation', () => {
       signal: new AbortController().signal,
     });
 
+    expect(result.usageRecord).toBeDefined();
+    expect(result.usageRecord?.costSource).toBe('unknown');
+    // Null, never zero (D-31) — a zero would be folded into the totals by
+    // `spendByCategory` as confirmed spend rather than counted as unpriced.
+    expect(result.usageRecord?.costUsd).toBeNull();
+    expect(result.usageRecord?.inputTokens).toBeNull();
+    expect(result.usageRecord?.outputTokens).toBeNull();
+    expect(result.usageRecord?.cacheReadInputTokens).toBeNull();
+    expect(result.usageRecord?.cacheCreationInputTokens).toBeNull();
+  });
+
+  it('a run killed before its terminal event carries the model it was launched against, not a placeholder', async () => {
+    const workspace = fakeWorkspace(async (_spec, log) => {
+      log({
+        stream: 'stdout',
+        text: `${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-5' })}\n`,
+      });
+      // `exitCode: null` is the workspace's "killed by a signal" shape.
+      return { exitCode: null, signal: 'SIGKILL', durationMs: 1 };
+    });
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+
+    const result = await backend.run(baseTask(), {
+      workspace,
+      onEvent: () => undefined,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.usageRecord?.costSource).toBe('unknown');
+    expect(result.usageRecord?.modelId).toBe('claude-opus-5');
+  });
+
+  it("ADL's own model selection is used when the run died before naming one", async () => {
+    const workspace = fakeWorkspace(async () => ({
+      exitCode: 1,
+      durationMs: 1,
+    }));
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+
+    const result = await backend.run(
+      { ...baseTask(), model: 'claude-haiku-4-5' },
+      {
+        workspace,
+        onEvent: () => undefined,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result.usageRecord?.modelId).toBe('claude-haiku-4-5');
+  });
+
+  it('a spawn that never started a process produces NO record — its cost is zero, not unknown', async () => {
+    // The negative control for the three cases above. A missing binary bills
+    // nothing, so a `cost_source: 'unknown'` row would put a phantom
+    // invocation on the ledger every time the pinned CLI is absent. The
+    // failure is still visible — as an `error` event, which the stage runner
+    // turns into the round's `stage_error`.
+    const workspace = fakeWorkspace(async () => {
+      throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+    });
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+    const events: AgentEvent[] = [];
+
+    const result = await backend.run(baseTask(), {
+      workspace,
+      onEvent: (e) => events.push(e),
+      signal: new AbortController().signal,
+    });
+
     expect(result.usageRecord).toBeUndefined();
+    expect(events.some((e) => e.kind === 'error')).toBe(true);
+  });
+});
+
+describe('unknownUsageRecord', () => {
+  it('is all-null with an unknown source, and shares usageFromResult’s defaults rather than restating them', () => {
+    const record = unknownUsageRecord();
+
+    expect(record.costSource).toBe('unknown');
+    expect(record.costUsd).toBeNull();
+    expect(record.inputTokens).toBeNull();
+    expect(record.outputTokens).toBeNull();
+    expect(record.cacheCreationInputTokens).toBeNull();
+    expect(record.cacheReadInputTokens).toBeNull();
+
+    // The two producers must agree on every field that is NOT the point of
+    // the distinction, so a reader telling them apart reads `costSource` and
+    // nothing else.
+    const { usage, result } = eventsFor(RESULT_SUCCESS_LINE);
+    const reported = usageFromResult({
+      event: result!,
+      usage: usage as Extract<AgentEvent, { kind: 'usage' }>,
+    });
+    expect(record.speed).toBe(reported?.speed);
+    expect(record.costCategory).toBe(reported?.costCategory);
+    expect(record.modelId).toBe(reported?.modelId);
+  });
+
+  it('carries the model it is given, and the repair-reprompt cost category when asked for one (D-14)', () => {
+    expect(unknownUsageRecord({ model: 'claude-sonnet-5' }).modelId).toBe(
+      'claude-sonnet-5',
+    );
+    expect(unknownUsageRecord({ costCategory: 'overhead' }).costCategory).toBe(
+      'overhead',
+    );
   });
 });

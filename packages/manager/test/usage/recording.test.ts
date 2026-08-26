@@ -52,6 +52,10 @@ const USAGE_WORKER_ENTRY = fileURLToPath(
 const FAKE_CLAUDE_SUCCESS = fileURLToPath(
   new URL('../helpers/fake-claude-success.mjs', import.meta.url),
 );
+/** Exits 7 with no terminal stream-json `result` line — a real, billed run that reported nothing. */
+const FAKE_CLAUDE_NONZERO = fileURLToPath(
+  new URL('../helpers/fake-claude-nonzero.mjs', import.meta.url),
+);
 const TRACER_WORKER_ENTRY = fileURLToPath(
   new URL('../helpers/tracer-worker-entry.ts', import.meta.url),
 );
@@ -417,7 +421,13 @@ describe('createSupervisor — usage message handling', () => {
     });
   }, 20_000);
 
-  it('an invocation whose backend reported no usage at all inserts no row', async () => {
+  // The manager never invents a row: `recordUsage` fires from a `usage`
+  // message and nothing else. Producing one for an invocation that reported
+  // nothing is the WORKER's job (M05 step 5.18 — `stage-runner.ts` sends an
+  // honest `costSource: 'unknown'` record rather than staying silent), and
+  // this scripted worker entry sends no messages at all, which is what a
+  // stage that invoked no agent looks like on this channel.
+  it('a worker that sends no usage message inserts no row — the manager fabricates nothing', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
       let recorded = 0;
@@ -653,4 +663,134 @@ describe('a full dev-run against the replay double', () => {
       });
     });
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// BACK-09 (M05 step 5.18): degrade visibly, never silently
+// ---------------------------------------------------------------------------
+
+/**
+ * The end-to-end half of the unit pair in
+ * `packages/agent-claude-code/test/usage.test.ts`.
+ *
+ * `fake-claude-nonzero.mjs` is a CLI that really starts, really runs, and
+ * exits 7 without ever emitting a terminal `result` line — the shape of a
+ * provider outage, a mid-stream kill, or a crashed agent. Tokens were spent;
+ * nothing was reported. Before 5.18 the worker sent no `usage` message for
+ * that run at all, so a real, billed invocation was indistinguishable on the
+ * ledger from a stage that never invoked an agent. Now it arrives as a row
+ * whose `cost_source` says outright that the figure is unknown.
+ *
+ * The developer stage still reports a retryable `stage_error` for this run, so
+ * the daemon re-dispatches; the assertion is therefore over EVERY row rather
+ * than exactly one, which is the honest shape — each retry is its own real
+ * invocation and its own real (unknown) spend.
+ */
+describe('an invocation that ran and reported nothing', () => {
+  it("records a row with cost_source 'unknown' and null everything — never a silent gap, never a zero", async () => {
+    await withTempDb(async ({ db, filePath }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+
+      await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+        const folder = `usage-unknown-${ulid()}`;
+        const featureDir = `features/${folder}`;
+        await mkdir(join(mainRepo, featureDir), { recursive: true });
+        await writeFile(
+          join(mainRepo, featureDir, 'spec.md'),
+          '# Title\n\nReport nothing\n\n## Acceptance Criteria\n\n- The run reports no usage.\n',
+          'utf8',
+        );
+        await git.add(`${featureDir}/spec.md`);
+        await git.raw(['commit', '-m', 'add feature']);
+        const defaultBranch = (
+          await git.raw(['branch', '--show-current'])
+        ).trim();
+
+        const daemonConfig: DaemonConfig = DaemonConfigSchema.parse({
+          repos: [
+            {
+              id: 'repo-1',
+              remote_url: 'https://example.invalid/repo.git',
+              default_branch: defaultBranch,
+              forge: 'github',
+              features_dir: 'features',
+            },
+          ],
+        });
+        const adlYml: AdlYml = AdlYmlSchema.parse({
+          version: 1,
+          commands: {
+            build: { argv: ['true'] },
+            start: { argv: ['true'] },
+            test: { argv: ['true'] },
+            teardown: { argv: ['true'] },
+          },
+          pipeline: ['develop'],
+        });
+
+        const handle = await startDaemon({
+          dbFilePath: filePath,
+          port: 0,
+          apiToken: API_TOKEN,
+          migrationsDir: MIGRATIONS_DIR,
+          leaseTtlMs: 10_000,
+          heartbeatIntervalMs: 100,
+          daemonConfig,
+          resolveAdlYml: () => adlYml,
+          mainRepo,
+          scratchRoot,
+          workerEntryPath: TRACER_WORKER_ENTRY,
+          workerExecArgv: ['--import', 'tsx'],
+          workerEnv: {
+            ADL_TRACER_CLAUDE_BINARY_JSON: JSON.stringify([
+              process.execPath,
+              FAKE_CLAUDE_NONZERO,
+            ]),
+          },
+          dispatchIntervalMs: 20,
+        });
+
+        try {
+          const response = await fetch(
+            `http://127.0.0.1:${handle.port}/dev-run/${folder}`,
+            {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${API_TOKEN}` },
+            },
+          );
+          expect(response.status).toBe(200);
+          const { featureId } = (await response.json()) as {
+            featureId: string;
+          };
+
+          await waitUntil(
+            async () => {
+              const rows = await usageRepository(db).listForFeature(featureId);
+              return rows.length >= 1;
+            },
+            { timeoutMs: 20_000 },
+          );
+
+          const rows = await usageRepository(db).listForFeature(featureId);
+          expect(rows.length).toBeGreaterThanOrEqual(1);
+          for (const row of rows) {
+            expect(row.cost_source).toBe('unknown');
+            // Null, not zero (D-31): `spendByCategory` counts this as an
+            // unpriced event rather than folding a fabricated 0 into the
+            // totals a budget gate will one day enforce against.
+            expect(row.cost_usd).toBeNull();
+            expect(row.input_tokens).toBeNull();
+            expect(row.output_tokens).toBeNull();
+            // Addressed to the feature's own round and attempt, exactly like
+            // a reported row — an unknown cost is still fully attributed.
+            expect(row.feature_id).toBe(featureId);
+            expect(row.round_id).not.toBeNull();
+            expect(row.stage_attempt_id).not.toBeNull();
+          }
+        } finally {
+          await handle.stop();
+        }
+      });
+    });
+  }, 40_000);
 });

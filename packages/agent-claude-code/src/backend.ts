@@ -46,7 +46,11 @@ import type {
 import type { StageErrorKind } from '@adl/core/stage';
 import { translateLine } from './events.js';
 import { preflightClaudeCode, type VersionCheckResult } from './preflight.js';
-import { usageFromResult, type AgentUsageRecord } from './usage.js';
+import {
+  unknownUsageRecord,
+  usageFromResult,
+  type AgentUsageRecord,
+} from './usage.js';
 import { PINNED_CLAUDE_CODE_VERSION } from './version.js';
 
 /** The pinned CLI's own name on the process table — the default argv[0]. */
@@ -76,7 +80,25 @@ const EMPTY_USAGE = Object.freeze({
  * mapping itself.
  */
 export interface AgentRunResultWithUsage extends AgentRunResult {
-  /** Undefined when the run never reached a terminal `result` event (a spawn failure, a timeout, or a kill before one arrived). */
+  /**
+   * The invocation's spend, with honest provenance.
+   *
+   * **Undefined means one thing only: no agent process was ever started**
+   * (M05 step 5.18) — the workspace's `exec` rejected at spawn time, so
+   * nothing ran and nothing was billed. Every path on which the CLI really
+   * did run carries a record, `costSource: 'reported'` when it reported one
+   * and `'unknown'` when it did not (a timeout, a kill, or a non-zero exit
+   * before the terminal event). Before 5.18 this field was also absent for
+   * those cases, which left a real, billed invocation with no row on the
+   * ledger at all — the silent degradation BACK-09 forbids.
+   *
+   * Still optional rather than required-and-nullable: `ClaudeCodeAgentRunner`
+   * exists so a caller can read this field off the resolved value without a
+   * cast, and several test doubles satisfy it by returning the plain
+   * `AgentRunResult` the base `AgentRunner` port declares. Making it required
+   * would break that assignability for no gain — the property that matters is
+   * about what `claudeCodeBackend` produces, and it is asserted directly.
+   */
   readonly usageRecord?: AgentUsageRecord;
 }
 
@@ -405,11 +427,28 @@ export function claudeCodeBackend(
           errorKind: classified.errorKind,
           detail: classified.detail,
         });
+        // The ONE path that reports no usage record at all, and deliberately
+        // so (M05 step 5.18): the launcher never started a process, so no
+        // agent was invoked and nothing was billed. Its true cost is zero,
+        // not unknown, and a `cost_source: 'unknown'` row here would put a
+        // phantom invocation on the ledger every time the pinned binary is
+        // missing. The failure is not silent — it is already an `error` event
+        // above, which `worker-entry/stage-runner.ts` turns into the round's
+        // `stage_error`.
         return buildRunResult('cancelled', Date.now() - startedAt, usageRecord);
       }
 
       lineHandler.flush();
       const durationMs = Date.now() - startedAt;
+
+      // BACK-09 (M05 step 5.18). Past this line the CLI really ran, so this
+      // invocation belongs on the spend ledger whatever it did or did not
+      // report — resolved ONCE, after `flush()` has drained the last buffered
+      // line into `handleEvent`, and shared by all three return paths below so
+      // a fourth cannot be added that quietly forgets.
+      const invocationUsage: AgentUsageRecord =
+        usageRecord ??
+        unknownUsageRecord({ model: observedModel ?? task.model });
 
       if (execResult.exitCode === null) {
         // Killed by a signal — a timeout, an abort, or an external kill.
@@ -418,7 +457,7 @@ export function claudeCodeBackend(
           errorKind: 'timeout',
           detail: `claude CLI was killed by signal ${execResult.signal ?? 'unknown'} after ${String(execResult.durationMs)}ms`,
         });
-        return buildRunResult('cancelled', durationMs, usageRecord);
+        return buildRunResult('cancelled', durationMs, invocationUsage);
       }
 
       if (execResult.exitCode !== 0) {
@@ -427,10 +466,10 @@ export function claudeCodeBackend(
           errorKind: 'provider_error',
           detail: `claude CLI exited with code ${String(execResult.exitCode)}`,
         });
-        return buildRunResult('cancelled', durationMs, usageRecord);
+        return buildRunResult('cancelled', durationMs, invocationUsage);
       }
 
-      return buildRunResult('completed', durationMs, usageRecord);
+      return buildRunResult('completed', durationMs, invocationUsage);
     },
   };
 }

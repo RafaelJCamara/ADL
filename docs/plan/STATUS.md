@@ -24,15 +24,15 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), all of group B (5.8–5.12) and all of group C (5.13–5.17) are done. Only
-group D — accounting and the end-to-end proof — remains.**
+group A (5.1–5.7), all of group B (5.8–5.12), all of group C (5.13–5.17) and the accounting
+half of group D (5.18) are done. Only 5.19, the end-to-end proof, remains.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + groups A, B, C done; group D next
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + groups A, B, C + 5.18 done; 5.19 next
 M06–M18 ............................. not started
 ```
 
@@ -422,8 +422,39 @@ outright that the realpath walk cannot see a symlink planted after the check. Bo
 ROLE-11: the attack needs an *uncommitted* working-tree swap, since a committed one hard-fails
 the round before the gate is dispatched. Owner M15.
 
-**What does not exist yet:** per-round accounting and the milestone's own end-to-end proof
-(group D, 5.18–5.19).
+And every agent invocation in the loop is now on the spend ledger, **including the ones that
+report nothing** (5.18, BACK-09, AC5). M04's recording path was already correct for the case
+it was proven against and already fires every round — the developer stage is dispatched
+afresh each round with its own `roundId`/`stageAttemptId`, taken by the supervisor from its
+own assignment rather than from the message (T-4-38). What was missing was the proof that it
+does, and one genuinely silent degradation. `claudeCodeBackend` attached a usage record only
+when a run reached its terminal `result` event, so a CLI killed by a timeout or exiting
+non-zero mid-stream — a provider outage, a crashed agent — burned tokens, reported none, and
+the worker's guard then sent nothing at all: that invocation was **indistinguishable on the
+ledger from a stage that never invoked an agent**. New `unknownUsageRecord`
+(`@adl/agent-claude-code`'s `usage.ts`) is the honest answer — every counter null,
+`costSource: 'unknown'`, resolved once after `flush()` and shared by all three post-exec
+return paths. **The negative half is the load-bearing half:** the property is not "always
+produce a record" but "produce one exactly when an agent process ran", so the spawn-failure
+path still reports nothing — its cost is *zero, not unknown*, and a `'unknown'` row there
+would put a phantom invocation on the ledger every time the pinned binary is missing.
+A gate reporting nothing is now a *checked* property rather than an accident of the code
+path: a command gate runs `adl.yml`'s test command, not an agent, and a zero-token row would
+be a claim that an agent ran for free — one `spendByCategory` would fold into the totals as
+confirmed spend. `test/scenario/command-gate-loop.test.ts` — the real two-round, two-role
+loop — asserts exactly two rows, one per round, each joined to *that* round's developer
+attempt, and zero against either gate attempt; watched failing by adding a zero-valued
+`sendUsage` to the gate branch (2 rows became 4). **A real bug found doing it, in the same
+class 5.16 found on `closeAttempt`:** `daemon.ts`'s `recordUsage` had no try/catch, and both
+callbacks fire from the supervisor's floating message task — so a failed spend write was an
+unhandled rejection that takes the manager down, at precisely the moment a stopping daemon
+closes the database. Watched failing (`Unhandled Rejection: simulated ledger write failure`)
+and watched recovering, then filed as a coverage gap covering both callbacks, since
+`startDaemon` has no seam for making one repository write fail on demand. **No migration and
+no new IPC field** — `UsageMessageSchema` already carried `'unknown'` in its `costSource`
+enum, which is what made the honest answer expressible without one.
+
+**What does not exist yet:** the milestone's own end-to-end proof (5.19).
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -433,35 +464,30 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 
 ## What to do next
 
-Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and start
-**group D**. Groups A, B and C are all closed: the loop turns, with a real gate, real
-send-back context, a real unconditional protected-path check, and gates that structurally
-cannot see the developer's session or transcript.
+Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and write
+**5.19 — the last step in the milestone.** Everything it composes is built: the loop turns,
+with a real gate, real send-back context, a real unconditional protected-path check, gates
+that structurally cannot see the developer's session or transcript, and a spend ledger that
+covers every agent invocation including the ones that report nothing.
 
-**5.18 — record tokens and cost for every agent invocation (BACK-09).** M04 built the
-recording path and proved it for `dev-run`; extend it to every role and round, degrading
-visibly to `cost_source: 'unknown'` rather than silently. The `usage` IPC message and
-`usageRepository(db).record` already exist and already fire for the developer stage — what is
-missing is coverage across the loop, and gates that run no agent must be honest about
-reporting nothing rather than reporting zero (D-31).
+It is the end-to-end scenario test: feature folder → draft CR at round 1 → gate fails → send
+back → round 2 passes → promoted to ready. **It must fail the first time through by
+construction.** Much of the chain already has a scenario test of its own
+(`test/scenario/command-gate-loop.test.ts`, `test/tracer/draft-cr-wiring.test.ts`,
+`test/scenario/protected-paths-loop.test.ts`); 5.19 is the one that runs all of it in a single
+daemon lifetime, detection included.
 
-**5.19 — the end-to-end scenario test**, which is AC2's proof and the milestone's tracer:
-feature folder → draft CR at round 1 → gate fails → send back → round 2 passes → promoted to
-ready. **It must fail the first time through by construction.** Much of the chain already has
-a scenario test of its own (`test/scenario/command-gate-loop.test.ts`,
-`test/tracer/draft-cr-wiring.test.ts`, `test/scenario/protected-paths-loop.test.ts`); 5.19 is
-the one that runs all of it in a single daemon lifetime, detection included.
-
-**This is also the moment for the cost-accounting spike** — M06 is blocked on reconciling a
-reported cost against a real bill ([`DEBT.md`](./DEBT.md) item 1.2), and 5.18 is the step that
-puts the numbers in front of you.
+**The cost-accounting spike is still open and still blocked** — M06 needs a reported cost
+reconciled against a real bill ([`DEBT.md`](./DEBT.md) item 1.2). 5.18 put the numbers on the
+ledger, but every one of them came from a replay double; the reconciliation needs a live
+`ANTHROPIC_API_KEY` and belongs to the end-of-project batch with the rest of § 1.
 
 **Before you start, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
 - [`DEBT.md`](./DEBT.md) § 3 — **D-5-14-2** (a worker whose `stage_result` was accepted is
   still logged as "exited without an accepted result") and **D-5-13-2** (`features.round` and
   `rounds.number` are silently one apart) are both owned by M06 and both sit directly on
-  group D's path. Neither is blocking; both will be in the logs you are reading.
+  5.19's path. Neither is blocking; both will be in the logs you are reading.
 
 ---
 
@@ -522,7 +548,7 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 | `packages/plugin-sdk` | The small published contract a third-party gate depends on. Re-exports `@adl/core`; **defines nothing of its own.** | core |
 | `packages/db` | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`. | core (dev) |
 | `packages/workspace` | **The exec boundary.** Worktree lifecycle — including `attach`/`detach`, so a workspace outlives the stage that created it (5.14) — zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
-| `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
+| `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s, and one invocation's spend into a `usage_events`-shaped record — `usageFromResult` when the run reported one, `unknownUsageRecord` when it ran and did not (5.18). Receives a `Workspace`, never constructs one. | core |
 | `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`) and for the credentialed publish side — push, open a draft change request, upsert each role's sticky comment (5.10, 5.11). Both list calls paginate. | core |
 | `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, now `src/worker-entry/gates/command-gate.ts`), **the protected-path check** (5.16, `src/loop/protected-paths-check.ts` — runs in the manager, not a pipeline stage), **gate-context assembly** (5.17, `src/worker-entry/gate-context.ts` — the one place an `AssignMessage` is narrowed for a gate), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
 | `packages/cli` | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`). | nothing, by design |

@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ulid } from 'ulid';
-import { featuresRepository, migrateToLatest } from '@adl/db';
+import { featuresRepository, migrateToLatest, usageRepository } from '@adl/db';
 import {
   AdlYmlSchema,
   DaemonConfigSchema,
@@ -312,6 +312,82 @@ describe('scenario: a real command gate turns the loop', () => {
             expect(round1Artifact.instructions).toContain(
               '(first round — no prior feedback)',
             );
+
+            // ── AC5 / BACK-09 (M05 step 5.18) ────────────────────────────
+            //
+            // *Every* agent invocation in the loop records its tokens and
+            // cost against the feature — every role and every round, not
+            // only the first `dev-run` M04 proved. This scenario is the only
+            // place in the suite where a real daemon runs more than one
+            // round through more than one role, so it is where "every" can
+            // actually be checked rather than asserted of a single run.
+            const usage = await usageRepository(db).listForFeature(featureId);
+
+            // Two agent invocations happened — round 1's developer and round
+            // 2's — and there are exactly two rows. Not three: the gate ran
+            // twice (asserted above via the counter file) and invoked no
+            // agent either time.
+            expect(usage).toHaveLength(2);
+
+            const attempts = await db
+              .selectFrom('stage_attempts')
+              .select(['id', 'round_id', 'stage_index'])
+              .where(
+                'round_id',
+                'in',
+                rounds.map((round) => round.id),
+              )
+              .execute();
+            const developerAttempts = attempts.filter(
+              (a) => a.stage_index === 0,
+            );
+            const gateAttempts = attempts.filter((a) => a.stage_index === 1);
+            expect(developerAttempts).toHaveLength(2);
+            expect(gateAttempts).toHaveLength(2);
+
+            // One row per round, addressed to that round's own developer
+            // attempt. A ledger that recorded twice against round 1, or that
+            // attributed round 2's spend to round 1's attempt, would fail
+            // here — and both are exactly what "the recording path exists"
+            // alone does not rule out.
+            expect(usage.map((row) => row.round_id)).toEqual(
+              rounds.map((round) => round.id),
+            );
+            for (const round of rounds) {
+              const rowsForRound = usage.filter(
+                (row) => row.round_id === round.id,
+              );
+              expect(rowsForRound).toHaveLength(1);
+              const developer = developerAttempts.find(
+                (a) => a.round_id === round.id,
+              );
+              expect(rowsForRound[0]?.stage_attempt_id).toBe(developer?.id);
+            }
+
+            // Tokens AND cost, both rounds — `fake-claude-success.mjs`
+            // reports a real `total_cost_usd`, so both rows are `reported`
+            // rather than degraded. The negative half of D-31 is asserted in
+            // `test/usage/recording.test.ts`: a run that reports nothing
+            // records `'unknown'`, never a zero.
+            for (const row of usage) {
+              expect(row.cost_source).toBe('reported');
+              expect(row.cost_usd).toBe(0.001);
+              expect(row.input_tokens).toBe(10);
+              expect(row.output_tokens).toBe(5);
+            }
+
+            // And not one row belongs to a gate. A command gate runs
+            // `adl.yml`'s test command, not an agent — reporting zero tokens
+            // for it would be a claim that an agent ran for free, which
+            // `spendByCategory` would fold into the totals as confirmed
+            // spend. Silence is the honest answer, and this is what makes it
+            // a checked property rather than an accident of the code path.
+            const gateAttemptIds = new Set(gateAttempts.map((a) => a.id));
+            expect(
+              usage.filter((row) =>
+                gateAttemptIds.has(row.stage_attempt_id ?? ''),
+              ),
+            ).toHaveLength(0);
           } finally {
             await handle.stop();
           }

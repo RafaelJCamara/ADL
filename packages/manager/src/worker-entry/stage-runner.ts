@@ -391,6 +391,18 @@ export function createProductionStageRunner(
           command: effectiveConfig.commands.test,
           path: process.env['PATH'] ?? '',
         });
+        // BACK-09 (M05 step 5.18): this path sends NO `usage` message, and
+        // that is the honest answer rather than an omission — a command gate
+        // runs `adl.yml`'s test command, not an agent, so there is no model,
+        // no token count and no cost. A zero-valued row would be a *claim*
+        // that an agent ran for free, which is exactly the shape of lie D-31
+        // exists to prevent, and `spendByCategory` would fold it into the
+        // totals as one. The ledger's silence here is legible because every
+        // stage attempt is a row in `stage_attempts`: a reader joining spend
+        // to attempts sees which stage invoked an agent and which did not.
+        // A future agent-backed gate (M07's reviewer) reports through this
+        // same function's `sendUsage`, one level above the role — see
+        // `docs/plan/DEBT.md` D-5-18-1.
         // Every record on disk before the result is reported, matching the
         // developer path's own `await Promise.all(appendPromises)` — a verdict
         // the manager acts on while its evidence is still buffered is a
@@ -504,9 +516,20 @@ export function createProductionStageRunner(
       // sends `stage_result` only once THIS function returns). An invocation
       // killed between the two still has its spend on the ledger, matching
       // `.planning/STATE.md`'s existing "burned spend survives a crash"
-      // property for Phase 3. An invocation whose backend reported no usage
-      // at all (`runResult.usageRecord` undefined) sends nothing — an event
-      // that did not happen is not the same as one with nothing in it.
+      // property for Phase 3.
+      //
+      // BACK-09 (M05 step 5.18): this fires for EVERY round, because the
+      // developer stage is dispatched afresh each round with its own
+      // `roundId`/`stageAttemptId`, and the record travels keyed to nothing —
+      // the supervisor supplies the join keys from its own assignment
+      // (T-4-38). What changed in 5.18 is the meaning of the guard below.
+      // `usageRecord` is now absent for exactly one reason — the agent
+      // process was never started, so nothing was invoked and nothing was
+      // billed (see `AgentRunResultWithUsage.usageRecord`). A run that DID
+      // start and reported nothing now arrives here carrying an honest
+      // `costSource: 'unknown'` record instead of vanishing, which is the
+      // difference between a ledger with a visible gap and one with an
+      // invisible one.
       if (runResult.usageRecord !== undefined) {
         sendUsage(assign.leaseToken, runResult.usageRecord);
       }

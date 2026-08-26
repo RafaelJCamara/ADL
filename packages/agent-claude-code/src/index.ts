@@ -45,16 +45,21 @@ export {
   type ClaudeCodeBackendOptions,
 } from './backend.js';
 
-// The usage mapper (04-10) — `usageFromResult` turns the run's terminal
-// `result` event, plus what was observed earlier in the same run, into a
-// `usage_events`-shaped record. Exported (not only used internally by
-// `backend.ts`) so a test, and any future caller that already holds a
-// translated `AgentEvent` stream of its own, can drive the same mapping
-// directly rather than re-deriving it.
+// The usage mappers (04-10, M05 step 5.18) — `usageFromResult` turns the
+// run's terminal `result` event, plus what was observed earlier in the same
+// run, into a `usage_events`-shaped record, and `unknownUsageRecord` is its
+// counterpart for an invocation that ran but reported nothing (BACK-09's
+// "degrade visibly to `cost_source: 'unknown'`, never silently"). Exported
+// (not only used internally by `backend.ts`) so a test, and any future caller
+// that already holds a translated `AgentEvent` stream of its own — M07's
+// reviewer is the next one — can drive the same mapping directly rather than
+// re-deriving it.
 export {
+  unknownUsageRecord,
   usageFromResult,
   type AgentUsageRecord,
   type ModelSpeed,
+  type UnknownUsageInput,
   type UsageCostCategory,
   type UsageCostSource,
   type UsageFromResultEvent,

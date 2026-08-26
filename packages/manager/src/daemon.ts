@@ -525,23 +525,47 @@ export async function startDaemon(
     // the existing `usageRepository(db).record`, never a second writer. The
     // supervisor has already fenced the message and resolved the feature id
     // from its own assignment before this is called.
+    //
+    // Caught and logged at `error`, for the identical reason `closeAttempt`
+    // below is (M05 step 5.18): this fires from the supervisor's own message
+    // handler, inside a floating `void (async () => …)()` that nothing
+    // awaits, so a rejection here is an UNHANDLED rejection that takes the
+    // daemon down. The exposure is not hypothetical — it is the same
+    // shutdown/teardown race 5.16 hit on `closeAttempt`, and a `usage`
+    // message is delivered moments before the `stage_result` that ends the
+    // round, which is precisely when a stopping daemon closes the database.
+    // A dropped spend row is a real loss and is therefore *reported*, not
+    // swallowed quietly; crashing the manager over it would lose the round
+    // as well as the row.
     recordUsage: async (params) => {
-      await usageRepository(db).record({
-        id: ulid(),
-        feature_id: params.featureId,
-        round_id: params.roundId,
-        stage_attempt_id: params.stageAttemptId,
-        model_id: params.modelId,
-        speed: params.speed,
-        input_tokens: params.inputTokens,
-        output_tokens: params.outputTokens,
-        cache_creation_input_tokens: params.cacheCreationInputTokens,
-        cache_read_input_tokens: params.cacheReadInputTokens,
-        cost_usd: params.costUsd,
-        cost_source: params.costSource,
-        cost_category: params.costCategory,
-        at: nowIso(),
-      });
+      try {
+        await usageRepository(db).record({
+          id: ulid(),
+          feature_id: params.featureId,
+          round_id: params.roundId,
+          stage_attempt_id: params.stageAttemptId,
+          model_id: params.modelId,
+          speed: params.speed,
+          input_tokens: params.inputTokens,
+          output_tokens: params.outputTokens,
+          cache_creation_input_tokens: params.cacheCreationInputTokens,
+          cache_read_input_tokens: params.cacheReadInputTokens,
+          cost_usd: params.costUsd,
+          cost_source: params.costSource,
+          cost_category: params.costCategory,
+          at: nowIso(),
+        });
+      } catch (error) {
+        logger.error(
+          {
+            err: error,
+            featureId: params.featureId,
+            stageAttemptId: params.stageAttemptId,
+            costSource: params.costSource,
+          },
+          'recordUsage: failed to write the spend event — this invocation is missing from the ledger',
+        );
+      }
     },
     // CR-01: the one place `stage_attempts.ended_at`/terminal `status` is
     // written from production, through `bookkeeping/attempt.ts`'s

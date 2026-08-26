@@ -48,6 +48,18 @@
  * for a backend that already told the truth about not knowing. `'computed'`
  * never appears here — that source belongs to `@adl/db`'s `pricing.ts`, the
  * caller this backend's honest `'unknown'` defers to.
+ *
+ * ── Two producers, one vocabulary (M05 step 5.18, BACK-09) ──────────────────
+ *
+ * {@link usageFromResult} maps a run that *reached* its terminal event.
+ * {@link unknownUsageRecord} is its counterpart for a run that did not — a
+ * CLI killed by a timeout, or one that exited non-zero before emitting
+ * `result`. Both of those burned tokens; neither reported any. Before 5.18
+ * the second case produced nothing at all and the invocation left no trace on
+ * the ledger, which is the silent degradation BACK-09 forbids. They share
+ * `UNRESOLVED_MODEL_ID`, `DEFAULT_SPEED` and `DEFAULT_COST_CATEGORY` rather
+ * than restating them, so the two records a reader has to tell apart differ
+ * in exactly the field that distinguishes them — `costSource`.
  */
 import type { AgentEvent, AgentUsageEvent } from '@adl/core/stage';
 
@@ -153,5 +165,51 @@ export function usageFromResult(
     costUsd,
     costSource,
     costCategory: event.costCategory ?? DEFAULT_COST_CATEGORY,
+  };
+}
+
+/** What {@link unknownUsageRecord} needs — everything else about the run is, by definition, unknown. */
+export interface UnknownUsageInput {
+  /**
+   * The model this invocation was launched against: whatever the run's
+   * `started` event named, or — when it never got that far — ADL's own
+   * selection (`AgentTask.model`). Absent resolves to
+   * {@link UNRESOLVED_MODEL_ID}, exactly as {@link usageFromResult} does.
+   */
+  readonly model?: string | undefined;
+  /** Defaults to `'feature'`, mirroring {@link UsageFromResultEvent.costCategory}. */
+  readonly costCategory?: UsageCostCategory;
+}
+
+/**
+ * The honest record for an agent invocation that **ran and reported nothing**
+ * (BACK-09, D-31, M05 step 5.18).
+ *
+ * Every counter is null and `costSource` is `'unknown'` — the row says "an
+ * agent ran here and we do not know what it cost", which is a different and
+ * far more useful statement than either a row of zeroes (a lie a budget gate
+ * would enforce against) or no row at all (a gap indistinguishable from a
+ * stage that never invoked an agent).
+ *
+ * The caller decides *when* this applies, and that decision is the load-bearing
+ * half: `backend.ts` produces this only once the CLI process has actually been
+ * spawned. A spawn that never happened — a missing binary — is not an
+ * invocation and gets no record, because its true cost is zero rather than
+ * unknown, and `stage-runner.ts` already reports that failure through the
+ * `stage_error` channel.
+ */
+export function unknownUsageRecord(
+  input: UnknownUsageInput = {},
+): AgentUsageRecord {
+  return {
+    modelId: input.model ?? UNRESOLVED_MODEL_ID,
+    speed: DEFAULT_SPEED,
+    inputTokens: null,
+    outputTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    costUsd: null,
+    costSource: 'unknown',
+    costCategory: input.costCategory ?? DEFAULT_COST_CATEGORY,
   };
 }

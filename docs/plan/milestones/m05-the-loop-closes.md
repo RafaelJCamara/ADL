@@ -929,9 +929,80 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 
 ### D · Accounting and proof (AC5, AC2)
 
-- [ ] **5.18** — Record tokens and cost for *every* agent invocation in the loop
+- [x] **5.18** — Record tokens and cost for *every* agent invocation in the loop
       (BACK-09). M04 built the recording path and proved it for `dev-run`; extend it to
       every role and round. Degrade visibly to `cost_source: 'unknown'` — never silently.
+      **Shipped, and the word that mattered turned out to be "silently".** The recording
+      path M04 built was already correct for the case it was proven against, and already
+      fires for every round — the developer stage is dispatched afresh each round with its
+      own `roundId`/`stageAttemptId`, and the supervisor takes both from its own assignment
+      rather than the message (T-4-38). What was missing was a *proof* that it does, and
+      one real degradation that was silent rather than visible.
+      **The silent case, and it is the substance.** `claudeCodeBackend` attached a
+      `usageRecord` only when the run reached its terminal `result` event. A CLI killed by
+      a timeout, or one that exited non-zero mid-stream — a provider outage, a crashed
+      agent — burned tokens and reported none, and the worker's
+      `if (runResult.usageRecord !== undefined)` guard then sent nothing at all. That
+      invocation was **indistinguishable on the ledger from a stage that never invoked an
+      agent**, which is exactly the silent degradation BACK-09 forbids. New
+      `unknownUsageRecord` (`@adl/agent-claude-code`'s `usage.ts`, sharing
+      `UNRESOLVED_MODEL_ID`/`DEFAULT_SPEED`/`DEFAULT_COST_CATEGORY` with `usageFromResult`
+      rather than restating them, so the two records a reader has to tell apart differ in
+      exactly the field that distinguishes them) is the honest answer: every counter null,
+      `costSource: 'unknown'`, resolved **once** after `flush()` and shared by all three
+      post-exec return paths so a fourth cannot be added that quietly forgets.
+      **The negative half is the load-bearing half.** The property is not "always produce a
+      record" — it is "produce one exactly when an agent process ran". The one path that
+      still reports nothing is the spawn-failure `catch`, where `exec` rejected and no
+      process ever existed: its true cost is **zero, not unknown**, and a
+      `cost_source: 'unknown'` row there would put a phantom invocation on the ledger every
+      time the pinned binary is missing. `AgentRunResultWithUsage.usageRecord`'s docblock now
+      says `undefined` means that and only that. Left optional rather than
+      required-and-nullable deliberately: `ClaudeCodeAgentRunner` exists so a caller can read
+      the field without a cast, and several test doubles satisfy it by returning the plain
+      `AgentRunResult` the base port declares — making it required would break that
+      assignability to restate a property that is asserted directly anyway.
+      **A gate reports nothing, and that is now a checked property rather than an accident
+      of the code path.** A command gate runs `adl.yml`'s test command, not an agent, so a
+      zero-token row for it would be a *claim* that an agent ran for free — the exact shape
+      of lie D-31 exists to prevent, and one `spendByCategory` would fold into the totals as
+      confirmed spend. `test/scenario/command-gate-loop.test.ts` asserts zero usage rows
+      against both gate attempts; watched failing by adding a zero-valued `sendUsage` to the
+      gate branch, which turned the row count from 2 to 4.
+      **A real bug found while doing it, in the same class 5.16 found on `closeAttempt`.**
+      `daemon.ts`'s `recordUsage` had **no try/catch**, unlike the `closeAttempt` wiring
+      twelve lines below it, and both fire from the supervisor's floating
+      `void (async () => …)()` message task — so a failed spend write was an **unhandled
+      rejection that takes the manager down**. Not hypothetical: a `usage` message is
+      delivered moments before the `stage_result` that ends the round, which is precisely
+      when a stopping daemon closes the database. Watched failing for real (`Unhandled
+      Rejection: simulated ledger write failure`, captured verbatim) before the fix, and
+      watched recovering after it (the error logged with the feature and attempt identity,
+      daemon still running). A dropped spend row is a real loss and is therefore *reported*
+      at `error`, never swallowed quietly; crashing the manager over it would lose the round
+      as well as the row. **No permanent regression test** — `startDaemon` has no seam for
+      making one repository write fail — filed as a coverage gap in `DEBT.md` § 4 covering
+      both callbacks, since `closeAttempt`'s catch is equally untested.
+      **Proof, at both ends.** Unit: four cases in
+      `packages/agent-claude-code/test/usage.test.ts` (non-zero exit, killed run, ADL's own
+      model selection, and the spawn-failure negative control) plus two for
+      `unknownUsageRecord` itself, one of which asserts the two producers agree on every
+      field that is *not* the point of the distinction. End to end:
+      `test/usage/recording.test.ts` drives a real `startDaemon` against
+      `fake-claude-nonzero.mjs` — a CLI that really runs and exits 7 with no terminal event
+      — and asserts every resulting row is `unknown`/null and still fully attributed to its
+      round and attempt. And `test/scenario/command-gate-loop.test.ts` — the real two-round,
+      two-role loop — asserts exactly two rows, one per round, each joined to *that* round's
+      developer attempt, each carrying real tokens and a real reported cost. **No migration,
+      no new IPC field**; `UsageMessageSchema` already carried `'unknown'` in its
+      `costSource` enum, which is what made the honest answer expressible without one.
+      **Found and not fixed:** `DEBT.md` **D-5-18-1** (a second agent-invoking role — M07's
+      reviewer, which is a *gate* — would have to remember to report its spend, since
+      `GateContext` correctly has no member to report through; the fix belongs in the stage
+      runner, one level above the role, and needs a producer to shape it against). The
+      cost-accounting spike (`DEBT.md` item 1.2) is **unmoved**: reconciling a reported
+      figure against a real bill needs a live `ANTHROPIC_API_KEY`, and every number this
+      step put on the ledger came from a replay double.
 - [ ] **5.19** — The end-to-end scenario test. Feature folder → draft CR at round 1 → gate
       fails → send back → round 2 passes → promoted to ready. This is AC2's proof and the
       milestone's tracer; it must fail the first time through by construction.
@@ -982,4 +1053,5 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | Protected-path classification | `@adl/core/loop`'s `violatedProtectedPaths` + `matchesGlob` (pure) — done, 5.16. Structural (spec folder, `adl.yml`) plus `EffectiveConfig.protected_paths` (maintainer-declared globs). |
 | What a gate may see | `@adl/core/stage`'s `GateContext` + `GATE_CONTEXT_MEMBERS`/`GATE_DIFF_MEMBERS` (pure, compile-time exhaustive) — done, 5.17. A new field is a member plus a list entry, and it has to survive the forbidden-vocabulary test; `@adl/plugin-sdk` deliberately does not republish it. |
 | Turning a dispatch into gate context | `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` — done, 5.17. The one place an `AssignMessage` is narrowed; returns a classified `StageError` kind rather than throwing. A new gate goes in `worker-entry/gates/`, which `adl/gate-fresh-context` governs on the day it is created. |
+| An invocation that reported no spend | `@adl/agent-claude-code`'s `unknownUsageRecord` — done, 5.18. The counterpart to `usageFromResult`: all-null counters and `costSource: 'unknown'`, produced only once the CLI process has actually been spawned. `AgentRunResultWithUsage.usageRecord` absent means "no process ever started" and nothing else. |
 | The spec, out of the worktree | `packages/manager/src/worker-entry/spec-from-worktree.ts` — done, 5.17. Shared by the developer stage and gate-context assembly so the two cannot read different documents; contained through `resolveWithinRoot` + `Workspace.read` (WR-02 closed, D-2-R-3 accepted). |
