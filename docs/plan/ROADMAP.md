@@ -19,12 +19,12 @@ M01 ██████████ done        M07 ░░░░░░░░░�
 M02 █████████▒ code done   M08 ░░░░░░░░░░ not started
 M03 ██████████ done        M09 ░░░░░░░░░░ not started
 M04 █████████▒ code done   M10 ░░░░░░░░░░ not started
-M05 ░░░░░░░░░░ NEXT  ◀     M11 ░░░░░░░░░░ not started
-M06 ░░░░░░░░░░ not started M12 ░░░░░░░░░░ ⛔ HARD GATE
+M05 █████████▒ code done   M11 ░░░░░░░░░░ not started
+M06 ░░░░░░░░░░ NEXT  ◀     M12 ░░░░░░░░░░ ⛔ HARD GATE
                            M13–M18 ░░░░░ blocked on M12
 ```
 
-**4 of 18 milestones delivered. 2 of those carry one deferred check each** (see
+**5 of 18 milestones delivered. 3 of those carry one deferred check each** (see
 [`DEBT.md`](./DEBT.md)) — the code is merged, tested and on `main`; what's outstanding
 is an environment precondition, not project work.
 
@@ -34,7 +34,7 @@ is an environment precondition, not project work.
 
 ```
 M01–M04   contracts and machinery      ← nothing a user can see yet
-M05       the product first exists     ← a feature folder becomes a PR
+M05       the product first exists     ← a feature folder becomes a PR (done)
 M06–M11   make the loop safe + complete
 M12       ⛔ DOGFOOD — hard gate
 M13–M18   breadth, on a validated core
@@ -57,8 +57,8 @@ implementation is unfalsifiable.
 | M02     | Workspace & the Exec Boundary                 | 🟡 code complete     | M01        | [m02](./milestones/m02-workspace-exec-boundary.md)   |
 | M03     | Manager Skeleton — State, Leases, API, CLI    | ✅ done · 2026-08-20 | M02        | [m03](./milestones/m03-manager-skeleton.md)          |
 | M04     | First Agent Backend & Live Transcripts        | 🟡 code complete     | M03        | [m04](./milestones/m04-agent-backend-transcripts.md) |
-| **M05** | **The Loop Closes**                           | ◀ **NEXT**           | M04        | [m05](./milestones/m05-the-loop-closes.md)           |
-| M06     | Accountant — Budgets, Stalls, Escalation      | ⬜ not started       | M05        | [m06](./milestones/m06-accountant.md)                |
+| M05     | The Loop Closes                               | 🟡 code complete     | M04        | [m05](./milestones/m05-the-loop-closes.md)           |
+| **M06** | **Accountant — Budgets, Stalls, Escalation**  | ◀ **NEXT**           | M05        | [m06](./milestones/m06-accountant.md)                |
 | M07     | Code Reviewer on the Gate Plugin Interface    | ⬜ not started       | M06        | [m07](./milestones/m07-code-reviewer-gate.md)        |
 | M08     | Behaviour Tester & Committed Regression Tests | ⬜ not started       | M07        | [m08](./milestones/m08-behaviour-tester.md)          |
 | M09     | The Pull Request as the Product               | ⬜ not started       | M08        | [m09](./milestones/m09-pr-as-product.md)             |
@@ -88,13 +88,13 @@ status: [`REQUIREMENTS.md`](./REQUIREMENTS.md).
 | Category                | Count | Where                                                 |
 | ----------------------- | ----- | ----------------------------------------------------- |
 | Core Contracts          | 6     | M01 ✅                                                |
-| Feature Intake          | 6     | M01 ✅ (5) · M05 (1)                                  |
-| Detection & Scheduling  | 5     | M05 (3) · M10 (2)                                     |
-| The Loop                | 9     | M05 (2) · M06 (6) · M07 (1)                           |
-| Agent Roles             | 11    | M05 (3) · M07 (2) · M08 (6)                           |
+| Feature Intake          | 6     | M01 ✅ (5) · M05 ✅ (1)                               |
+| Detection & Scheduling  | 5     | M05 ✅ (3) · M10 (2)                                  |
+| The Loop                | 9     | M05 ✅ (2) · M06 (6) · M07 (1)                        |
+| Agent Roles             | 11    | M05 ✅ (3) · M07 (2) · M08 (6)                        |
 | Harness Extensibility   | 6     | M07 (4) · M13 (2)                                     |
-| Model Backends          | 9     | M04 ✅ (2) · M05 (1) · M11 (4) · M16 (2)              |
-| Forge Integration       | 12    | M05 (5) · M09 (5) · M14 (2)                           |
+| Model Backends          | 9     | M04 ✅ (2) · M05 ✅ (1) · M11 (4) · M16 (2)           |
+| Forge Integration       | 12    | M05 🟡 (5) · M09 (5) · M14 (2)                        |
 | Execution & State       | 7     | M01 ✅ (1) · M03 ✅ (6)                               |
 | Workspace & Trust       | 10    | M02 (7) · M15 (3)                                     |
 | Observability & Control | 8     | M03 ✅ (3) · M04 ✅ (1) · M06 (1) · M17 (2) · M18 (1) |

@@ -1,6 +1,6 @@
 # M05 — The Loop Closes
 
-**Status:** ◀ **NEXT — this is the active milestone**
+**Status:** 🟡 Code complete — one deferred check (needs a real, installed GitHub App) · 2026-08-26
 **Depends on:** M04
 **Requirements:** DETECT-01, DETECT-03, DETECT-05, LOOP-01, LOOP-02, ROLE-01, ROLE-03,
 ROLE-11, SPEC-06, BACK-09, FORGE-01, FORGE-02, FORGE-05, FORGE-06, FORGE-10 (15)
@@ -16,25 +16,30 @@ handoff.
 
 ## Done when
 
-- [ ] **AC1 — Detection → draft PR.** A feature folder is committed and, with no further
+- [x] **AC1 — Detection → draft PR.** A feature folder is committed and, with no further
       action, a draft pull request appears on GitHub at round 1 carrying the developer's
       work. Undeveloped features are identified by _evaluating repository state_, not by
       remembering events, and each feature is claimed exactly once even when detection
       re-runs or the daemon restarts mid-flight.
-- [ ] **AC2 — Send-back works.** A deliberately failing command gate (`npm test`) returns
+- [x] **AC2 — Send-back works.** A deliberately failing command gate (`npm test`) returns
       the developer to work carrying the failing verdict as context, and a subsequent
       round passes and promotes the draft to ready. **The loop is _not_ considered proven
       by a feature that passes first try.**
-- [ ] **AC3 — Gate integrity.** A developer that edits a spec, the gate configuration, or
+- [x] **AC3 — Gate integrity.** A developer that edits a spec, the gate configuration, or
       a test that judges it has that round hard-failed — detected by _diffing what it
       wrote_, not by asking. Gate context is assembled from spec, diff and repository
       only; the developer's session and transcript are structurally unreachable.
-- [ ] **AC4 — The PR stays readable.** Each agent role's presence on the PR is one sticky
+- [x] **AC4 — The PR stays readable.** Each agent role's presence on the PR is one sticky
       comment edited in place with prior rounds collapsed — not one comment per role per
       round. **ADL never merges**; the pull request waits for a human.
-- [ ] **AC5 — Accounting and trust.** Every agent invocation records its tokens and cost
+- [x] **AC5 — Accounting and trust.** Every agent invocation records its tokens and cost
       against the feature, and a spec arriving from a fork, a non-default branch, or an
       author without write permission is ignored rather than run.
+- [ ] **Deferred:** one real draft change request opened on a real GitHub repo through a
+      real, installed GitHub App — `docs/plan/DEBT.md` § 1 item 1.7, batched into the
+      end-of-project verification pass by maintainer decision. Every AC above is proven
+      end to end against a local mock GitHub server (`packages/manager/test/tracer/full-loop-end-to-end.test.ts`,
+      5.19); the one thing not yet exercised is `api.github.com` itself.
 
 ---
 
@@ -1003,9 +1008,37 @@ Rejection: simulated ledger write failure`, captured verbatim) before the fix, a
       cost-accounting spike (`DEBT.md` item 1.2) is **unmoved**: reconciling a reported
       figure against a real bill needs a live `ANTHROPIC_API_KEY`, and every number this
       step put on the ledger came from a replay double.
-- [ ] **5.19** — The end-to-end scenario test. Feature folder → draft CR at round 1 → gate
+- [x] **5.19** — The end-to-end scenario test. Feature folder → draft CR at round 1 → gate
       fails → send back → round 2 passes → promoted to ready. This is AC2's proof and the
       milestone's tracer; it must fail the first time through by construction.
+      **Shipped:** `packages/manager/test/tracer/full-loop-end-to-end.test.ts` — the one test
+      in the suite that runs every prior step's seam in a single daemon lifetime, with **no
+      manual `POST /dev-run` call anywhere in the file**. A feature folder is committed; the
+      real poll schedule (5.5) enqueues it after seeding SPEC-06 trust state on the mock
+      forge; the real dispatcher and round loop (5.13) fork real workers; round 1's real
+      command gate (5.14) fails by construction (`failThenPass`, copied from
+      `command-gate-loop.test.ts`'s own precedent — this file composes that scenario's
+      send-back half with detection and a real forge rather than re-deriving it); the
+      developer is sent back with round 1's finding as context (5.15); round 2's gate passes
+      against the developer's real commit; and — because this scenario configures a real
+      `forge` where `command-gate-loop.test.ts` deliberately does not — the green round
+      promotes the draft change request to ready (FORGE-05, 5.13's `promoteOnGreen`). A single
+      `waitUntil(state === 'pr_open')` is both AC2's send-back proof and FORGE-05's promotion
+      proof at once: `pr_open` is reachable only through the `cr_opened` event
+      `round-runner.ts`'s `promoteOnGreen` raises, and only after a real
+      `forge.promoteToReady` call against the mock GitHub server succeeded.
+      **No production code changed.** Every seam this step composes was already built and
+      independently proven (5.1–5.18); the milestone's own notes said as much — 5.19's job was
+      to prove the composition, not add to it. It passed on its first real run.
+      **Proof, read off the running daemon rather than assumed:** the draft CR appears
+      (`draft: true`, `head` matching the composed branch) before the terminal wait even
+      starts; `rounds.outcome` is exactly `['send_back', 'green']`, never a feature that
+      passed first try; the gate's counter file shows it ran exactly twice; both rounds carry
+      distinct real 40-hex commit shas; round 2's persisted prompt artifact contains round 1's
+      finding verbatim; the same change request is re-read after promotion with `draft: false`
+      (never merged — FORGE-10 — just no longer a draft); the sticky developer comment is
+      still exactly one comment, round 1 folded into `<details>`; and both developer
+      invocations are on the spend ledger with `cost_source: 'reported'`.
 
 ---
 

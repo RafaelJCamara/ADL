@@ -23,17 +23,22 @@ weekends, no deadline.
 
 ## Where we are
 
-**4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), all of group B (5.8–5.12), all of group C (5.13–5.17) and the accounting
-half of group D (5.18) are done. Only 5.19, the end-to-end proof, remains.**
+**5 of 18 milestones delivered. Milestone 5 is code-complete — every step (5.0 through
+5.19) is done, all five acceptance criteria are proven end to end, and `pnpm test` /
+`pnpm typecheck` / `pnpm lint` / `pnpm format` are all clean on `main`. M05 carries one
+deferred check, same shape as M02 and M04: a real draft change request against a real,
+installed GitHub App has never been opened — only against the local mock GitHub server.
+M06 is next, with a real prerequisite of its own still open — see "Open blockers" below
+before you start it.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener + groups A, B, C + 5.18 done; 5.19 next
-M06–M18 ............................. not started
+M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
+M06 Accountant ....................... ◀ NEXT — blocked on the cost-accounting spike (see below)
+M07–M18 .............................. not started
 ```
 
 **What actually works today:** a real Claude Code agent, driven through a bounded workspace,
@@ -454,41 +459,69 @@ and watched recovering, then filed as a coverage gap covering both callbacks, si
 no new IPC field** — `UsageMessageSchema` already carried `'unknown'` in its `costSource`
 enum, which is what made the honest answer expressible without one.
 
-**What does not exist yet:** the milestone's own end-to-end proof (5.19).
+**And the milestone's own end-to-end proof landed (5.19, closing M05).**
+`packages/manager/test/tracer/full-loop-end-to-end.test.ts` is the one test in the suite
+that runs every prior step's seam in a single daemon lifetime, with **no manual
+`POST /dev-run` call anywhere in the file** — the only external action is the one commit
+that seeds the feature folder. Everything after that happens on the daemon's own background
+timers: the real poll schedule (5.5) enqueues it after a real SPEC-06 trust check against the
+mock forge; the real dispatcher and round loop (5.13) fork real workers; round 1's real
+command gate (5.14) fails by construction, exactly as AC2 requires — a feature that passed
+first try would prove nothing; the developer is sent back carrying round 1's finding as
+context (5.15); round 2's gate passes against the developer's real commit; and — because this
+scenario configures a real `forge` where `command-gate-loop.test.ts` deliberately does not —
+the green round promotes the draft change request to ready (FORGE-05, `round-runner.ts`'s
+`promoteOnGreen`). A single `waitUntil(state === 'pr_open')` is both AC2's send-back proof and
+FORGE-05's promotion proof at once: `pr_open` is reachable only through the `cr_opened` event
+`promoteOnGreen` raises, and only after a real `forge.promoteToReady` call against the mock
+GitHub server actually succeeded. **No production code changed to make this pass** — every
+seam 5.19 composes was already built and independently proven by 5.1 through 5.18; this step's
+job was proving the composition, and it passed on its first real run. All five of M05's
+acceptance criteria are now checked in `milestones/m05-the-loop-closes.md`.
 
-The two 🟡 milestones are _not_ unfinished work. Their code is merged, tested and CI-green;
-what's outstanding is one environment precondition each (a live API key; a Linux host),
-batched deliberately into an end-of-project verification pass. See [`DEBT.md`](./DEBT.md) § 1.
+**M05 joins M02 and M04 as a third 🟡 milestone.** All three are _not_ unfinished work — code
+merged, tested and CI-green — what's outstanding is one environment precondition each (a live
+API key; a Linux host; a live, installed GitHub App), batched deliberately into an
+end-of-project verification pass. See [`DEBT.md`](./DEBT.md) § 1 — M05's own item is 1.7.
 
 ---
 
 ## What to do next
 
-Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and write
-**5.19 — the last step in the milestone.** Everything it composes is built: the loop turns,
-with a real gate, real send-back context, a real unconditional protected-path check, gates
-that structurally cannot see the developer's session or transcript, and a spend ledger that
-covers every agent invocation including the ones that report nothing.
+**M06 (Accountant) is next per the roadmap, but its own file
+([`milestones/m06-accountant.md`](./milestones/m06-accountant.md)) states a real
+prerequisite that is still open, not merely a nice-to-have:**
 
-It is the end-to-end scenario test: feature folder → draft CR at round 1 → gate fails → send
-back → round 2 passes → promoted to ready. **It must fail the first time through by
-construction.** Much of the chain already has a scenario test of its own
-(`test/scenario/command-gate-loop.test.ts`, `test/tracer/draft-cr-wiring.test.ts`,
-`test/scenario/protected-paths-loop.test.ts`); 5.19 is the one that runs all of it in a single
-daemon lifetime, detection included.
+> Prerequisite: the cost-accounting spike must close before this is planned.
 
-**The cost-accounting spike is still open and still blocked** — M06 needs a reported cost
-reconciled against a real bill ([`DEBT.md`](./DEBT.md) item 1.2). 5.18 put the numbers on the
-ledger, but every one of them came from a replay double; the reconciliation needs a live
-`ANTHROPIC_API_KEY` and belongs to the end-of-project batch with the rest of § 1.
+Step 6.1 _is_ that spike — one real agent turn, its reported cost reconciled against the
+provider's billed usage, and the `cost_source: 'unknown'` degradation path decided from real
+evidence rather than a guess. 5.18 put every number 6.2–6.5's budget gate will read onto the
+ledger, but every one of them came from a replay double (`fake-claude-success.mjs`); nothing
+in this project has yet invoked the real, billed `claude` CLI. The reconciliation needs a live
+`ANTHROPIC_API_KEY` plus the unshadowed pinned CLI — [`DEBT.md`](./DEBT.md) § 1 items 1.1–1.4,
+the same precondition M04 already deferred, batched by the same 2026-08-21 maintainer
+decision **so that gating a milestone on it doesn't stall the roadmap.** M05 was flagged as
+"the natural moment" to close it while a real agent turn was already running in anger, and
+that moment passed without live credentials being available in this environment — the spike
+is still open.
+
+**This is a real fork, not a formality — see the question below before doing anything else.**
+Either the end-of-project verification pass (§ 1, all 7 items — it needs both a live API key
+and a Linux host, so batching it is what M05's own item 1.7 and M02's items 1.5–1.6 have been
+waiting for too) runs now, out of its normal end-of-project order, to unblock M06 for real; or
+M06 gets planned and built up to the point 6.1 blocks it, with the budget gate's
+`cost_source: 'unknown'` degradation path built provisionally and revisited once the spike
+closes. Both are legitimate; only a human can make this call, the same way the 2026-08-21
+batching decision itself was made.
 
 **Before you start, skim:**
 
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
 - [`DEBT.md`](./DEBT.md) § 3 — **D-5-14-2** (a worker whose `stage_result` was accepted is
   still logged as "exited without an accepted result") and **D-5-13-2** (`features.round` and
-  `rounds.number` are silently one apart) are both owned by M06 and both sit directly on
-  5.19's path. Neither is blocking; both will be in the logs you are reading.
+  `rounds.number` are silently one apart) are both owned by M06 and both surfaced in 5.19's own
+  logs. Neither blocked 5.19; both are M06's to fix.
 
 ---
 
@@ -576,13 +609,16 @@ sudoers rule so the privilege-drop assertions actually execute.
 
 ## Open blockers
 
-Nothing blocks M05. Three things to know before you start:
+M05 is done, code-complete. One thing genuinely blocks starting M06 for real; two more are
+worth knowing before you touch it:
 
-1. **The end-of-project verification pass** ([`DEBT.md`](./DEBT.md) § 1) — 6 items needing
-   either a live `ANTHROPIC_API_KEY` + the unshadowed pinned CLI, or a Linux host. Batched
-   by maintainer decision so they don't stall the roadmap.
-   **M06 is blocked on one of them** (reconciling reported cost against a real bill) — the
-   natural moment to close it is _during_ M05.
+1. **The end-of-project verification pass** ([`DEBT.md`](./DEBT.md) § 1) — now 7 items (5.19
+   added item 1.7) needing either a live `ANTHROPIC_API_KEY` + the unshadowed pinned CLI, or a
+   Linux host. Batched by maintainer decision so they don't stall the roadmap.
+   **M06 is blocked on one of them** (reconciling reported cost against a real bill, items
+   1.1–1.4) — the natural moment to close it was _during_ M05, and that moment passed without
+   live credentials in this environment. See "What to do next" above — this needs a human
+   decision, not another milestone step.
 2. **D-2-R-1** ([`DEBT.md`](./DEBT.md) § 2) — the highest-severity open item. Concurrent
    features are not isolated from each other. Accepted for v1, with "concurrency > 1 on a
    shared host" as an explicit revisit trigger.
