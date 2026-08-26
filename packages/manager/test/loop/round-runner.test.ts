@@ -11,6 +11,7 @@ import {
 import { githubForgeAdapter } from '@adl/forge-github';
 import type { EffectiveConfig } from '@adl/core/config';
 import type { Verdict } from '@adl/core/verdict';
+import type { ManagerGitClient } from '@adl/workspace';
 import { openAttempt } from '../../src/bookkeeping/attempt.js';
 import { onStageCompleted } from '../../src/loop/round-runner.js';
 import type { StageRunnerVerdict } from '../../src/ipc/stage-verdict.js';
@@ -65,11 +66,41 @@ afterEach(async () => {
 });
 
 /** A snapshotted `EffectiveConfig`, reduced to what the loop actually reads. */
-function snapshot(pipeline: readonly string[], maxRounds = 6): string {
+function snapshot(
+  pipeline: readonly string[],
+  maxRounds = 6,
+  protectedPaths: readonly string[] = [],
+): string {
   return JSON.stringify({
     pipeline,
     limits: { max_rounds: maxRounds },
+    protected_paths: protectedPaths,
   } as unknown as EffectiveConfig);
+}
+
+/**
+ * A `ManagerGitClient` double for the round loop's own tests, which insert
+ * `rounds`/`features` rows directly rather than running a real worker against
+ * a real repository — there is no real commit behind `committed('deadbee')`
+ * for a real `git diff` to run against. `diffNameOnly` is the only member the
+ * round loop ever calls; every other member rejects loudly if a future case
+ * starts calling one, rather than silently returning a plausible-looking
+ * empty answer.
+ */
+function stubGitClient(
+  diffNameOnly: ManagerGitClient['diffNameOnly'] = () => Promise.resolve([]),
+): ManagerGitClient {
+  const notUsed = (member: string) => () =>
+    Promise.reject(new Error(`${member} is not used by this test`));
+  return {
+    status: notUsed('status'),
+    revParse: notUsed('revParse'),
+    branches: notUsed('branches'),
+    effectiveConfig: notUsed('effectiveConfig'),
+    listFiles: notUsed('listFiles'),
+    diffNameOnly,
+    push: notUsed('push'),
+  };
 }
 
 interface Seeded {
@@ -149,11 +180,16 @@ function stageError(kind: 'provider_error' | 'auth', detail = 'broke'): string {
   } satisfies StageRunnerVerdict);
 }
 
-function deps(db: Kysely<Database>, withForge = false) {
+function deps(
+  db: Kysely<Database>,
+  withForge = false,
+  git: ManagerGitClient = stubGitClient(),
+) {
   const { logger } = createCapturingLogger();
   return {
     db,
     logger,
+    git,
     ...(withForge ? { forge: { adapter: forge, repo: FORGE_REPO } } : {}),
   };
 }
@@ -174,7 +210,11 @@ async function report(
   stageIndex: number,
   stageId: string,
   verdictJson: string,
-  options: { readonly withForge?: boolean; readonly leaseToken?: string } = {},
+  options: {
+    readonly withForge?: boolean;
+    readonly leaseToken?: string;
+    readonly git?: ManagerGitClient;
+  } = {},
 ): Promise<{ roundId: string; stageAttemptId: string }> {
   let leaseToken = options.leaseToken;
   if (leaseToken === undefined) {
@@ -195,15 +235,18 @@ async function report(
     { db },
     { featureId: seeded.feature.id, stageId, stageIndex },
   );
-  await onStageCompleted(deps(db, options.withForge ?? false), {
-    feature: seeded.feature,
-    leaseToken,
-    roundId: attempt.roundId,
-    stageAttemptId: attempt.stageAttemptId,
-    stageId,
-    stageIndex,
-    verdictJson,
-  });
+  await onStageCompleted(
+    deps(db, options.withForge ?? false, options.git ?? stubGitClient()),
+    {
+      feature: seeded.feature,
+      leaseToken,
+      roundId: attempt.roundId,
+      stageAttemptId: attempt.stageAttemptId,
+      stageId,
+      stageIndex,
+      verdictJson,
+    },
+  );
   return attempt;
 }
 
@@ -461,6 +504,126 @@ describe('the round loop — closing a round', () => {
         .executeTakeFirst();
       expect(round?.outcome).toBe('unverified');
       expect((await reload(db, seeded.feature.id)).state).toBe('escalated');
+    });
+  });
+});
+
+describe('the round loop — protected-path enforcement (ROLE-11)', () => {
+  it('hard-fails a round whose commit touched adl.yml, never sending it back', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed('deadbee'),
+        { git: stubGitClient(() => Promise.resolve(['adl.yml'])) },
+      );
+
+      const row = await reload(db, seeded.feature.id);
+      expect(row.state).toBe('escalated');
+      // Not sent back for another attempt: escalated is terminal, and the
+      // whole point is that another round cannot be trusted to fix this.
+      expect(row.round).toBe(1);
+
+      const round = await db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('id', '=', roundId)
+        .executeTakeFirst();
+      expect(round?.outcome).toBe('escalate');
+      expect(round?.head_sha).toBe('deadbee');
+      const outcome = JSON.parse(round!.outcome_json!) as {
+        kind: string;
+        reason: string;
+      };
+      expect(outcome.kind).toBe('escalate');
+      expect(outcome.reason).toContain('adl.yml');
+
+      // The real commit is still on the audit trail — ROLE-11 hard-fails the
+      // round, it does not pretend the developer never committed.
+      const events = await featuresRepository(db).listEvents(seeded.feature.id);
+      expect(events.map((event) => event.event_json)).toEqual([
+        JSON.stringify({ t: 'workspace_ready' }),
+        JSON.stringify({ t: 'dev_committed', sha: 'deadbee' }),
+        expect.stringContaining('"t":"unrecoverable"') as unknown as string,
+      ]);
+
+      // A completed round, not a crash — the counter resets exactly as it
+      // does for any other round that reached an outcome.
+      expect(row.crash_count).toBe(0);
+      expect(row.lease_token).toBeNull();
+    });
+  });
+
+  it('hard-fails a round whose commit touched a maintainer-configured protected path', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db, {
+        effective_config_json: snapshot(['develop', 'test'], 6, ['tests/**']),
+      });
+
+      await report(db, seeded, 0, 'develop', committed('deadbee'), {
+        git: stubGitClient(() => Promise.resolve(['tests/widgets.spec.ts'])),
+      });
+
+      expect((await reload(db, seeded.feature.id)).state).toBe('escalated');
+    });
+  });
+
+  it('never protects a spec folder or test path the developer did not touch', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+
+      await report(db, seeded, 0, 'develop', committed('deadbee'), {
+        git: stubGitClient(() => Promise.resolve(['src/app.ts'])),
+      });
+
+      // An ordinary, unrelated diff advances exactly as it would with no
+      // protected-path check at all — the same shape the first test in this
+      // file asserts.
+      const row = await reload(db, seeded.feature.id);
+      expect(row.state).toBe('gating');
+      expect(row.current_stage_index).toBe(1);
+      expect(row.lease_token).toBeNull();
+    });
+  });
+
+  it('retries rather than judging, when the diff itself cannot be computed', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db, { crash_count: 0 });
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed('deadbee'),
+        {
+          git: stubGitClient(() =>
+            Promise.reject(new Error('git diff exploded')),
+          ),
+        },
+      );
+
+      const row = await reload(db, seeded.feature.id);
+      // Routed through the same crash-recovery path a retryable stage error
+      // takes — never a fail-open "no violation found" and never a round
+      // spent on an infrastructure problem.
+      expect(row.state).toBe('queued');
+      expect(row.crash_count).toBe(1);
+
+      const round = await db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('id', '=', roundId)
+        .executeTakeFirst();
+      expect(round?.outcome).toBeNull();
     });
   });
 });

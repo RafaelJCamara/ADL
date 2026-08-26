@@ -18,7 +18,7 @@ import {
 } from '@adl/core/config';
 import type { Kysely } from 'kysely';
 import pino, { type Logger } from 'pino';
-import { hostGitWorkspace } from '@adl/workspace';
+import { hostGitWorkspace, managerGitClient } from '@adl/workspace';
 import type { ForgeAdapter, ForgeRepoRef } from '@adl/core/forge';
 import { createApi } from './api/app.js';
 import type { FeatureView } from './api/routes/features.js';
@@ -314,6 +314,23 @@ export async function startDaemon(
     options.scratchRoot ?? join(dirname(options.dbFilePath), 'scratch');
   await mkdir(scratchRoot, { recursive: true });
 
+  // M05 step 5.16: a `ManagerGitClient` rooted at `mainRepo`, for the round
+  // loop's protected-path check (ROLE-11) — one instance for the daemon's
+  // whole lifetime, not one per round. Unlike `resolveProductionAdlYmlOrThrow`'s
+  // own host workspace below, this is built unconditionally: the check it
+  // backs is not skippable behind `options.resolveAdlYml` the way the adl.yml
+  // gate is, so every test fixture that boots a real `startDaemon()` gets a
+  // real (if otherwise unused) diff capability, exactly as it already gets a
+  // real database and a real supervisor.
+  const protectedPathsGit = managerGitClient(
+    await hostGitWorkspace({
+      featureId: 'adl-daemon-protected-paths',
+      mainRepo,
+      scratchRoot,
+      baseRef: 'HEAD',
+    }),
+  );
+
   // D-35: reconcile watched repositories next.
   await reconcileRepos({ db, repos: options.daemonConfig.repos, logger });
 
@@ -492,6 +509,7 @@ export async function startDaemon(
         {
           db,
           logger,
+          git: protectedPathsGit,
           ...(configuredForge !== undefined
             ? {
                 forge: {
@@ -530,11 +548,27 @@ export async function startDaemon(
     // `closeAttempt` — never a second writer. Without this, `GET
     // /stages/:id/logs?follow=1`'s `isAttemptEnded` gate can never see a
     // real run finish, and `adl logs -f` never terminates on its own.
-    closeAttempt: (params) =>
-      closeAttempt(
-        { db },
-        { stageAttemptId: params.stageAttemptId, status: params.status },
-      ),
+    //
+    // Caught, not left to propagate: this fires from the supervisor's own
+    // message handler (`worker-supervisor/supervisor.ts`), which nothing
+    // awaits — the same reason `loop/round-runner.ts`'s `onStageCompleted`
+    // is itself never allowed to throw. A shutdown (or, in a test, teardown)
+    // that closes the database connection while this write is still in
+    // flight must not surface as an unhandled rejection; it is exactly the
+    // shape of failure that outcome exists to keep off the process.
+    closeAttempt: async (params) => {
+      try {
+        await closeAttempt(
+          { db },
+          { stageAttemptId: params.stageAttemptId, status: params.status },
+        );
+      } catch (error) {
+        logger.error(
+          { err: error, stageAttemptId: params.stageAttemptId },
+          'closeAttempt: failed to record the terminal status',
+        );
+      }
+    },
   });
 
   const reaper = startReaper({

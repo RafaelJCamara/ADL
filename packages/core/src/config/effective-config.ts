@@ -416,6 +416,7 @@ export const EffectiveConfigSchema = z
   .strictObject({
     version: z.literal(ADL_YML_VERSION),
     features_dir: RepoRelativePathSchema,
+    protected_paths: z.array(RepoRelativePathSchema),
     commands: CommandsSchema,
     context: ContextConfigSchema,
     pipeline: z.array(PipelineEntrySchema).min(1),
@@ -560,6 +561,7 @@ export function mergeConfig(
   const config: EffectiveConfig = {
     version: repo.version,
     features_dir: repo.features_dir,
+    protected_paths: repo.protected_paths,
     commands: repo.commands,
     context: repo.context,
     pipeline: repo.pipeline,

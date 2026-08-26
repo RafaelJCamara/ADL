@@ -287,6 +287,32 @@ describe('tracer: adl dev-run makes a real commit through a real agent, streamed
             // remains in the shared object database (unreachable, not
             // garbage-collected within this test's lifetime).
             await waitUntil(() => !processIsAlive(pid), { timeoutMs: 10_000 });
+
+            // The worker exiting is not the same signal as the MANAGER
+            // finishing its own async work on this stage's result (M05 step
+            // 5.13's round loop, running in this process, not the worker's) —
+            // `onStageCompleted`/`closeAttempt` fire after the worker has
+            // already reported and can still be in flight once it exits.
+            // Tearing the daemon down mid-flight raced a real `git diff`
+            // subprocess (M05 step 5.16's protected-path check) against
+            // `withTempDb`'s connection teardown often enough to be worth a
+            // real wait rather than a coincidence of the old, faster timing:
+            // the round this single-`develop`-stage pipeline produces always
+            // closes as `escalate` (5.13's own documented "develop alone"
+            // rule), so waiting for `rounds.ended_at` is the direct signal.
+            await waitUntil(
+              async () => {
+                const round = await db
+                  .selectFrom('rounds')
+                  .select('ended_at')
+                  .where('feature_id', '=', devRunBody.featureId)
+                  .executeTakeFirst();
+                return (
+                  round?.ended_at !== null && round?.ended_at !== undefined
+                );
+              },
+              { timeoutMs: 10_000 },
+            );
           } finally {
             await handle.stop();
           }

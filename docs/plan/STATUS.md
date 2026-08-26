@@ -24,7 +24,8 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), all of group B (5.8–5.12), and group C's 5.13, 5.14 and 5.15 are done.**
+group A (5.1–5.7), all of group B (5.8–5.12), and group C's 5.13, 5.14, 5.15 and 5.16 are
+done.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -322,8 +323,52 @@ functions and the renderer, dispatcher-level integration tests for the field-thr
 disk and assert it carries round 1's real finding verbatim, with round 1's own artifact read
 as the negative control.
 
-**What does not exist yet:** protected-path enforcement (5.16), formal gate isolation
-(5.17), and per-round accounting (group D).
+And a developer that edits its own gate configuration now hard-fails the round it did it in
+(5.16, ROLE-11) — unconditionally, not something `adl.yml`'s `pipeline:` list has to name.
+Three protections: the feature's own spec folder and `adl.yml` are structurally protected
+with zero configuration (`@adl/core/loop`'s new `violatedProtectedPaths`); a third,
+maintainer-declared `protected_paths` glob list (a new optional `adl.yml` field, confirmed
+with the maintainer before implementation, since ADL has no existing way to know which
+files in an arbitrary repo "are tests" — `adl-yml.ts`'s own rule is that commands are
+explicit by design and never auto-detected, and this follows it) covers the tests that judge
+a gate. **The check runs in the manager, never as a pipeline stage** — a maintainer's
+`adl.yml` that simply forgets to declare a gate must not silently drop the one check meant to
+catch the developer editing that same file — firing from `round-runner.ts`
+(`loop/protected-paths-check.ts`'s `checkProtectedPaths`) on every `committed` developer
+outcome, before `planRoundStep` ever runs. It is the first real consumer of `rounds.head_sha`
+for a computation rather than a rendered string: the diff base is the previous round's
+`head_sha` or, on round 1, the repo's `default_branch`, and one `ManagerGitClient
+.diffNameOnly(base, head)` call (new; `git diff --name-only base...head`, three-dot) covers
+both, diffing against the merge base rather than `base`'s own moved tip. A worktree shares
+its parent repository's object database, so this reads through a `hostGitWorkspace` rooted
+at `mainRepo` alone — no second workspace, no worker round-trip, no new `AssignMessage`
+field. A violation is a hand-built `CompleteStep` (`dev_committed` first, so the real commit
+stays on the audit trail, then `unrecoverable`) — `fail`-shaped and non-retryable, never a
+`send_back`, matching "hard-fail" exactly; a diff that could not even be computed routes
+through `reapOne`'s crash-recovery path instead, the same CORE-06 discipline every other
+infrastructure failure in this loop already holds to — never fail-open, never a round spent
+on a problem nobody judged.
+**Two real bugs found proving this end to end, neither in the check itself.**
+`scripted-pipeline-worker-entry.ts` (5.13's own round-loop scenario double) reported a
+fabricated `committed` sha with no real commit behind it — harmless until a check tried to
+diff it, which an unconditional ROLE-11 does on every run. Fixed by making that double's
+developer step attach a real workspace and commit for real, mirroring
+`fake-claude-success.mjs`'s own precedent. And making `onStageCompleted` measurably slower
+(a real `git diff` subprocess where before there was none) widened a pre-existing race:
+`daemon.ts`'s `closeAttempt` wiring had no error handling, unlike `onStageCompleted`'s own
+documented "never throws" contract, and losing a race against a test's database teardown
+surfaced as a real, reproducible unhandled rejection rather than a coincidence of the old,
+faster timing — confirmed against a clean `pnpm -r test` baseline on `main` both ways. Fixed
+by hardening `closeAttempt` to the same standard and by making `dev-run-end-to-end.test.ts`
+wait for the round to actually close rather than for the worker process to merely exit, which
+was never the right signal for "the manager's own async work is done".
+**D-2-R-3 is unmoved by this step** — the diff reads git's object database through
+`ManagerGitClient`, never a worktree path through `assertWithinRoot`, so this is not that
+debt item's live TOCTOU instance; it stays open for whichever future step first reads
+agent-influenced worktree files (5.17's gate context, most likely).
+
+**What does not exist yet:** formal gate isolation (5.17) and per-round accounting
+(group D).
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -334,15 +379,17 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-group C with **5.16 — protected-path enforcement (ROLE-11)**. Groups A and B are closed, and
-5.13/5.14/5.15 have turned the loop with a real gate and real send-back context.
+group C with **5.17 — fresh-context gate isolation (ROLE-03)**. Groups A and B are closed,
+and 5.13/5.14/5.15/5.16 have turned the loop with a real gate, real send-back context, and a
+real, unconditional protected-path check.
 
-**5.16 is the first real consumer of `rounds.head_sha`.** It needs the diff between the base
-and this round's commit, which the command gate did not, because it runs *inside* the
-attached worktree where `HEAD` already is that commit. A developer that edits a spec, the
-gate configuration, or a test that judges it must have that round hard-failed — **detected by
-diffing what it wrote, never by asking the agent.** Group D (accounting) can run in
-parallel — real rounds exist to record against.
+**5.17 makes gate context a type the gate cannot name a developer session or transcript
+through, rather than a rule it is asked to follow** — spec + diff + repository, structurally.
+5.16's `checkProtectedPaths`/`ManagerGitClient.diffNameOnly` is real, proven diff plumbing
+this step can likely reuse or sit beside, and D-2-R-3 (`assertWithinRoot`'s TOCTOU) is worth
+a second look here specifically, since gate context assembly is a plausible first real reader
+of agent-influenced worktree files — 5.16 turned out not to be. Group D (accounting) can run
+in parallel — real rounds exist to record against.
 
 **Before you plan M05 in detail, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
@@ -410,7 +457,7 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 | `packages/workspace` | **The exec boundary.** Worktree lifecycle — including `attach`/`detach`, so a workspace outlives the stage that created it (5.14) — zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
 | `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`) and for the credentialed publish side — push, open a draft change request, upsert each role's sticky comment (5.10, 5.11). Both list calls paginate. | core |
-| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, `src/worker-entry/command-gate.ts`), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
+| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, `src/worker-entry/command-gate.ts`), **the protected-path check** (5.16, `src/loop/protected-paths-check.ts` — runs in the manager, not a pipeline stage), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
 | `packages/cli` | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`). | nothing, by design |
 
 No `apps/` directory — the dashboard is M17 and unbuilt.

@@ -15,6 +15,7 @@ import type {
 } from '@adl/core/forge';
 import {
   planRoundStep,
+  type CompleteStep,
   type RoundStep,
   type StageCompletion,
 } from '@adl/core/loop';
@@ -25,10 +26,15 @@ import {
   type TransitionCtx,
 } from '@adl/core/state';
 import type { Verdict } from '@adl/core/verdict';
+import type { ManagerGitClient } from '@adl/workspace';
 import { parseStageRunnerVerdict } from '../ipc/stage-verdict.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
 import { promoteChangeRequestToReady } from '../publish/promote.js';
 import { reapOne, resetCrashCountOnSuccess } from '../scheduler/reaper.js';
+import {
+  checkProtectedPaths,
+  type ProtectedPathCheckResult,
+} from './protected-paths-check.js';
 
 /**
  * `onStageCompleted` — the round loop's database half (LOOP-01, M05 step 5.13).
@@ -83,6 +89,16 @@ import { reapOne, resetCrashCountOnSuccess } from '../scheduler/reaper.js';
 export interface RoundRunnerDeps {
   readonly db: Kysely<Database>;
   readonly logger: Logger;
+  /**
+   * A `ManagerGitClient` rooted at `mainRepo` — protected-path enforcement's
+   * own diff (ROLE-11, M05 step 5.16). Required, not optional: unlike `forge`
+   * below, this is not a bonus feature the loop degrades gracefully without —
+   * a daemon that cannot check what a round touched must not silently skip
+   * the check, which is exactly what an optional field would let a caller do
+   * by omission. `daemon.ts` builds one `hostGitWorkspace`-backed client for
+   * the whole process lifetime; a test builds its own, often a stub.
+   */
+  readonly git: ManagerGitClient;
   /** Defaults to `nowIso`. Injectable so a test can control the timestamp. */
   readonly now?: () => string;
   readonly actor?: string;
@@ -120,6 +136,50 @@ function unparseable(detail: string): StageCompletion {
     // that reported nonsense is not plausibly different, and CORE-06 keeps it
     // off the developer's round count either way.
     error: { kind: 'unparseable', retryable: false, detail },
+  };
+}
+
+/**
+ * How many violated paths the escalation reason names verbatim before it
+ * switches to "…and N more". A `Finding.detail`-style bound (`command-gate.ts`'s
+ * `OUTPUT_TAIL_CHARS`) for the same reason: `RoundOutcome.reason` is a plain
+ * string, persisted to `rounds.outcome_json` and rendered straight into a
+ * **public** pull-request comment (threat T-1-21) — a round whose commit
+ * touched thousands of paths must not turn that comment into the whole list.
+ */
+const MAX_VIOLATED_PATHS_SHOWN = 20;
+
+/** The escalation reason for a round ROLE-11 hard-failed — bounded, never the whole diff. */
+function describeProtectedPathViolation(paths: readonly string[]): string {
+  const shown = paths.slice(0, MAX_VIOLATED_PATHS_SHOWN);
+  const omitted = paths.length - shown.length;
+  const list =
+    shown.join(', ') + (omitted > 0 ? `, and ${String(omitted)} more` : '');
+  return (
+    'the developer touched a path ROLE-11 protects — the spec, adl.yml, and any ' +
+    `configured protected_paths must never be edited by the developer agent: ${list}`
+  );
+}
+
+/**
+ * The round this developer stage produced, overridden into a hard fail
+ * (ROLE-11). Shaped exactly like `planRoundStep`'s own `escalate()` helper —
+ * `dev_committed` first, so the audit trail still records the real commit,
+ * then `unrecoverable` — but built here rather than by that pure function,
+ * since only this module knows the violation (`round-step.ts` sees no diff).
+ */
+function protectedPathViolationStep(
+  sha: string,
+  paths: readonly string[],
+): CompleteStep {
+  const reason = describeProtectedPathViolation(paths);
+  return {
+    kind: 'complete',
+    events: [
+      { t: 'dev_committed', sha },
+      { t: 'unrecoverable', reason },
+    ],
+    outcome: { kind: 'escalate', reason },
   };
 }
 
@@ -507,6 +567,8 @@ async function runStageCompleted(
 
   // Evidence first, state second. A CAS that loses its race must not also
   // lose the judgement that a pull request is rendered from.
+  let protectedPathResult: ProtectedPathCheckResult | undefined;
+  let committedSha: string | undefined;
   if (completion.kind === 'gate') {
     await recordGateVerdict(
       deps,
@@ -531,37 +593,56 @@ async function runStageCompleted(
     // pipeline with any gate in it `advance`s rather than completing, so a
     // round-close-only write would never fire for exactly the pipelines this
     // milestone exists to run.
+    committedSha = completion.outcome.sha;
     await repo.recordRoundHeadSha({
       id: params.roundId,
-      headSha: completion.outcome.sha,
+      headSha: committedSha,
     });
+
+    // ROLE-11 (M05 step 5.16): unconditional on every commit, before
+    // `planRoundStep` ever runs — see `protected-paths-check.ts`'s own
+    // docblock for why this is not, and must not be, a pipeline entry
+    // `adl.yml` has to remember to declare.
+    protectedPathResult = await checkProtectedPaths(
+      { db: deps.db, git: deps.git },
+      {
+        feature,
+        protectedGlobs: protectedPathsOf(feature),
+        headSha: committedSha,
+      },
+    );
   }
 
   const pipeline = resolveSnapshotPipeline(feature.effective_config_json);
-  const step: RoundStep = pipeline.ok
-    ? planRoundStep({
-        stageIndex: params.stageIndex,
-        pipelineLength: pipeline.stages.length,
-        stageId: params.stageId,
-        completion,
-        priorVerdicts: await readRoundVerdicts(
-          deps.db,
-          params.roundId,
-          params.stageAttemptId,
-        ),
-      })
-    : // A pipeline this build cannot resolve is not something another round
-      // fixes — the configuration names a harness with no loader (M13), and
-      // the feature would fail identically every time.
-      planRoundStep({
-        stageIndex: params.stageIndex,
-        pipelineLength: 0,
-        stageId: params.stageId,
-        completion: unparseable(
-          `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
-        ),
-        priorVerdicts: [],
-      });
+  const step: RoundStep =
+    protectedPathResult?.kind === 'violated' && committedSha !== undefined
+      ? protectedPathViolationStep(committedSha, protectedPathResult.paths)
+      : protectedPathResult?.kind === 'error'
+        ? { kind: 'retry', reason: protectedPathResult.detail }
+        : pipeline.ok
+          ? planRoundStep({
+              stageIndex: params.stageIndex,
+              pipelineLength: pipeline.stages.length,
+              stageId: params.stageId,
+              completion,
+              priorVerdicts: await readRoundVerdicts(
+                deps.db,
+                params.roundId,
+                params.stageAttemptId,
+              ),
+            })
+          : // A pipeline this build cannot resolve is not something another
+            // round fixes — the configuration names a harness with no loader
+            // (M13), and the feature would fail identically every time.
+            planRoundStep({
+              stageIndex: params.stageIndex,
+              pipelineLength: 0,
+              stageId: params.stageId,
+              completion: unparseable(
+                `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
+              ),
+              priorVerdicts: [],
+            });
 
   if (step.kind === 'retry') {
     // The stage broke transiently. Routed through `reapOne` — the same
@@ -710,6 +791,33 @@ function maxRoundsOf(feature: FeaturesTable): number {
     return typeof value === 'number' ? value : 0;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * The maintainer-declared protected-path globs this feature was leased
+ * under, from its own snapshot — `maxRoundsOf`'s exact degrade-on-malformed
+ * shape (rule 5, CORE-06's spirit): a snapshot this build cannot read narrows
+ * `checkProtectedPaths` to its two structural, always-on protections rather
+ * than throwing. It never widens what is protected — an empty list here only
+ * ever means "nothing configured or nothing readable", never "read and empty
+ * on purpose vs. read and unreadable" collapsed into a false negative wider
+ * than the two unconditional protections `violatedProtectedPaths` still
+ * applies regardless.
+ */
+function protectedPathsOf(feature: FeaturesTable): readonly string[] {
+  if (feature.effective_config_json === null) return [];
+  try {
+    const parsed = JSON.parse(feature.effective_config_json) as {
+      protected_paths?: unknown;
+    };
+    const value = parsed.protected_paths;
+    return Array.isArray(value) &&
+      value.every((entry) => typeof entry === 'string')
+      ? value
+      : [];
+  } catch {
+    return [];
   }
 }
 

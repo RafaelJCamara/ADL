@@ -220,6 +220,22 @@ export interface ManagerGitClient {
    */
   listFiles(ref: string, pathPrefix?: string): Promise<readonly string[]>;
   /**
+   * Every path that differs between `base` and `head`, repo-relative
+   * (protected-path enforcement, ROLE-11, M05 step 5.16 — `@adl/manager`'s
+   * `loop/protected-paths-check.ts` is the caller).
+   *
+   * `base...head` — three dots, not two. Git diffs `head` against the merge
+   * base of `base` and `head`, never against `base`'s own tip. That is what
+   * makes one expression correct for both of this caller's cases: round 1's
+   * `base` is the watched repository's own default branch, which may have
+   * moved past the commit the feature actually branched from by the time this
+   * runs, while every later round's `base` is an ancestor of `head` by
+   * construction (the developer's own prior commit) — where the merge base
+   * *is* `base` and the two forms agree. Two dots would silently include
+   * unrelated commits `base` picked up after the feature diverged.
+   */
+  diffNameOnly(base: string, head: string): Promise<readonly string[]>;
+  /**
    * Push `refspec` to `remoteUrl` (M05's forge publish step).
    *
    * **Deliberately no credential parameter.** `NEUTRALISE_ARGS` already
@@ -444,6 +460,24 @@ export function managerGitClient(
       ];
       if (pathPrefix !== undefined) args.push('--', pathPrefix);
       const raw = await gitOk(args);
+      return raw.split('\0').filter((path) => path !== '');
+    },
+
+    async diffNameOnly(base: string, head: string): Promise<readonly string[]> {
+      // `--end-of-options` before the range, matching `revParse`'s own guard —
+      // `base`/`head` are shas or branch names this client's own callers
+      // compute, never a raw pathspec, but the guard is unconditional here for
+      // the same reason it is everywhere else in this file: nobody has to
+      // remember it applies. `-z` for the same reason `listFiles` uses it — a
+      // changed path containing a space, quote, or non-ASCII byte would
+      // otherwise arrive quoted and escaped rather than literal.
+      const raw = await gitOk([
+        'diff',
+        '--name-only',
+        '-z',
+        '--end-of-options',
+        `${base}...${head}`,
+      ]);
       return raw.split('\0').filter((path) => path !== '');
     },
 

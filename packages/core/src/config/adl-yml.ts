@@ -68,6 +68,8 @@ import { parseYamlDocument } from './yaml-parse.js';
  * ```yaml
  * version: 1
  * features_dir: features
+ * protected_paths:
+ *   - tests/**
  *
  * commands:
  *   build:
@@ -541,6 +543,19 @@ export const AdlYmlSchema = z
       'The directory, relative to the repo root, ADL watches for feature folders ' +
         '(features/<id>/, D-16). Default: "features".',
     ),
+    protected_paths: z
+      .array(RepoRelativePathSchema)
+      .default([])
+      .describe(
+        'Repo-relative glob patterns (e.g. "tests/**", "**/*.spec.ts") the developer agent ' +
+          'must never modify — typically the tests that judge a gate (ROLE-11). Combined ' +
+          "unconditionally with the feature's own spec folder and adl.yml itself, which are " +
+          'always protected regardless of this list — a round that touches either is hard-' +
+          "failed whether or not this field is set. Detected by diffing the round's commit, " +
+          'never by asking the agent. Default: [] (only the two structural protections apply). ' +
+          'Auto-detecting which files "are tests" is exactly the non-deterministic guess this ' +
+          "schema's commands already refuse to make, so this list is explicit by design too.",
+      ),
     commands: CommandsSchema.describe(
       'The four lifecycle commands — build, start, test, teardown — each an argv array, ' +
         'never a shell string. No default: every field is required.',

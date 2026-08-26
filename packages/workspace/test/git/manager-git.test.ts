@@ -96,6 +96,7 @@ describe('the neutralisation cannot be reached around', () => {
     branches: (client) => client.branches(),
     effectiveConfig: (client) => client.effectiveConfig('user.name'),
     listFiles: (client) => client.listFiles('HEAD'),
+    diffNameOnly: (client) => client.diffNameOnly('HEAD', 'HEAD'),
     push: (client) =>
       client.push(
         'https://example.invalid/repo.git',
@@ -491,6 +492,122 @@ describe('listFiles', () => {
         await expect(
           managerGitClient(host).listFiles('HEAD', 'features'),
         ).resolves.toEqual([]);
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+});
+
+describe('diffNameOnly', () => {
+  it('reports only the paths a range actually changed', async () => {
+    await withTempRepo(async (ctx) => {
+      const base = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      await mkdir(join(ctx.mainRepo, 'features', 'dark-mode'), {
+        recursive: true,
+      });
+      await writeFile(
+        join(ctx.mainRepo, 'features', 'dark-mode', 'spec.md'),
+        '# Dark mode\n',
+        'utf8',
+      );
+      await writeFile(join(ctx.mainRepo, 'tracked.txt'), 'changed\n');
+      await ctx.git.add(['features/dark-mode/spec.md', 'tracked.txt']);
+      await ctx.git.raw(['commit', '-m', 'developer work']);
+      const head = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      const host = await workspaceRegistry({
+        hostGit: { configHome: join(ctx.scratchRoot, '..', 'adl-home-diff') },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-diff',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        const changed = await managerGitClient(host).diffNameOnly(base, head);
+        expect(changed.sort()).toEqual(
+          ['features/dark-mode/spec.md', 'tracked.txt'].sort(),
+        );
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+
+  it('returns empty for an unchanged range, never throwing', async () => {
+    await withTempRepo(async (ctx) => {
+      const head = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      const host = await workspaceRegistry({
+        hostGit: {
+          configHome: join(ctx.scratchRoot, '..', 'adl-home-diff-empty'),
+        },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-diff-empty',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        await expect(
+          managerGitClient(host).diffNameOnly(head, head),
+        ).resolves.toEqual([]);
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+
+  it('diffs against the merge base, not against base’s own moved tip (three-dot)', async () => {
+    await withTempRepo(async (ctx) => {
+      // The fork point: both the default branch's later commit and the
+      // feature branch diverge from here. A two-dot diff against the default
+      // branch's later tip would wrongly include `main-only.txt`; three-dot
+      // must not. Read the branch name rather than assuming "main" or
+      // "master" — `git init`'s default depends on the host's own config.
+      const defaultBranch = (
+        await ctx.git.raw(['branch', '--show-current'])
+      ).trim();
+
+      await ctx.git.raw(['checkout', '-b', 'feature-branch']);
+      await writeFile(join(ctx.mainRepo, 'feature-only.txt'), 'feature\n');
+      await ctx.git.add('feature-only.txt');
+      await ctx.git.raw(['commit', '-m', 'feature work']);
+      const featureHead = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      await ctx.git.raw(['checkout', defaultBranch]);
+      await writeFile(join(ctx.mainRepo, 'main-only.txt'), 'unrelated\n');
+      await ctx.git.add('main-only.txt');
+      await ctx.git.raw(['commit', '-m', 'unrelated main work']);
+      const mainHead = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      const host = await workspaceRegistry({
+        hostGit: {
+          configHome: join(ctx.scratchRoot, '..', 'adl-home-diff-mergebase'),
+        },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-diff-mergebase',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        const changed = await managerGitClient(host).diffNameOnly(
+          mainHead,
+          featureHead,
+        );
+        expect(changed).toEqual(['feature-only.txt']);
       } finally {
         await host.destroy();
       }

@@ -738,9 +738,84 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       too, as the negative control proving the placeholder is what "no brief yet" actually
       renders. **No DB migration** — `sendBackBriefFromClosedRound` reads `rounds.outcome_json`
       as already-stored text; nothing new is written.
-- [ ] **5.16** — Protected-path enforcement (ROLE-11). Diff what the developer wrote; if
+- [x] **5.16** — Protected-path enforcement (ROLE-11). Diff what the developer wrote; if
       it touched a spec, the gate configuration, or a test that judges it, hard-fail the
       round. **Detected by diffing, never by asking the agent.**
+      **Shipped, and unconditional rather than pipeline-configured.** Three protections,
+      and only the third needed a design decision: the feature's own spec folder and
+      `adl.yml` are structurally protected with no configuration at all (`@adl/core/loop`'s
+      new `violatedProtectedPaths` + `GATE_CONFIG_PATH`); "the tests that judge it" have no
+      existing concept in this codebase to hang off (`commands.test` is an opaque argv, and
+      `adl-yml.ts`'s own governing rule is that commands are explicit by design, never
+      auto-detected) — **confirmed with the maintainer before implementation:** a new,
+      optional `adl.yml` field, `protected_paths` (repo-relative globs, default `[]`),
+      resolved into `EffectiveConfig` verbatim like `features_dir`. A small, deliberately
+      narrow glob dialect (`**`, `*`, literal segments) backs it, matched by memoized
+      recursion — polynomial in pattern-segments × path-segments — rather than naive
+      backtracking, since the path side is a developer-authored diff (the same "no
+      catastrophic backtracking" discipline `path-guard.ts`'s own regex holds itself to).
+      **The check runs in the manager, never as a pipeline stage or a worker dispatch.**
+      ROLE-11 has to be unconditional — a maintainer's `adl.yml` that forgets to declare a
+      gate must not silently drop the one check that exists to catch the developer editing
+      that same file — so `packages/manager/src/loop/protected-paths-check.ts`'s
+      `checkProtectedPaths` fires from `round-runner.ts` on every `committed` developer
+      outcome, before `planRoundStep` ever runs, using a `ManagerGitClient` rooted at
+      `mainRepo` (one `hostGitWorkspace` built once for the daemon's lifetime, not per
+      round). This is the first real consumer of `rounds.head_sha`: the diff base is the
+      previous round's `head_sha` (`FeaturesRepository.latestClosedRound`, 5.15's own
+      method) or, for round 1, the repo's `default_branch` — one `ManagerGitClient
+      .diffNameOnly(base, head)` expression covers both, because git's `base...head`
+      (three-dot) diffs against the merge base rather than `base`'s own tip, which is what
+      makes it correct even when `default_branch` has moved on for unrelated reasons since
+      the feature forked. A worktree shares its parent repository's object database, so
+      both commits are reachable from `mainRepo` alone — no second workspace, no worker
+      round-trip, no new `AssignMessage` field. A violation overrides what
+      `planRoundStep` would have decided with a synthetic `CompleteStep` built by hand
+      (`dev_committed` first, so the real commit stays on the audit trail, then
+      `unrecoverable`) rather than a `send_back` — `fail`-shaped, not retryable, matching
+      "hard-fail" exactly. A failure to even compute the diff overrides it with a
+      `RetryStep` instead, routed through the same `reapOne` crash-recovery path a transient
+      stage error already takes — CORE-06's discipline held to the letter: an infrastructure
+      failure here must not silently pass as clean (fail-open would defeat the whole
+      guarantee) and must not cost the developer a round either.
+      **Two real bugs found while proving this end to end, neither in the check itself.**
+      (1) `scripted-pipeline-worker-entry.ts` (5.13's own round-loop scenario double)
+      reported a fabricated `committed` sha with no real commit behind it — harmless until a
+      check tried to diff it, which is exactly what an unconditional ROLE-11 does on every
+      run. Fixed by making that double's developer step attach a real workspace through
+      `@adl/workspace`'s own registry and make a real commit, mirroring
+      `fake-claude-success.mjs`'s precedent for the identical reason. (2) Making
+      `onStageCompleted` measurably slower (a real `git diff` subprocess where before there
+      was none) widened a pre-existing, unrelated race: the supervisor's `closeAttempt`
+      wiring in `daemon.ts` had no error handling, unlike `onStageCompleted`'s own
+      documented "never throws" contract, and an in-flight write losing a race against a
+      test's own database teardown surfaced as an unhandled rejection often enough to be a
+      real flake rather than a coincidence of the old, faster timing. Fixed by hardening
+      `closeAttempt`'s wiring to the same standard, and by making
+      `dev-run-end-to-end.test.ts` wait for the round to actually close (`rounds.ended_at`)
+      rather than merely for the worker process to exit, which was never the right signal
+      for "the manager finished its own async work" to begin with. Confirmed against a clean
+      baseline both ways: `pnpm -r test` was fully green on `main` before this step and
+      reproduced both failures reliably once the check went in, unfixed.
+      **D-2-R-3 is unmoved by this step, and that is worth stating rather than leaving
+      implicit:** the diff reads git's object database through `ManagerGitClient`, never a
+      worktree path through `assertWithinRoot`/`Workspace.read`, so this is not the live
+      instance of that debt item's TOCTOU risk. It remains open for whichever future step
+      first reads agent-influenced worktree files (5.17's gate context, or M07/M08's
+      reviewer/tester).
+      **Proof:** `packages/core/test/loop/protected-paths.test.ts` (the glob dialect and
+      `violatedProtectedPaths`, including a pathological multi-`**` case bounded under a
+      second), `packages/workspace/test/git/manager-git.test.ts` (`diffNameOnly` against a
+      real repository, including a three-dot-vs-moved-default-branch case proving the
+      merge-base semantics), `packages/manager/test/loop/round-runner.test.ts` (violation
+      via the structural spec/`adl.yml` protections, violation via a configured
+      `protected_paths` glob, an unrelated diff passing through exactly as before, and a
+      diff failure retrying rather than judging), and a new real end-to-end scenario,
+      `test/scenario/protected-paths-loop.test.ts` — every layer production (real
+      `startDaemon`, real dispatcher, real forked workers, the real
+      `createProductionStageRunner`), only the `claude` binary replaced with a double that
+      makes a real commit editing `adl.yml`, proving the round escalates on round 1 with the
+      gate never even dispatched (`stage_attempts` has no row for stage index 1 at all).
 - [ ] **5.17** — Fresh-context gate isolation (ROLE-03). Gate context is assembled from
       spec + diff + repository only. Make the developer's session and transcript
       *structurally* unreachable from a gate — a type the gate cannot name, not a rule it
@@ -797,3 +872,5 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | A gate implementation | `packages/manager/src/worker-entry/command-gate.ts` — done, 5.14. A new gate kind is an entry in `stage-runner.ts`'s `GATE_IMPLEMENTATIONS` plus a runner; an unlisted stage id is refused with a non-retryable `binary_missing`. |
 | The commit a round produced | `rounds.head_sha` (`0005_rounds_head_sha.ts`) — done, 5.14. Written when the developer stage reports `committed`, never at round close. |
 | Send-back context into the next prompt | `packages/manager/src/loop/send-back-brief.ts` (both directions, pure) + `FeaturesRepository.latestClosedRound` (the DB half) — done, 5.15. `AssignMessage.sendBackBriefJson` is the wire crossing; `buildDeveloperPrompt`'s `sendBackBrief` field is the renderer. |
+| A round's diff, by path list only | `ManagerGitClient.diffNameOnly` (`packages/workspace/src/git/manager-git.ts`) — done, 5.16. `base...head` (three-dot); needs only two shas/refs reachable from `mainRepo`'s object database, no worktree checkout. `packages/manager/src/loop/protected-paths-check.ts` is the one production caller. |
+| Protected-path classification | `@adl/core/loop`'s `violatedProtectedPaths` + `matchesGlob` (pure) — done, 5.16. Structural (spec folder, `adl.yml`) plus `EffectiveConfig.protected_paths` (maintainer-declared globs). 5.17's "diff" gate-context input can read straight off the same `diffNameOnly` call this step already makes. |
