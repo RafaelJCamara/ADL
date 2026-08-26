@@ -129,6 +129,22 @@ jobs:
           # degrades with EPERM and the worker cannot write its own scratch HOME.
           sudo usermod --append --groups adl-worker "$me"
 
+          # adl-worker joins the runner's OWN group so it can traverse
+          # $GITHUB_WORKSPACE. This exists only because CI's fake `claude`
+          # binaries are test fixtures checked out under $HOME (mode 0750,
+          # readable only by "$me" and its group) -- a shape that does not
+          # occur in a real deployment, where the pinned agent CLI lives at a
+          # world-readable system path (e.g. /usr/local/bin), never behind a
+          # user's restricted home directory. Without this, EVERY dropped-
+          # privilege exec of a test fixture fails with a permission-denied
+          # module-resolution error misclassified as a generic provider_error
+          # (reproduced on ubuntu-latest: `namei -om` on a fixture path shows
+          # `/home/runner` as `drwxr-x--- runner runner`, and adl-worker is a
+          # member of no group but its own). Grants read/traverse only --
+          # adl-worker was never given write access to "$me"'s files and this
+          # does not change that.
+          sudo usermod --append --groups "$me" adl-worker
+
           # SETENV, not a bare NOPASSWD. `sudo` resets the environment by
           # default, and the environment it would reset is the zero-inherit one
           # buildChildEnv constructs from nothing -- the scratch HOME and every
