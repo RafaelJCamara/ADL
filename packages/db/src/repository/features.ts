@@ -89,6 +89,24 @@ export interface FeaturesRepository {
   latestRound(featureId: string): Promise<RoundsTable | undefined>;
 
   /**
+   * The feature's most recently CLOSED round — skips a currently open one,
+   * unlike {@link FeaturesRepository.latestRound} (M05 step 5.15, LOOP-02).
+   *
+   * The distinction matters exactly once: deciding whether the developer's
+   * NEXT dispatch should carry a send-back brief. `latestRound` alone answers
+   * that wrongly on a retry of that same dispatch (a crash-recovery
+   * redispatch of round 2's developer, say) — by the time of the retry round
+   * 2's own row already exists and is still open, so `latestRound` returns
+   * *that* row rather than round 1's closed `send_back`, and the brief would
+   * silently vanish on exactly the retry where it still applies. Only one
+   * round can ever be open at a time (`openAttempt`'s own invariant: "a new
+   * round is never opened while the previous one is still running"), so this
+   * is simply "the newest round with `ended_at` set" — correct whether or not
+   * an even newer round is currently in flight.
+   */
+  latestClosedRound(featureId: string): Promise<RoundsTable | undefined>;
+
+  /**
    * Record a round's terminal outcome — the write `openAttempt`'s own docblock
    * deferred to "the loop, which is Phase 5" (M05 step 5.13).
    *
@@ -292,6 +310,17 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .selectFrom('rounds')
         .selectAll()
         .where('feature_id', '=', featureId)
+        .orderBy('number', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+    },
+
+    latestClosedRound(featureId) {
+      return db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('feature_id', '=', featureId)
+        .where('ended_at', 'is not', null)
         .orderBy('number', 'desc')
         .limit(1)
         .executeTakeFirst();

@@ -11,7 +11,13 @@ import {
   type AdlYml,
   type DaemonConfig,
 } from '@adl/core/config';
-import { startDaemon } from '../../src/index.js';
+import {
+  findAttempt,
+  logsRootFor,
+  promptArtifactPathFor,
+  startDaemon,
+  type PromptArtifactContent,
+} from '../../src/index.js';
 import { withTempRepo } from '../../../workspace/test/helpers/temp-repo.js';
 import {
   MIGRATIONS_DIR,
@@ -256,6 +262,56 @@ describe('scenario: a real command gate turns the loop', () => {
               expect(round.head_sha).toMatch(/^[0-9a-f]{40}$/);
             }
             expect(rounds[0]?.head_sha).not.toBe(rounds[1]?.head_sha);
+
+            // LOOP-02 (M05 step 5.15): round 2's developer is not handed the
+            // identical prompt round 1 got — it carries round 1's own
+            // finding as context. Read the SAME persisted artifact 04-09's
+            // determinism proof already reads, for round 2's developer
+            // attempt specifically (stage_index 0 of the second round).
+            const round2Developer = await db
+              .selectFrom('stage_attempts')
+              .select(['id'])
+              .where('round_id', '=', rounds[1]!.id)
+              .where('stage_index', '=', 0)
+              .executeTakeFirstOrThrow();
+            const address = await findAttempt(db, round2Developer.id);
+            expect(address).toBeDefined();
+            const artifactPath = promptArtifactPathFor(
+              logsRootFor(filePath),
+              address!,
+            );
+            const artifact = JSON.parse(
+              await readFile(artifactPath, 'utf8'),
+            ) as PromptArtifactContent;
+
+            // The exact finding round 1's gate raised — title, detail and
+            // criterion — reaches round 2's developer instructions verbatim,
+            // not a summary or a paraphrase.
+            expect(artifact.instructions).toContain(findings[0]!.title);
+            expect(artifact.instructions).toContain(findings[0]!.detail);
+            expect(artifact.instructions).not.toContain(
+              '(first round — no prior feedback)',
+            );
+
+            // And round 1's OWN developer prompt carried no such section —
+            // there was nothing to send back yet, which is the negative
+            // control proving the assertion above has teeth.
+            const round1Developer = await db
+              .selectFrom('stage_attempts')
+              .select(['id'])
+              .where('round_id', '=', rounds[0]!.id)
+              .where('stage_index', '=', 0)
+              .executeTakeFirstOrThrow();
+            const round1Address = await findAttempt(db, round1Developer.id);
+            const round1Artifact = JSON.parse(
+              await readFile(
+                promptArtifactPathFor(logsRootFor(filePath), round1Address!),
+                'utf8',
+              ),
+            ) as PromptArtifactContent;
+            expect(round1Artifact.instructions).toContain(
+              '(first round — no prior feedback)',
+            );
           } finally {
             await handle.stop();
           }

@@ -170,6 +170,20 @@ export const AssignMessageSchema = z
      * the worker pushes nothing.
      */
     pushUrl: z.string().min(1).optional(),
+    /**
+     * The findings the most recently CLOSED round sent back, serialised the
+     * same way `effectiveConfigJson` already is — a `SendBackBrief`
+     * (`@adl/core/verdict`), never a whole `RoundOutcome` (LOOP-02, M05 step
+     * 5.15). A worker cannot read `rounds.outcome_json` itself
+     * (`adl/worker-entry-no-db`), so the dispatcher reads it back and attaches
+     * it here, mirroring `pushUrl`'s "optional, minted per-dispatch"
+     * precedent. Present only on a dispatch of the developer stage (index 0)
+     * following a round that closed as `send_back`; absent on round 1 and on
+     * every gate-stage dispatch, in which case `buildDeveloperPrompt` renders
+     * a fixed "no prior feedback" placeholder instead of this field's
+     * content.
+     */
+    sendBackBriefJson: z.string().optional(),
   })
   .meta({ id: 'ManagerAssignMessage' });
 

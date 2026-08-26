@@ -227,6 +227,132 @@ describe('featuresRepository.recordRoundHeadSha', () => {
   });
 });
 
+describe('featuresRepository.latestClosedRound', () => {
+  it('returns undefined for a feature with no rounds yet', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      expect(await repo.latestClosedRound(featureId)).toBeUndefined();
+    });
+  });
+
+  it('returns undefined while the only round is still open', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      await repo.insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 1,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+
+      expect(await repo.latestClosedRound(featureId)).toBeUndefined();
+    });
+  });
+
+  it('returns the closed round even while a newer round is open — the crash-recovery retry case', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      const round1 = ulid();
+      await repo.insertRound({
+        id: round1,
+        feature_id: featureId,
+        number: 1,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+      await repo.closeRound({
+        id: round1,
+        outcome: 'send_back',
+        outcomeJson: '{"kind":"send_back"}',
+        endedAt: nowIso(),
+      });
+
+      // Round 2 already exists and is still running — exactly the shape a
+      // crash-recovery retry of round 2's own developer stage sees.
+      // `latestRound` would return this one; `latestClosedRound` must not.
+      await repo.insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 2,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+
+      const closed = await repo.latestClosedRound(featureId);
+      expect(closed?.id).toBe(round1);
+      expect(closed?.outcome).toBe('send_back');
+
+      const latest = await repo.latestRound(featureId);
+      expect(latest?.id).not.toBe(round1);
+    });
+  });
+
+  it('returns the newer of two closed rounds', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      const round1 = ulid();
+      await repo.insertRound({
+        id: round1,
+        feature_id: featureId,
+        number: 1,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+      await repo.closeRound({
+        id: round1,
+        outcome: 'send_back',
+        outcomeJson: '{"kind":"send_back"}',
+        endedAt: nowIso(),
+      });
+
+      const round2 = ulid();
+      await repo.insertRound({
+        id: round2,
+        feature_id: featureId,
+        number: 2,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+      await repo.closeRound({
+        id: round2,
+        outcome: 'green',
+        outcomeJson: '{"kind":"green"}',
+        endedAt: nowIso(),
+      });
+
+      expect((await repo.latestClosedRound(featureId))?.id).toBe(round2);
+    });
+  });
+});
+
 describe('featuresRepository.listDispatchable', () => {
   it('includes a queued feature and an unleased in-loop one, and excludes the rest', async () => {
     await withTempDb(async ({ db }) => {

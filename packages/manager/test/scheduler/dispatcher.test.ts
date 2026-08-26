@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AdlYmlSchema,
   DaemonConfigSchema,
+  DEFAULT_CONFIG,
+  mergeConfig,
   type AdlYml,
 } from '@adl/core/config';
 import {
@@ -12,6 +14,7 @@ import {
   type Database,
 } from '@adl/db';
 import type { Kysely } from 'kysely';
+import type { SendBackBrief } from '@adl/core/verdict';
 import { dispatchOnce } from '../../src/index.js';
 import {
   MIGRATIONS_DIR,
@@ -36,6 +39,16 @@ const ADL_YML_FIXTURE: AdlYml = AdlYmlSchema.parse({
   pipeline: ['develop', 'review', 'test'],
 });
 
+/** A real snapshotted `effective_config_json`, the shape a continuation dispatch reads. */
+function snapshottedConfigJson(): string {
+  const { config } = mergeConfig(
+    DEFAULT_CONFIG,
+    DaemonConfigSchema.parse({}),
+    ADL_YML_FIXTURE,
+  );
+  return JSON.stringify(config);
+}
+
 async function seedRepo(
   db: Kysely<Database>,
   id: string = ulid(),
@@ -58,8 +71,10 @@ async function seedRepo(
 
 interface SeedFeatureOptions {
   readonly repoId: string;
-  readonly state?: 'queued' | 'leased';
+  readonly state?: 'queued' | 'leased' | 'developing' | 'gating';
   readonly id?: string;
+  readonly currentStageIndex?: number;
+  readonly effectiveConfigJson?: string;
 }
 
 async function seedFeature(
@@ -79,9 +94,9 @@ async function seedFeature(
       state: options.state ?? 'queued',
       state_version: 1,
       round: 0,
-      current_stage_index: 0,
+      current_stage_index: options.currentStageIndex ?? 0,
       spec_hash: 'a'.repeat(64),
-      effective_config_json: null,
+      effective_config_json: options.effectiveConfigJson ?? null,
       workspace_handle: null,
       lease_owner: leased ? 'manager' : null,
       lease_token: leased ? ulid() : null,
@@ -363,6 +378,176 @@ describe('dispatchOnce — forge.pushCredential (M05 step 5.10)', () => {
 
       expect(decision.dispatched).toBe(true);
       expect(sawAssign).toBe(true);
+    });
+  });
+});
+
+describe('dispatchOnce — the send-back brief (LOOP-02, M05 step 5.15)', () => {
+  const BRIEF: SendBackBrief = {
+    findings: [
+      {
+        fingerprint: 'a'.repeat(64),
+        severity: 'blocker',
+        title: 'the test command failed (exit 1)',
+        detail: 'FAIL: 1 test failed',
+        criterionRef: { kind: 'global', category: 'build' },
+      },
+    ],
+  };
+
+  it("threads the prior round's brief onto assign.sendBackBriefJson for round 2's developer dispatch", async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, {
+        repoId,
+        state: 'developing',
+        currentStageIndex: 0,
+        effectiveConfigJson: snapshottedConfigJson(),
+      });
+
+      await featuresRepository(db).insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 1,
+        outcome: 'send_back',
+        outcome_json: JSON.stringify({ kind: 'send_back', brief: BRIEF }),
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: nowIso(),
+      });
+
+      let captured: string | undefined;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        spawnWorker: (call) => {
+          captured = call.assign.sendBackBriefJson;
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(captured).toBeDefined();
+      expect(JSON.parse(captured!)).toEqual(BRIEF);
+    });
+  });
+
+  it('carries no brief on a fresh (round 1) dispatch', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      await seedFeature(db, { repoId, state: 'queued' });
+
+      let sawAssign = false;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        spawnWorker: (call) => {
+          sawAssign = true;
+          expect(call.assign.sendBackBriefJson).toBeUndefined();
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(sawAssign).toBe(true);
+    });
+  });
+
+  it('carries no brief on a continuation dispatch to a gate stage (index > 0), even with a send_back round in this feature’s history', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, {
+        repoId,
+        state: 'gating',
+        currentStageIndex: 1,
+        effectiveConfigJson: snapshottedConfigJson(),
+      });
+
+      await featuresRepository(db).insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 1,
+        outcome: 'send_back',
+        outcome_json: JSON.stringify({ kind: 'send_back', brief: BRIEF }),
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: nowIso(),
+      });
+      // The round this gate dispatch belongs to (round 2) — still open.
+      await featuresRepository(db).insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 2,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+
+      let sawAssign = false;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        spawnWorker: (call) => {
+          sawAssign = true;
+          expect(call.assign.sendBackBriefJson).toBeUndefined();
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(sawAssign).toBe(true);
+    });
+  });
+
+  it("still finds round 1's closed brief when round 2 already has its own open row — the crash-recovery retry case", async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, {
+        repoId,
+        state: 'developing',
+        currentStageIndex: 0,
+        effectiveConfigJson: snapshottedConfigJson(),
+      });
+
+      await featuresRepository(db).insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 1,
+        outcome: 'send_back',
+        outcome_json: JSON.stringify({ kind: 'send_back', brief: BRIEF }),
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: nowIso(),
+      });
+      // Round 2 already opened by the attempt this dispatch is retrying —
+      // `latestRound` would return this row (open); `latestClosedRound` must
+      // skip past it to round 1.
+      await featuresRepository(db).insertRound({
+        id: ulid(),
+        feature_id: featureId,
+        number: 2,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: nowIso(),
+        ended_at: null,
+      });
+
+      let captured: string | undefined;
+      const daemonConfig = DaemonConfigSchema.parse({});
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        spawnWorker: (call) => {
+          captured = call.assign.sendBackBriefJson;
+        },
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(captured).toBeDefined();
+      expect(JSON.parse(captured!)).toEqual(BRIEF);
     });
   });
 });

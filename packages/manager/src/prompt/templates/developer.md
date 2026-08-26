@@ -20,6 +20,10 @@
 
 {{acceptanceCriteriaChecklist}}
 
+## Feedback from the previous round
+
+{{sendBackFeedback}}
+
 ## Repository Context
 
 {{declaredContextFiles}}

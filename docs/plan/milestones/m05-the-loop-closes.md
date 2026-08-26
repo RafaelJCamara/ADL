@@ -671,8 +671,73 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       owner M09) and **D-5-14-2** (a worker whose `stage_result` was accepted is still
       logged as "exited without an accepted result"; predates this step, reproduces on
       5.13's own scenario, owner M06).
-- [ ] **5.15** — Send-back carries the failing verdict into the next developer prompt as
+- [x] **5.15** — Send-back carries the failing verdict into the next developer prompt as
       context (LOOP-02).
+      **Shipped, and it is the input `ARCHITECTURE.md` named for `buildDeveloperPrompt`'s
+      signature before M01 and Phase 4 shipped without** — `SendBackBrief` is now a real
+      producer, a real wire crossing, and a real consumer, closing that gap rather than
+      merely restating it. **Two halves, split the way this project splits every I/O-vs-pure
+      decision:** `packages/manager/src/loop/send-back-brief.ts` (new) holds two pure
+      functions with no database and no wire access of their own —
+      `sendBackBriefFromClosedRound` reads a `RoundsTable` row (already fetched) and returns
+      the `SendBackBrief` only when it closed as `send_back`, and `parseSendBackBriefJson`
+      reads the wire string back. Both degrade to `undefined` on anything malformed rather
+      than throw — the same "a fold that says less is much better than one that throws"
+      discipline `publish/role-rounds.ts`'s `describeRoundOutcome` already established for
+      this exact column (rule 5, CORE-06's spirit extended to a plumbing gap rather than a
+      stage failure): losing the brief costs round 2's developer a worse prompt, never a
+      broken dispatch or a broken stage.
+      **The plumbing constraint named in `STATUS.md` held exactly as stated:** a worker
+      cannot read the database (`adl/worker-entry-no-db`), so the brief travels on
+      `AssignMessage` the way `pushUrl` and `effectiveConfigJson` already do —
+      `AssignMessageSchema` gained an optional `sendBackBriefJson`, and
+      `scheduler/dispatcher.ts`'s `dispatchAssigned` (the one function both the fresh-dispatch
+      and the continuation-dispatch paths already share, precisely so an `AssignMessage`
+      cannot drift into two shapes) attaches it, mirroring `pushUrl`'s own "optional, minted
+      per-dispatch" precedent.
+      **A real ordering bug found before it shipped, and the reason it needed its own DB
+      method.** `openAttempt` — called moments later in the same function — reuses a
+      feature's open round or **opens a new one**. Reading "the prior round" with the
+      existing `latestRound` *after* that call would, on an ordinary first attempt at round
+      2's developer, still be correct — but on a **crash-recovery retry of that same
+      dispatch**, round 2's own row already exists and is still open, so `latestRound` would
+      return *that* row instead of round 1's closed `send_back`, and the brief would silently
+      vanish on exactly the retry where it still applies. Closed by a new
+      `FeaturesRepository.latestClosedRound` (`packages/db`) — "the newest round with
+      `ended_at` set", immune to whether an even newer round is currently open, because only
+      one round can ever be open at a time (`openAttempt`'s own invariant) — and by reading it
+      **before** `openAttempt` runs rather than after, so the two calls stay in the order
+      they are conceptually in. Watched failing first: swapping `latestClosedRound` back to
+      `latestRound` reproduced `expected undefined to be defined` on exactly the
+      crash-recovery-retry case, and reverting `stage-runner.ts`'s read of
+      `assign.sendBackBriefJson` reproduced the real end-to-end scenario asserting round 2's
+      persisted prompt artifact still carried `"(first round — no prior feedback)"` — both
+      restored immediately after.
+      **The renderer is where `buildDeveloperPrompt`'s determinism contract gets a fifth
+      input rather than a bolt-on.** `DeveloperPromptInput.sendBackBrief` is optional;
+      `undefined` renders a fixed `"(first round — no prior feedback)"` placeholder rather
+      than an absent section, because the module's own determinism rule applies to this
+      section exactly like every other one (round 1's prompt must still be byte-identical
+      across two calls and two processes) — a template branch would have been the one
+      exception to a rule the rest of the file enforces uniformly. A present brief renders
+      each finding's severity, title, criterion (`AC-n` or `global / <category>`), workspace-
+      relative location and detail, plus a suggested action when the gate offered one — in the
+      brief's own order (`aggregate()`'s `sortFindings`, preserved verbatim through the JSON
+      round trip), never re-sorted. New `## Feedback from the previous round` section in
+      `prompt/templates/developer.md`, between Acceptance Criteria and Repository Context.
+      **Proof, at three levels.** Unit: `test/loop/send-back-brief.test.ts` (both pure
+      functions' degrade-on-malformed-input behaviour) and new cases in
+      `test/prompt/build.test.ts` (placeholder, full rendering, criterion-only rendering,
+      ordering, determinism). Integration: `test/scheduler/dispatcher.test.ts` gained four
+      cases proving the field is threaded exactly on round-2-developer continuations and
+      nowhere else — including the crash-recovery-retry case above — and
+      `test/rounds.test.ts` gained four cases for `latestClosedRound` itself. End to end:
+      `test/scenario/command-gate-loop.test.ts` (5.14's own real-worker, real-gate scenario)
+      now reads round 2's *persisted* prompt artifact off disk and asserts it contains round
+      1's real finding's title and detail verbatim — the same file's round 1 artifact is read
+      too, as the negative control proving the placeholder is what "no brief yet" actually
+      renders. **No DB migration** — `sendBackBriefFromClosedRound` reads `rounds.outcome_json`
+      as already-stored text; nothing new is written.
 - [ ] **5.16** — Protected-path enforcement (ROLE-11). Diff what the developer wrote; if
       it touched a spec, the gate configuration, or a test that judges it, hard-fail the
       round. **Detected by diffing, never by asking the agent.**
@@ -731,3 +796,4 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | Workspace continuity across stages | `WorkspaceBackend.attach` + `Workspace.detach` (`@adl/core/stage`) — done, 5.14. A stage does `attach(spec) ?? create(spec)` and ends with `detach()`; nothing in the loop calls `destroy()`, which is the GC sweep's decision from feature state. |
 | A gate implementation | `packages/manager/src/worker-entry/command-gate.ts` — done, 5.14. A new gate kind is an entry in `stage-runner.ts`'s `GATE_IMPLEMENTATIONS` plus a runner; an unlisted stage id is refused with a non-retryable `binary_missing`. |
 | The commit a round produced | `rounds.head_sha` (`0005_rounds_head_sha.ts`) — done, 5.14. Written when the developer stage reports `committed`, never at round close. |
+| Send-back context into the next prompt | `packages/manager/src/loop/send-back-brief.ts` (both directions, pure) + `FeaturesRepository.latestClosedRound` (the DB half) — done, 5.15. `AssignMessage.sendBackBriefJson` is the wire crossing; `buildDeveloperPrompt`'s `sendBackBrief` field is the renderer. |

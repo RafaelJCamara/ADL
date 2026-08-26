@@ -1,6 +1,6 @@
 # STATUS — start here
 
-*Last updated: 2026-08-25*
+*Last updated: 2026-08-26*
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -24,14 +24,14 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), all of group B (5.8–5.12), and group C's 5.13 and 5.14 are done.**
+group A (5.1–5.7), all of group B (5.8–5.12), and group C's 5.13, 5.14 and 5.15 are done.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener, groups A and B, 5.13, 5.14 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener, groups A and B, 5.13–5.15 done
 M06–M18 ............................. not started
 ```
 
@@ -291,8 +291,39 @@ already the shape of the call. `rounds.head_sha` (migration `0005`) closes D-5-1
 when the developer stage reports `committed`, never at round close, because a developer
 stage in a pipeline with any gate in it `advance`s rather than completing.
 
-**What does not exist yet:** send-back context in the next prompt (5.15), protected-path
-enforcement (5.16), formal gate isolation (5.17), and per-round accounting (group D).
+And send-back now means something (5.15, LOOP-02) — round 2's developer is no longer handed
+the identical prompt round 1 got. `buildDeveloperPrompt` gained the fifth input
+`ARCHITECTURE.md` named for its signature before M01 and Phase 4 shipped without:
+`SendBackBrief`, rendered into a new "Feedback from the previous round" section, `undefined`
+on round 1 rendering a fixed placeholder rather than an absent one — the module's own
+determinism rule applies to this section exactly like every other. The plumbing constraint
+held exactly as `STATUS.md` predicted: a worker cannot read the database
+(`adl/worker-entry-no-db`), so the brief travels on `AssignMessage` the way `pushUrl` and
+`effectiveConfigJson` already do, read and attached by `dispatchOnce`'s shared
+`dispatchAssigned` (`packages/manager/src/loop/send-back-brief.ts`'s new
+`sendBackBriefFromClosedRound` on the manager side, `parseSendBackBriefJson` on the worker
+side — both degrade to "no brief" on anything malformed rather than throw, the same
+discipline `publish/role-rounds.ts`'s `describeRoundOutcome` already established for this
+exact column). **A real ordering bug found before it shipped:** `openAttempt`, called moments
+later in the same function, may open round 2's own row before a crash-recovery retry of that
+same dispatch reads back "the prior round" — reading the existing `latestRound` at that point
+would return round 2's own still-open row instead of round 1's closed `send_back`, silently
+dropping the brief on exactly the retry where it still applies. Closed by a new
+`FeaturesRepository.latestClosedRound` (immune to whether a newer round is currently open,
+since only one round is ever open at a time) read *before* `openAttempt` runs. Watched failing
+twice — swapping `latestClosedRound` back to `latestRound` reproduced the crash-recovery-retry
+case exactly, and reverting the worker's read of `assign.sendBackBriefJson` reproduced the
+real end-to-end scenario's persisted prompt artifact still carrying the placeholder — both
+restored immediately after. **No DB migration**; `rounds.outcome_json` already held everything
+needed, and nothing new is written. Proven at three levels: unit tests for both pure
+functions and the renderer, dispatcher-level integration tests for the field-threading
+(including the crash-recovery-retry case), and `test/scenario/command-gate-loop.test.ts`
+(5.14's own real-worker scenario) extended to read round 2's persisted prompt artifact off
+disk and assert it carries round 1's real finding verbatim, with round 1's own artifact read
+as the negative control.
+
+**What does not exist yet:** protected-path enforcement (5.16), formal gate isolation
+(5.17), and per-round accounting (group D).
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -303,25 +334,15 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 ## What to do next
 
 Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-group C with **5.15 — send-back carries the failing verdict into the next developer prompt
-as context (LOOP-02)**. Groups A and B are closed, and 5.13/5.14 have turned the loop with
-a real gate.
+group C with **5.16 — protected-path enforcement (ROLE-11)**. Groups A and B are closed, and
+5.13/5.14/5.15 have turned the loop with a real gate and real send-back context.
 
-**5.15 is the step that makes the send-back mean something.** Today round 2's developer is
-handed the identical prompt round 1 got: `buildDeveloperPrompt` takes
-`(spec, effectiveConfig, capabilities, workspaceRoot)` and nothing about what the gate said,
-so the loop is currently "run again and hope". The `SendBackBrief` the prompt builder's own
-determinism contract already names as its fourth input is written to `rounds.outcome_json`
-by 5.13's round loop and read by nobody. Note the plumbing constraint: a worker cannot read
-the database (`adl/worker-entry-no-db`), so the brief has to travel on `AssignMessage` the
-way `pushUrl` and `effectiveConfigJson` already do — the dispatcher is where it is read and
-attached, and `dispatchOnce`'s continuation path is where a mid-flight round's brief would
-be looked up.
-
-After that, **5.16** (protected-path enforcement) is the first real consumer of
-`rounds.head_sha` — it needs the diff between the base and this round's commit, which the
-command gate did not, because it runs *inside* the attached worktree where `HEAD` already is
-that commit. Group D (accounting) can run in parallel — real rounds exist to record against.
+**5.16 is the first real consumer of `rounds.head_sha`.** It needs the diff between the base
+and this round's commit, which the command gate did not, because it runs *inside* the
+attached worktree where `HEAD` already is that commit. A developer that edits a spec, the
+gate configuration, or a test that judges it must have that round hard-failed — **detected by
+diffing what it wrote, never by asking the agent.** Group D (accounting) can run in
+parallel — real rounds exist to record against.
 
 **Before you plan M05 in detail, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled

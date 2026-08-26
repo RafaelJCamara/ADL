@@ -17,6 +17,7 @@ import {
 import { AdlYmlSchema, type AdlYml } from '@adl/core/config';
 import { loadAdlTemplateSpec } from '@adl/core/spec';
 import type { AgentCapabilities } from '@adl/core/stage';
+import type { SendBackBrief } from '@adl/core/verdict';
 import {
   buildDeveloperPrompt,
   PromptContextOverflowError,
@@ -345,6 +346,115 @@ describe('buildDeveloperPrompt', () => {
           }),
         ).toThrow(PromptContextOverflowError);
       });
+    });
+  });
+
+  describe('the send-back brief (LOOP-02, M05 step 5.15)', () => {
+    it('round 1 (no brief) renders a fixed, deterministic placeholder', () => {
+      const { instructions } = buildDeveloperPrompt(fixtureInput());
+      expect(instructions).toContain('(first round — no prior feedback)');
+    });
+
+    it("renders a finding's severity, title, criterion, location and detail", () => {
+      const brief: SendBackBrief = {
+        findings: [
+          {
+            fingerprint: 'a'.repeat(64),
+            severity: 'blocker',
+            title: 'the test command failed (exit 1)',
+            detail: 'FAIL: 1 test failed',
+            criterionRef: { kind: 'global', category: 'build' },
+            location: { path: 'src/widget.ts', line: 42 },
+            suggestedAction: 'fix the failing assertion',
+          },
+        ],
+      };
+
+      const { instructions } = buildDeveloperPrompt({
+        ...fixtureInput(),
+        sendBackBrief: brief,
+      });
+
+      expect(instructions).toContain('[blocker]');
+      expect(instructions).toContain('the test command failed (exit 1)');
+      expect(instructions).toContain('global / build');
+      expect(instructions).toContain('src/widget.ts:42');
+      expect(instructions).toContain('FAIL: 1 test failed');
+      expect(instructions).toContain('fix the failing assertion');
+      expect(instructions).not.toContain('(first round — no prior feedback)');
+    });
+
+    it('renders a finding tied to an acceptance criterion, with no location and no suggested action', () => {
+      const brief: SendBackBrief = {
+        findings: [
+          {
+            fingerprint: 'b'.repeat(64),
+            severity: 'major',
+            title: 'AC-2 is not satisfied',
+            detail: 'the export button never appears',
+            criterionRef: { kind: 'criterion', id: 'AC-2' },
+          },
+        ],
+      };
+
+      const { instructions } = buildDeveloperPrompt({
+        ...fixtureInput(),
+        sendBackBrief: brief,
+      });
+
+      expect(instructions).toContain('[major] AC-2 is not satisfied');
+      expect(instructions).toContain('Criterion: AC-2');
+      expect(instructions).not.toContain('Location:');
+      expect(instructions).not.toContain('Suggested action:');
+    });
+
+    it('renders multiple findings in the brief’s own order — never re-sorted', () => {
+      const brief: SendBackBrief = {
+        findings: [
+          {
+            fingerprint: 'c'.repeat(64),
+            severity: 'minor',
+            title: 'FINDING-FIRST',
+            detail: 'first detail',
+            criterionRef: { kind: 'global', category: 'other' },
+          },
+          {
+            fingerprint: 'd'.repeat(64),
+            severity: 'blocker',
+            title: 'FINDING-SECOND',
+            detail: 'second detail',
+            criterionRef: { kind: 'global', category: 'other' },
+          },
+        ],
+      };
+
+      const { instructions } = buildDeveloperPrompt({
+        ...fixtureInput(),
+        sendBackBrief: brief,
+      });
+
+      expect(instructions.indexOf('FINDING-FIRST')).toBeLessThan(
+        instructions.indexOf('FINDING-SECOND'),
+      );
+    });
+
+    it('is a pure function of the brief — same input, byte-identical output', () => {
+      const brief: SendBackBrief = {
+        findings: [
+          {
+            fingerprint: 'e'.repeat(64),
+            severity: 'nit',
+            title: 'a nit',
+            detail: 'a detail',
+            criterionRef: { kind: 'global', category: 'code_quality' },
+          },
+        ],
+      };
+      const input = { ...fixtureInput(), sendBackBrief: brief };
+
+      const first = buildDeveloperPrompt(input);
+      const second = buildDeveloperPrompt(input);
+      expect(second).toEqual(first);
     });
   });
 });

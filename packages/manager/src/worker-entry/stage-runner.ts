@@ -79,6 +79,7 @@ import {
   type ClaudeCodeAgentRunner,
 } from '@adl/agent-claude-code';
 import { composeBranchFeatureId } from '../branch-identity.js';
+import { parseSendBackBriefJson } from '../loop/send-back-brief.js';
 import { runCommandGate } from './command-gate.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
@@ -425,6 +426,12 @@ export function createProductionStageRunner(
         return stageErrorResult('unparseable', detail);
       }
 
+      // LOOP-02 (M05 step 5.15): `undefined` on round 1, and degrading to
+      // `undefined` on anything malformed — see `send-back-brief.ts`'s own
+      // docblock. Either way `buildDeveloperPrompt` renders the same fixed
+      // "no prior feedback" placeholder it would render for an absent field.
+      const sendBackBrief = parseSendBackBriefJson(assign.sendBackBriefJson);
+
       const { systemPrompt, instructions } = buildDeveloperPrompt({
         spec,
         effectiveConfig,
@@ -433,6 +440,7 @@ export function createProductionStageRunner(
         // against the feature's own worktree — never the daemon's cwd (04-09
         // Task 1's explicit-context surface).
         workspaceRoot: workspace.root,
+        ...(sendBackBrief !== undefined ? { sendBackBrief } : {}),
       });
 
       // Written BEFORE the agent is launched (04-09 Task 2): ordering is the

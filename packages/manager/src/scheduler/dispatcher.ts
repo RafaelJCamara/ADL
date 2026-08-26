@@ -25,6 +25,7 @@ import type { WorkspaceBackendId } from '@adl/workspace';
 import type { AssignMessage } from '../ipc/protocol.js';
 import { isDispatchPaused, type ControlState } from '../control/state.js';
 import { openAttempt } from '../bookkeeping/attempt.js';
+import { sendBackBriefFromClosedRound } from '../loop/send-back-brief.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
 
 /**
@@ -468,6 +469,21 @@ async function dispatchAssigned(
     );
   }
 
+  // LOOP-02 (M05 step 5.15): read BEFORE `openAttempt` runs. Once a round's
+  // developer dispatch has already opened round N's own row, `latestRound`
+  // (not used here) would return that still-open row rather than round N-1's
+  // closed `send_back` — `latestClosedRound` is immune to that ordering, but
+  // reading it after `openAttempt` would still be reading it late for no
+  // reason, and this keeps the two calls in the order they are conceptually
+  // in: "what happened before this dispatch" before "open this dispatch's own
+  // row". Only the developer's own slot (index 0) ever wants one.
+  const sendBackBrief =
+    stageIndex === 0
+      ? sendBackBriefFromClosedRound(
+          await featuresRepository(deps.db).latestClosedRound(feature.id),
+        )
+      : undefined;
+
   const attempt = await openAttempt(
     { db: deps.db, now: deps.now },
     { featureId: feature.id, stageId: stage.id, stageIndex },
@@ -507,6 +523,9 @@ async function dispatchAssigned(
     stageIndex: attempt.stageIndex,
     logsRoot: deps.logsRoot ?? join(dirname(deps.scratchRoot), 'logs'),
     ...(pushUrl !== undefined ? { pushUrl } : {}),
+    ...(sendBackBrief !== undefined
+      ? { sendBackBriefJson: JSON.stringify(sendBackBrief) }
+      : {}),
   };
 
   deps.spawnWorker({ feature, leaseToken, assign });

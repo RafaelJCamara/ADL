@@ -7,9 +7,14 @@
  * ── Determinism (success criterion 4) ──────────────────────────────────────
  *
  * `buildDeveloperPrompt` is a **pure function of its input**: the same
- * `NormalizedSpec`/`EffectiveConfig`/`AgentCapabilities`/`workspaceRoot`
- * quadruple produces byte-identical output on every call, in this process or
- * a fresh one, on one commit. Concretely, that means:
+ * `NormalizedSpec`/`EffectiveConfig`/`AgentCapabilities`/`workspaceRoot`/
+ * `SendBackBrief` quintuple produces byte-identical output on every call, in
+ * this process or a fresh one, on one commit. `SendBackBrief` is the input
+ * `ARCHITECTURE.md` named for this signature from the start and Phase 4
+ * shipped without (M05 step 5.15 closes that gap) — `undefined` on round 1
+ * and on every dispatch that is not the developer's, rendering a fixed
+ * placeholder rather than an absent section, so its own determinism holds
+ * exactly like every other input's. Concretely, that means:
  *
  * - No timestamp, no random id, no environment value.
  * - No absolute host path **in the rendered output** — `workspaceRoot` is an
@@ -73,6 +78,12 @@ import { fileURLToPath } from 'node:url';
 import type { EffectiveConfig, OnOverflow } from '@adl/core/config';
 import type { AgentCapabilities } from '@adl/core/stage';
 import type { AcceptanceCriterion, NormalizedSpec } from '@adl/core/spec';
+import type {
+  CriterionRef,
+  Finding,
+  FindingLocation,
+  SendBackBrief,
+} from '@adl/core/verdict';
 import { resolveWithinRoot } from '@adl/workspace';
 
 const TEMPLATE_PATH = fileURLToPath(
@@ -111,6 +122,15 @@ export interface DeveloperPromptInput {
    * rules) — only a declared file's own repo-relative path does.
    */
   readonly workspaceRoot: string;
+  /**
+   * The findings the most recently closed round sent back (LOOP-02, M05 step
+   * 5.15) — `undefined` on round 1, and on every dispatch that is not the
+   * developer's own. `worker-entry/stage-runner.ts` is the one caller that
+   * ever supplies it, reading `AssignMessage.sendBackBriefJson` back through
+   * `loop/send-back-brief.ts`'s `parseSendBackBriefJson` — this module never
+   * reads the database or the wire format itself.
+   */
+  readonly sendBackBrief?: SendBackBrief;
 }
 
 export interface RenderedPrompt {
@@ -173,6 +193,56 @@ function renderAcceptanceCriteriaChecklist(
   return criteria
     .map((criterion) => `- **${criterion.id}**: ${criterionText(criterion)}`)
     .join('\n');
+}
+
+/** `AC-3`, or `global / build` for a finding not tied to one criterion — see `CriterionRefSchema`. */
+function renderCriterionRef(ref: CriterionRef): string {
+  return ref.kind === 'criterion' ? ref.id : `global / ${ref.category}`;
+}
+
+/** `src/foo.ts:42`, `src/foo.ts:42-47`, or bare `src/foo.ts` with no line — always workspace-relative (T-1-02). */
+function renderFindingLocation(
+  location: FindingLocation | undefined,
+): string | undefined {
+  if (location === undefined) return undefined;
+  if (location.line === undefined) return location.path;
+  const range =
+    location.endLine !== undefined && location.endLine !== location.line
+      ? `${String(location.line)}-${String(location.endLine)}`
+      : String(location.line);
+  return `${location.path}:${range}`;
+}
+
+/** One finding from a `SendBackBrief`, as its own labelled block — order is the caller's, never re-sorted here. */
+function renderSendBackFinding(finding: Finding): string {
+  const lines = [`### [${finding.severity}] ${finding.title}`, ''];
+  lines.push(`- Criterion: ${renderCriterionRef(finding.criterionRef)}`);
+  const location = renderFindingLocation(finding.location);
+  if (location !== undefined) lines.push(`- Location: ${location}`);
+  lines.push('', finding.detail);
+  if (finding.suggestedAction !== undefined) {
+    lines.push('', `Suggested action: ${finding.suggestedAction}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The "Feedback from the previous round" section (LOOP-02).
+ *
+ * `undefined` renders a fixed placeholder rather than an empty or absent
+ * section — the module docblock's determinism rules apply to this section
+ * exactly like every other one, so "no brief" has to be stable, deterministic
+ * text rather than a template branch. `SendBackBrief.findings` arrives
+ * already ordered (`aggregate()`'s own `sortFindings` call, preserved through
+ * the JSON round trip `AssignMessage.sendBackBriefJson` makes) — mapped and
+ * joined in that order, never re-sorted or grouped through an unordered
+ * collection.
+ */
+function renderSendBackFeedback(brief: SendBackBrief | undefined): string {
+  if (brief === undefined) {
+    return '(first round — no prior feedback)';
+  }
+  return brief.findings.map(renderSendBackFinding).join('\n\n');
 }
 
 /**
@@ -335,6 +405,7 @@ export function buildDeveloperPrompt(
     acceptanceCriteriaChecklist: renderAcceptanceCriteriaChecklist(
       input.spec.acceptanceCriteria,
     ),
+    sendBackFeedback: renderSendBackFeedback(input.sendBackBrief),
     declaredContextFiles,
     rawSpec: input.spec.raw,
   });
