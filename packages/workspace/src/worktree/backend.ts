@@ -191,6 +191,18 @@ async function openWorktreeWorkspace(
         worktreePath,
         // The worker writes an index and a HEAD here in order to commit.
         ...(adminDir === undefined ? [] : [adminDir]),
+        // A linked worktree's objects and refs are NOT per-worktree: git
+        // writes a new commit's blobs/trees/commit objects into the MAIN
+        // repository's shared object database, and a new branch's first
+        // commit creates its ref under the main repository's `.git/refs`
+        // (`gitrepository-layout`(5); the per-worktree admin dir above holds
+        // only the index and HEAD). Without these two, the worker's first
+        // real commit fails outright with "insufficient permission for
+        // adding an object to repository database" — reproduced against a
+        // real Linux CI leg once WR-11's traversal fix let this exec run at
+        // all (`docs/plan/DEBT.md`).
+        join(spec.mainRepo, '.git', 'objects'),
+        join(spec.mainRepo, '.git', 'refs'),
       ],
       {
         mode: privilege.mode,
@@ -200,6 +212,13 @@ async function openWorktreeWorkspace(
         // (02-RESEARCH.md § Pitfall 5, T-2-31). Group and world write come OFF
         // it, which is the structural half of that defence and precisely what a
         // dedicated OS user buys.
+        //
+        // `.git/hooks` is excluded from the granted set above for the same
+        // reason: a hook script is a program git executes on the DAEMON's own
+        // later operations against this same repository (post-checkout,
+        // pre-commit, …), so a worker that could write one would be a
+        // privilege escalation back to the daemon's identity, not merely
+        // access to its own branch.
         protect: [join(spec.mainRepo, '.git', 'config')],
       },
     ),
