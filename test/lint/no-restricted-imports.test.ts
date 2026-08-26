@@ -7,6 +7,8 @@ import {
   FORBIDDEN_SPAWN_SPECIFIERS,
   FORGE_MERGE_MEMBERS,
   FORGE_MERGE_ROUTES,
+  GATE_FORBIDDEN_IMPORT_GROUPS,
+  GATE_FORBIDDEN_MEMBERS,
   WORKSPACE_EXEMPTION,
   architectureConfigs,
   baseConfigs,
@@ -191,6 +193,25 @@ const FIXTURES: readonly FixtureCase[] = [
     ruleId: 'no-restricted-syntax',
     mentions: 'FORGE-10',
   },
+  // ── 05-17: a gate works from fresh context (ROLE-03) ──────────────────────
+  //
+  // The preferred guard here is the TYPE — `@adl/core/stage`'s `GateContext`
+  // has no member naming the developer's session, transcript or rendered
+  // prompt, and `GATE_CONTEXT_MEMBERS` proves that list complete at compile
+  // time. This fixture is the other half: a parameter list cannot stop a gate
+  // importing the transcript store directly and rebuilding the path from ids it
+  // legitimately knows. Both rule ids fire on it, so both are listed — the
+  // import layer and the member-read layer are independently escapable.
+  {
+    file: 'test/lint/fixtures/gate-reaches-past-context.ts',
+    ruleId: 'no-restricted-imports',
+    mentions: 'ROLE-03',
+  },
+  {
+    file: 'test/lint/fixtures/gate-reaches-past-context.ts',
+    ruleId: 'no-restricted-syntax',
+    mentions: 'ROLE-03',
+  },
 ];
 
 /**
@@ -341,6 +362,30 @@ const FORGE_SOURCE = 'packages/forge-github/src/backend.ts';
  * the adapter most likely to arrive at one by accident.
  */
 const FUTURE_FORGE_SOURCE = 'packages/forge-gitlab/src/backend.ts';
+/** The one gate implementation that exists — where fresh context must hold. */
+const GATE_SOURCE = 'packages/manager/src/worker-entry/gates/command-gate.ts';
+/**
+ * A gate that does NOT exist yet (M07's reviewer).
+ *
+ * The same D-27 property `FUTURE_FORGE_SOURCE` measures, applied to ROLE-03:
+ * `adl/gate-fresh-context` names the `gates/` DIRECTORY rather than the one
+ * file in it, so the reviewer is governed on the day it is created. And the
+ * reviewer is the gate ROLE-03 is literally about — the requirement's own
+ * wording is *"Reviewer works from fresh context"* — so a guard that only
+ * reached the command gate would be scoped to the one gate the requirement
+ * does not name.
+ */
+const FUTURE_GATE_SOURCE = 'packages/manager/src/worker-entry/gates/review.ts';
+/**
+ * Worker-entry code that is NOT a gate — the narrowing point itself.
+ *
+ * `gate-context.ts` has to import `ipc/protocol.js` to narrow it, which is
+ * exactly what the gate ban forbids. Measuring here proves the ban stops at the
+ * `gates/` boundary rather than covering all of `worker-entry/`, which would
+ * make the narrowing function unwritable and the whole design unbuildable.
+ */
+const NON_GATE_WORKER_SOURCE =
+  'packages/manager/src/worker-entry/gate-context.ts';
 /** Inside the exemption's one carve-out — workspace SOURCE, not workspace tests. */
 const WORKSPACE_SRC_SOURCE = 'packages/workspace/src/worktree/lifecycle.ts';
 
@@ -417,11 +462,20 @@ describe('architecture rules fail on deliberate violations', () => {
   it('reports every fixture only because of the architecture rules', async () => {
     // The negative control. If this ever reports a non-zero count, the
     // assertions above are measuring something other than the rules under test.
+    //
+    // Deduplicated by PATH rather than counted off `FIXTURES.length`: a fixture
+    // that trips two rule ids is listed once per rule id above, because each
+    // needs its own "reports at error, and names what it banned" assertion —
+    // but ESLint returns one result per file, so counting entries instead of
+    // files would go red for a reason that has nothing to do with the control.
+    // (05-17's gate fixture is the first: it violates both the import ban and
+    // the member-read ban, which are independently escapable.)
+    const fixtureFiles = [...new Set(FIXTURES.map((fixture) => fixture.file))];
     const results = await withoutArchitectureRules().lintFiles(
-      FIXTURES.map((fixture) => absolute(fixture.file)),
+      fixtureFiles.map(absolute),
     );
 
-    expect(results).toHaveLength(FIXTURES.length);
+    expect(results).toHaveLength(fixtureFiles.length);
 
     const offenders = results
       .filter((result) => result.errorCount > 0)
@@ -1148,5 +1202,274 @@ describe('the never-merge guard (FORGE-10)', () => {
       files.some((glob) => glob.includes('packages/forge-*')),
       `the merge ban must be scoped by package PREFIX (packages/forge-*), not to the one adapter that exists — M14 adds two more, and GitLab's merge verbs are the ones that read least like a merge. Got: ${files.join(', ')}`,
     ).toBe(true);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Fresh-context gate isolation (ROLE-03, M05 step 5.17) — the residual half
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ROLE-03: *"Reviewer works from fresh context — it never inherits the
+ * developer's session, transcript, or reasoning."* M05's AC3 fixes the
+ * mechanism: gate context is assembled from spec, diff and repository **only**.
+ *
+ * The preferred guard is the type, and it exists: `@adl/core/stage`'s
+ * `GateContext` has no member through which any of those can be named, proven
+ * complete at compile time by `GATE_CONTEXT_MEMBERS`' `Exclude<>` assertion and
+ * read by `packages/core/test/stage/gate-context.test.ts`.
+ *
+ * This block is the half that guard structurally cannot reach — the same shape,
+ * and the same argument, as the never-merge block above. A gate does not have
+ * to arrive at the developer's transcript through its parameters: it can import
+ * `store/transcript-path.js` and build the path itself out of the round and
+ * stage ids it legitimately knows. A parameter list cannot stop that; a module
+ * boundary can.
+ *
+ * Every assertion is driven off the exported tuples rather than hand-written
+ * per name, so a name added to the ban gains its assertions automatically and a
+ * name whose selector is lost goes red without anyone remembering to add a case.
+ */
+describe('fresh-context gate isolation (ROLE-03)', () => {
+  it.each([GATE_SOURCE, FUTURE_GATE_SOURCE])(
+    'resolves all three selector shapes for every forbidden name at %s',
+    async (source) => {
+      const resolved = await realConfigLinter().calculateConfigForFile(
+        absolute(source),
+      );
+      const selectors = syntaxSelectors(resolved.rules ?? {});
+
+      const uncovered: string[] = [];
+      for (const member of GATE_FORBIDDEN_MEMBERS) {
+        if (
+          !selectors.includes(`MemberExpression[property.name='${member}']`)
+        ) {
+          uncovered.push(`${member}: no member-expression selector`);
+        }
+        // The one a probe found missing on the first cut: `const { logsRoot } =
+        // assign` lints clean under a member-expression ban alone, which is the
+        // destructuring analogue of the aliasing blind spot the merge ban
+        // documents.
+        if (!selectors.includes(`Property[key.name='${member}']`)) {
+          uncovered.push(`${member}: no destructuring/object-key selector`);
+        }
+        if (
+          !selectors.includes(
+            `MemberExpression[computed=true][property.value='${member}']`,
+          )
+        ) {
+          uncovered.push(`${member}: no computed-access selector`);
+        }
+      }
+
+      expect(
+        uncovered,
+        `every forbidden context field must be banned at ${source} in all three shapes — a member read, a destructuring, and a computed access are three independent ways to the same value, and a guard that catches one of them catches none of the other two`,
+      ).toEqual([]);
+    },
+  );
+
+  it.each([GATE_SOURCE, FUTURE_GATE_SOURCE])(
+    'resolves every forbidden import group at %s',
+    async (source) => {
+      const resolved = await realConfigLinter().calculateConfigForFile(
+        absolute(source),
+      );
+      const groups = restrictedPatternGroups(resolved.rules ?? {});
+
+      const missing = GATE_FORBIDDEN_IMPORT_GROUPS.map(
+        ([group]) => group,
+      ).filter((group) => !groups.includes(group));
+
+      expect(
+        missing,
+        `these module groups are not banned at ${source}: ${missing.join(', ')}. Each is a route to something a gate may not see — the transcript store, the prompt builder, the round loop, and the AssignMessage envelope that declares every one of the forbidden fields.`,
+      ).toEqual([]);
+    },
+  );
+
+  it('does not silently delete the two bans it overlaps with (Pitfall 1)', async () => {
+    // `packages/manager/src/worker-entry/gates/**` is matched by
+    // `adl/no-direct-spawn` (files: **/*) AND by `adl/worker-entry-no-db`
+    // (files: worker-entry/**), and flat config REPLACES rather than merges per
+    // rule id. Both merges are therefore mandatory, and the @adl/db one is the
+    // dangerous one to forget: a gate that could open the database could read
+    // `stage_attempts` and reach a transcript address that way — this rule's
+    // own property defeated through the hole this rule opened.
+    const resolved = await realConfigLinter().calculateConfigForFile(
+      absolute(GATE_SOURCE),
+    );
+    const rules = resolved.rules ?? {};
+
+    const paths = restrictedPathNames(rules);
+    expect(
+      paths,
+      `${GATE_SOURCE} lost D-01's @adl/db ban — adl/gate-fresh-context replaced adl/worker-entry-no-db's options instead of re-merging them`,
+    ).toContain('@adl/db');
+    expect(
+      paths,
+      `${GATE_SOURCE} lost the static-import spawn ban — adl/gate-fresh-context must re-merge FORBIDDEN_SPAWN into its paths`,
+    ).toContain('execa');
+
+    expect(
+      restrictedPatternGroups(rules),
+      `${GATE_SOURCE} lost the @adl/db subpath ban`,
+    ).toContain('@adl/db/*');
+
+    const selectors = syntaxSelectors(rules);
+    for (const specifier of FORBIDDEN_SPAWN_SPECIFIERS) {
+      const pattern = anchoredPattern(specifier);
+      expect(
+        selectors.filter((selector) => selector.includes(pattern)),
+        `${GATE_SOURCE} lost the require()/import() ban on ${specifier} — the gate rule set replaced SPAWN_SYNTAX instead of spreading it in`,
+      ).not.toHaveLength(0);
+    }
+  });
+
+  it('stops at the gates/ boundary — the narrowing function itself is free to import what it narrows', async () => {
+    // The positive control that matters most for buildability. Something has to
+    // turn an AssignMessage into a GateContext, and it necessarily imports the
+    // AssignMessage. If the ban covered all of worker-entry/ this design could
+    // not be written at all — and the temptation would be to weaken the ban
+    // rather than to move the file, which is how a boundary becomes decorative.
+    const groups = restrictedPatternGroups(
+      (
+        await realConfigLinter().calculateConfigForFile(
+          absolute(NON_GATE_WORKER_SOURCE),
+        )
+      ).rules ?? {},
+    );
+
+    expect(
+      groups,
+      `${NON_GATE_WORKER_SOURCE} is the narrowing point, not a gate — it must be free to import ipc/protocol.js`,
+    ).not.toContain('**/ipc/protocol.js');
+
+    // …and it is still a worker-entry file, so D-01 still applies to it.
+    const paths = restrictedPathNames(
+      (
+        await realConfigLinter().calculateConfigForFile(
+          absolute(NON_GATE_WORKER_SOURCE),
+        )
+      ).rules ?? {},
+    );
+    expect(
+      paths,
+      `${NON_GATE_WORKER_SOURCE} must still carry D-01's @adl/db ban — moving the gate ban must not have moved that one`,
+    ).toContain('@adl/db');
+  });
+
+  it('leaves the real command gate clean — the ban is precise, not a blanket', async () => {
+    // The positive control. `gates/command-gate.ts` reads `gate.stageId`,
+    // `gate.workspace`, `gate.onEvent`, `gate.signal`, `config.command` and
+    // `config.path`, and imports `@adl/core/*` plus `../../ipc/stage-verdict.js`
+    // — which lives directly beside the banned `ipc/protocol.js` and is exactly
+    // what a gate must import, since it is the envelope its own answer travels
+    // home in. A ban that took the whole `ipc/` directory would flag it, at
+    // which point the rule gets switched off, which is how a guard stops
+    // guarding.
+    const [result] = await realConfigLinter().lintFiles([
+      absolute(GATE_SOURCE),
+    ]);
+
+    expect(result).toBeDefined();
+    const reported = (result!.messages ?? []).filter(
+      (message) =>
+        message.ruleId === 'no-restricted-syntax' ||
+        message.ruleId === 'no-restricted-imports',
+    );
+    expect(
+      reported.map((m) => `line ${m.line}: ${m.message}`),
+      `${GATE_SOURCE} must lint clean under adl/gate-fresh-context`,
+    ).toEqual([]);
+  });
+
+  it('reports every forbidden name and group on the fixture', async () => {
+    // The other direction from the resolved-config assertions above: those
+    // prove a selector EXISTS, this proves it FIRES. A selector that resolves
+    // but matches nothing — an attribute path that moved between parser
+    // versions, a group glob that does not match a relative specifier — passes
+    // the first and fails here. The relative-specifier case is not
+    // hypothetical: `no-restricted-imports`' documented examples only ever show
+    // bare package names, and a gate's imports of these are all relative.
+    const [result] = await realConfigLinter().lintFiles([
+      absolute('test/lint/fixtures/gate-reaches-past-context.ts'),
+    ]);
+
+    expect(result).toBeDefined();
+    const combined = (result!.messages ?? [])
+      .map((message) => message.message)
+      .join('\n');
+
+    const silent: string[] = [];
+    for (const member of GATE_FORBIDDEN_MEMBERS) {
+      if (!combined.includes(member)) silent.push(member);
+    }
+    for (const [group] of GATE_FORBIDDEN_IMPORT_GROUPS) {
+      // The group glob is not in the message; the specifier that matched it is.
+      // `**\/store/*` → `.../store/transcript-path.js`, so the directory
+      // segment is what identifies it.
+      const segment = group.replace('**/', '').split('/')[0];
+      if (segment !== undefined && !combined.includes(`/${segment}/`)) {
+        silent.push(group);
+      }
+    }
+
+    expect(
+      silent,
+      `these banned entries resolve but never fired on the fixture: ${silent.join(', ')}. Either the selector matches nothing, or test/lint/fixtures/gate-reaches-past-context.ts has no case for it — a banned entry nobody has watched fire is the Pitfall 8 shape this whole file exists to prevent.`,
+    ).toEqual([]);
+  });
+
+  it('is configured by exactly one flat-config entry, scoped to the gates directory, and registered after the ban it overlaps', () => {
+    const isGateEntry = (config: {
+      readonly rules?: Readonly<Record<string, unknown>>;
+    }): boolean => {
+      const entry = config.rules?.['no-restricted-syntax'];
+      const options = Array.isArray(entry) ? entry.slice(1) : [];
+      return options.some(
+        (option) =>
+          typeof option === 'object' &&
+          option !== null &&
+          (option as SyntaxSelector).selector ===
+            `MemberExpression[property.name='logsRoot']`,
+      );
+    };
+
+    const configuring = architectureConfigs.filter(isGateEntry);
+    expect(
+      configuring,
+      'exactly one architectureConfigs entry may configure the fresh-context ban — a second over a wider glob would look like it was strengthening the ban while actually replacing this one',
+    ).toHaveLength(1);
+
+    const files =
+      (configuring[0] as { readonly files?: readonly string[] }).files ?? [];
+    expect(
+      files.some((glob) => glob.includes('worker-entry/gates/')),
+      `the fresh-context ban must be scoped to the gates DIRECTORY — a place, not a filename convention, so M07's reviewer is governed the day it is written. Got: ${files.join(', ')}`,
+    ).toBe(true);
+
+    // ── The ordering property, and it is not stylistic ──────────────────────
+    //
+    // `worker-entry/gates/**` is a strict SUBSET of `adl/worker-entry-no-db`'s
+    // glob, and flat config resolves per rule id by LAST match. Registered
+    // before it, this entry would be silently overwritten for every gate file —
+    // the rule would still be in the config, still look configured, and enforce
+    // nothing. The resolved-config assertions above are what would actually go
+    // red; this one names the cause so the next reader does not have to
+    // rediscover it.
+    const indexOfName = (name: string): number =>
+      architectureConfigs.findIndex(
+        (config) => (config as { readonly name?: string }).name === name,
+      );
+
+    const gateIndex = indexOfName('adl/gate-fresh-context');
+    const dbIndex = indexOfName('adl/worker-entry-no-db');
+    expect(gateIndex).toBeGreaterThanOrEqual(0);
+    expect(dbIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      gateIndex,
+      'adl/gate-fresh-context must be registered AFTER adl/worker-entry-no-db: its glob is a strict subset, and flat config resolves per rule id by last match, so registering it earlier switches it off while leaving it looking configured',
+    ).toBeGreaterThan(dbIndex);
   });
 });

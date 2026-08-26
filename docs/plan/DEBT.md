@@ -119,15 +119,30 @@ that gap. `paths.ts`'s docblock presents the realpath walk as *the* answer to th
 not say it cannot cover a symlink planted **after** the check — which is the misleading
 part: a reader budgeting trust from that paragraph over-trusts it.
 
-- **Not blocking** — it needs an agent actively racing ADL's own `read`/`write` on the same
-  path, and nothing schedules those concurrently in v1. **M05 changes that**, so re-read
-  this then.
-- **Proposed fix:** `open()` then `fstat` the handle and compare `dev`/`ino` against the
-  blessed path — one extra syscall, converts "attacker wins silently" into "attacker is
-  detected". Add `O_NOFOLLOW` on the leaf where the platform supports it (Windows has no
-  equivalent, so it can't be the only measure).
-- If the residual is **accepted** instead of closed, updating that docblock *is* the entire
-  deliverable and is worth more than a partial fix.
+- **Live as of M05 step 5.17, and this is the instance the entry was waiting for.** 5.16
+  looked and reported *not this one* — its diff reads git's object database through
+  `ManagerGitClient`, never a worktree path through `assertWithinRoot`. 5.17 is different:
+  gate-context assembly (`packages/manager/src/worker-entry/spec-from-worktree.ts`, called
+  by `worker-entry/gate-context.ts`) reads a feature's spec **out of a worktree the
+  developer's agent has already written to**. That is the first read in this project to
+  happen after an agent has had write access to the directory being walked, which is the
+  precondition this entry names.
+- **Accepted, not closed**, and the entry's own stated deliverable for that case is done:
+  `packages/workspace/src/paths.ts`'s module docblock now carries a *"what rejection 4 does
+  NOT cover"* section saying in as many words that the realpath walk is check-then-use and
+  cannot see a symlink planted after the check. The misleading paragraph was the actual
+  harm — a reader budgeting trust from the four-rejection list over-trusted it.
+- **What bounds it now.** The attack needs an *uncommitted* working-tree swap: ROLE-11's
+  protected-path check (5.16) hard-fails any round whose commit touches the spec folder, and
+  it fires in the manager before the gate is ever dispatched. The payoff is also small —
+  the reader is a spec loader, and a substituted spec buys a gate judging against the wrong
+  acceptance criteria rather than code execution or a path escape.
+- **Proposed fix, unchanged:** `open()` then `fstat` the handle and compare `dev`/`ino`
+  against the blessed path — one extra syscall, converts "attacker wins silently" into
+  "attacker is detected". Add `O_NOFOLLOW` on the leaf where the platform supports it
+  (Windows has no equivalent, so it can't be the only measure). **Owner: M15** — the real
+  fix changes `Workspace.read`'s implementation across both backends and is security
+  hardening, not gate work.
 
 ### D-2-07-1 — cancellation under the privilege drop signals a process ADL doesn't own 🟠
 
@@ -198,7 +213,7 @@ classification.
 | ID | Where | What | Sev |
 |----|-------|------|-----|
 | **WR-01** (M04) | stage runner | The 10-minute wall-clock timeout is a hardcoded placeholder, not wired to `effectiveConfig` — risks misclassifying a legitimate long agent run as a timeout | 🟡 |
-| **WR-02** (M04) | `loadSpecFromWorktree` | Builds a path with plain `join()` and **no `resolveWithinRoot` containment check** — unreachable with untrusted input today, but inconsistent with the containment discipline used at every other path site in the milestone | 🟡 |
+| ~~**WR-02**~~ (M04) | `loadSpecFromWorktree` | **Closed by M05 step 5.17.** The item was: the spec load built a path with plain `join()` and **no containment check**, which M04 filed as "unreachable with untrusted input today, but inconsistent with the containment discipline used at every other path site". 5.17 is where it stopped being unreachable — gate-context assembly reads the spec *after* the developer's agent has written to that worktree, where M04's caller read it before. Now one shared module (`packages/manager/src/worker-entry/spec-from-worktree.ts`, used by both the developer stage and the gate) resolves the feature directory through `resolveWithinRoot` and reads the entry file through **`Workspace.read`**, which applies `assertWithinRoot` — so the content read goes through the port's own guard rather than around it. What that does *not* close is the check-then-use race inside that guard: see **D-2-R-3** above, which 5.17 makes live and accepts | ✅ |
 | **WR-03** (M04) | `agent-claude-code/src/backend.ts` | The rendered prompt is a trailing positional argument with **no `--` end-of-options separator** — safe today only because the template can never start with `-` | 🟡 |
 | **IN-01/02/03** (M04) | various | A same-name/different-type placeholder field on `stage_result`, an unused `AgentTask.contextFiles`, an ENOENT fallback branch untested on any platform | 🟡 |
 | — | `stage-runner.ts` | The retry attempt ordinal is **hardcoded to `1`** for both the transcript address and the prompt-artifact address; the real ordinal from `openAttempt` never reaches the wire | 🟡 |

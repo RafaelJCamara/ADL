@@ -38,6 +38,33 @@
  *    (T-2-25, `§ Pitfall 12`).
  * 4. **It resolves outside the root once symlinks are followed.** See
  *    {@link assertWithinRoot} for why the walk is written the way it is.
+ *
+ * ── What rejection 4 does NOT cover (D-2-R-3) ─────────────────────────────
+ *
+ * **The realpath walk is check-then-use, and it cannot see a symlink planted
+ * after the check.** {@link assertWithinRoot} resolves a path, proves it inside
+ * the root, and returns it; the caller then opens it. Those are two syscalls
+ * with a gap between them, and a process running *inside* the worktree — which
+ * is exactly what an agent is — can replace a path component with a symlink in
+ * that gap. The guard reports the path it blessed, not the file the caller
+ * subsequently gets.
+ *
+ * This paragraph exists because the four rejections above, read alone, present
+ * the realpath step as *the* answer to symlink escape, and a reader budgeting
+ * trust from that list would over-trust it. `docs/plan/DEBT.md` **D-2-R-3**
+ * records the residual, its accepted status, and the proposed fix (`open()`
+ * then `fstat` the handle and compare `dev`/`ino` against the blessed path,
+ * plus `O_NOFOLLOW` on the leaf where the platform has it — Windows does not,
+ * so it cannot be the only measure).
+ *
+ * **It is live rather than hypothetical as of M05 step 5.17**: gate-context
+ * assembly reads a feature's spec out of a worktree an agent has already
+ * written to, which is the first read in this project to happen *after* an
+ * agent has had write access to the directory being walked. What bounds it is
+ * ROLE-11's protected-path check (5.16), which hard-fails any round whose
+ * commit touches the spec folder — so the attack needs an *uncommitted*
+ * working-tree swap, and the payoff is limited to what the reader does with the
+ * bytes.
  */
 import { realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';

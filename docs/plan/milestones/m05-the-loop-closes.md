@@ -816,10 +816,116 @@ mostly isn't — group C needs a gate to run and group D needs everything.
       `createProductionStageRunner`), only the `claude` binary replaced with a double that
       makes a real commit editing `adl.yml`, proving the round escalates on round 1 with the
       gate never even dispatched (`stage_attempts` has no row for stage index 1 at all).
-- [ ] **5.17** — Fresh-context gate isolation (ROLE-03). Gate context is assembled from
+- [x] **5.17** — Fresh-context gate isolation (ROLE-03). Gate context is assembled from
       spec + diff + repository only. Make the developer's session and transcript
       *structurally* unreachable from a gate — a type the gate cannot name, not a rule it
       is asked to follow.
+      **Shipped as a type, an assembly, and a lint rule — the same two-layer shape 5.12
+      needed for FORGE-10, for the same reason.** `@adl/core/stage`'s new `GateContext`
+      (`gate-context.ts`) is what a gate takes: `stageId`, `workspace`, `spec`, `diff`,
+      `onEvent`, `signal`, and **nothing else**. There is no member on it through which a
+      `sessionRef`, a transcript, a `logsRoot`, a rendered prompt or a send-back brief can
+      be *named* — which is the property AC3 asks for expressed as a parameter list rather
+      than as a rule somebody has to follow. Every one of those exists in this codebase and
+      every one is reachable from the `AssignMessage` a worker receives, which is exactly
+      why a gate is no longer handed one.
+      **Two doors, as in 5.12.** `GATE_CONTEXT_MEMBERS` (plus `GATE_DIFF_MEMBERS`, because
+      `GateDiff` is nested and a member-name guard is blind through a nested type) pairs
+      each interface with a frozen list in the house's
+      `Exclude<keyof T, Arr[number]> extends never` shape: adding a member *without* listing
+      it fails the **build**, and getting past that by listing a forbidden name fails the
+      **suite** (`packages/core/test/stage/gate-context.test.ts`, with a has-teeth control on
+      the vocabulary matcher and a vacuity control on both list lengths). Both were watched
+      failing against the exact defect — an unlisted member reproduced
+      `TS2322: Type 'true' is not assignable to type 'never'` verbatim, and each of
+      `sessionRef` on `GateContext` and `developerTranscript` on `GateDiff` turned the core
+      test red with the message naming it.
+      **`GateContext` is deliberately NOT added to `@adl/plugin-sdk`.** That surface is the
+      published third-party contract and `StageContext` is its context type; publishing a
+      second one before M13 has a real harness to shape it against is the only move in this
+      step that would be one-way (D-01). `StageContext` could not carry this guarantee
+      instead: four of its nine members are still forward declarations nothing supplies, no
+      production code implements `Stage` at all, and an `Exclude<>` assertion over opaque
+      placeholders proves nothing. `FeatureView` specifically could not simply be filled in
+      passing — its declared shape wants the round *number*, which is not on the worker's
+      wire at all, only the round id.
+      **The assembly is one function and it is the boundary.**
+      `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` is the single
+      place an `AssignMessage` is narrowed, reading exactly three fields off it (`stageId`,
+      `workspaceHandle`, `baseRef` — each repository state, none of it agent output) and
+      taking the commit under judgement from the workspace's own `HEAD` rather than from the
+      wire. The diff is `baseRef...HEAD`, three-dot, computed by `ManagerGitClient` inside
+      the attached worktree — which shares its parent repository's object database, so no
+      second workspace and no manager round trip. An assembly failure is a `StageError`, never
+      a verdict, split by kind for a reason: an unloadable spec is non-retryable
+      `unparseable` (it will not load next time either), a failed `git` invocation is
+      retryable `provider_error` (CORE-06 — a gate that could not run must not cost a round).
+      `runCommandGate` now takes `(gate: GateContext, config: CommandGateConfig)` and moved
+      to `worker-entry/gates/`; it *ignores* `spec` and `diff`, which is the point — what a
+      gate cannot do is reach for context it was not given.
+      **Layer 2, `eslint.config.js`'s new `adl/gate-fresh-context`**, is the residual the
+      type structurally cannot reach, and it is the identical argument `adl/no-forge-merge`
+      rests on: a gate does not have to arrive at the developer's transcript through its
+      parameters — it can `import { transcriptPathFor }` and rebuild the path out of ids it
+      legitimately knows. Scoped to `packages/manager/src/worker-entry/gates/**` — a
+      **directory**, so a gate is a *place* rather than a filename convention and M07's
+      reviewer is governed the day it is written (D-27, and ROLE-03's own wording is about
+      the reviewer, so a guard reaching only the command gate would be scoped to the one gate
+      the requirement does not name). It bans four module groups (`**/store/*`,
+      `**/prompt/*`, `**/loop/*`, `**/ipc/protocol.js` — named as a *file* because
+      `ipc/stage-verdict.js` sits beside it and is exactly what a gate must import) and six
+      member names, and the narrowing function itself deliberately lives *outside* that
+      directory because it has to import the thing it narrows.
+      **Every selector was verified empirically against this repository's own eslint before
+      being written (convention 15), and two probe findings changed what got written.**
+      (1) `no-restricted-imports`' `patterns` **does** match relative specifiers — its
+      documented examples only ever show bare package names, and every one of a gate's
+      imports of these is relative, so the whole import layer rested on an unverified
+      assumption. (2) `MemberExpression[property.name=…]` alone is **not enough**:
+      `const { logsRoot } = assign` lints clean under it. That is the destructuring analogue
+      of the aliasing blind spot 5.12 documents for call expressions, so the ban carries
+      three selector families per name — member, `Property[key.name=…]` (which also catches
+      renamed destructuring and object-literal laundering), and computed literal access. The
+      one residual no static selector can reach — a fully dynamic `a[k]` — is stated in the
+      rule's own comment rather than left for a reader to discover.
+      **Both flat-config merges are mandatory and both were watched failing.**
+      `worker-entry/gates/**` is matched by `adl/no-direct-spawn` (`**/*`) *and* is a strict
+      subset of `adl/worker-entry-no-db`'s glob, and flat config REPLACES per rule id — so
+      the new entry re-merges `FORBIDDEN_SPAWN`, `SPAWN_SYNTAX` and D-01's `@adl/db` ban, and
+      must be registered **after** `adl/worker-entry-no-db` or it is silently overwritten for
+      every gate file while still looking configured. Dropping each merge, and moving the
+      entry earlier, were each reproduced red.
+      **The one link in the fresh-context argument that lives outside the type is asserted,
+      not argued.** `GateContext.workspace` is a live filesystem handle and looks like the
+      widest member here; that it is not comes down entirely to transcripts living *outside*
+      a workspace root — `logsRootFor(db)` is `dirname(db)/logs` while a workspace root is
+      `<scratchRoot>/<id>` under `dirname(db)/scratch`, two independent derivations in two
+      modules that happen to be siblings. `packages/manager/test/worker-entry/gate-context.test.ts`
+      asserts the separation with `isWithinRoot`, plus the behavioural half (a `..`-climbing
+      read is refused), and it was watched failing by pointing the transcript root inside the
+      workspace. The same file asserts the narrowing **over the value, not only the type** —
+      a builder that spread the whole `AssignMessage` in typechecks fine, because a wider
+      object satisfies a narrower interface everywhere except at a fresh object literal, and
+      that defect was reproduced too.
+      **`DEBT.md` WR-02 is closed and D-2-R-3 is now live.** Both belong to this step
+      because gate-context assembly reads the spec out of a worktree the developer's agent
+      has already written to — the first read in this project to happen *after* an agent had
+      write access to the directory being walked, which is the precondition D-2-R-3 has been
+      waiting on since M02 (5.16 looked and correctly reported *not this one*). WR-02 is
+      closed at the source: one shared `spec-from-worktree.ts` (the developer stage and the
+      gate must not read two different documents) resolves the directory through
+      `resolveWithinRoot` and reads the file through `Workspace.read`, so the content read
+      goes through the port's own `assertWithinRoot` rather than around it. D-2-R-3's
+      check-then-use race is **accepted**, and the entry's own stated deliverable for that
+      case is done — `packages/workspace/src/paths.ts`'s docblock now says outright that the
+      realpath walk cannot see a symlink planted after the check, which was the actual harm
+      (its four-rejection list read as a complete answer). Bounded by ROLE-11: the attack
+      needs an *uncommitted* working-tree swap, since a committed one hard-fails the round
+      before the gate is dispatched. **Owner M15.**
+      **Found and not fixed:** nothing new. The negative control in
+      `test/lint/no-restricted-imports.test.ts` needed a one-line correction — it counted
+      `FIXTURES` entries where ESLint returns one result per *file*, and this step's fixture
+      is the first to be listed twice (it violates two independently-escapable rule ids).
 
 ### D · Accounting and proof (AC5, AC2)
 
@@ -873,4 +979,7 @@ mostly isn't — group C needs a gate to run and group D needs everything.
 | The commit a round produced | `rounds.head_sha` (`0005_rounds_head_sha.ts`) — done, 5.14. Written when the developer stage reports `committed`, never at round close. |
 | Send-back context into the next prompt | `packages/manager/src/loop/send-back-brief.ts` (both directions, pure) + `FeaturesRepository.latestClosedRound` (the DB half) — done, 5.15. `AssignMessage.sendBackBriefJson` is the wire crossing; `buildDeveloperPrompt`'s `sendBackBrief` field is the renderer. |
 | A round's diff, by path list only | `ManagerGitClient.diffNameOnly` (`packages/workspace/src/git/manager-git.ts`) — done, 5.16. `base...head` (three-dot); needs only two shas/refs reachable from `mainRepo`'s object database, no worktree checkout. `packages/manager/src/loop/protected-paths-check.ts` is the one production caller. |
-| Protected-path classification | `@adl/core/loop`'s `violatedProtectedPaths` + `matchesGlob` (pure) — done, 5.16. Structural (spec folder, `adl.yml`) plus `EffectiveConfig.protected_paths` (maintainer-declared globs). 5.17's "diff" gate-context input can read straight off the same `diffNameOnly` call this step already makes. |
+| Protected-path classification | `@adl/core/loop`'s `violatedProtectedPaths` + `matchesGlob` (pure) — done, 5.16. Structural (spec folder, `adl.yml`) plus `EffectiveConfig.protected_paths` (maintainer-declared globs). |
+| What a gate may see | `@adl/core/stage`'s `GateContext` + `GATE_CONTEXT_MEMBERS`/`GATE_DIFF_MEMBERS` (pure, compile-time exhaustive) — done, 5.17. A new field is a member plus a list entry, and it has to survive the forbidden-vocabulary test; `@adl/plugin-sdk` deliberately does not republish it. |
+| Turning a dispatch into gate context | `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` — done, 5.17. The one place an `AssignMessage` is narrowed; returns a classified `StageError` kind rather than throwing. A new gate goes in `worker-entry/gates/`, which `adl/gate-fresh-context` governs on the day it is created. |
+| The spec, out of the worktree | `packages/manager/src/worker-entry/spec-from-worktree.ts` — done, 5.17. Shared by the developer stage and gate-context assembly so the two cannot read different documents; contained through `resolveWithinRoot` + `Workspace.read` (WR-02 closed, D-2-R-3 accepted). |

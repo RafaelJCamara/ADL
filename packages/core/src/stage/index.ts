@@ -137,3 +137,17 @@ export type {
   StageContext,
   Stage,
 } from './stage.js';
+
+// What a GATE is given, and ROLE-03's guarantee that the list ends there (M05
+// step 5.17). Deliberately NOT re-exported through `@adl/plugin-sdk`: that
+// surface is the published third-party contract, and `StageContext` is its
+// context type. See `./gate-context.ts`'s own docblock for why the two are not
+// the same thing yet.
+export {
+  GATE_CONTEXT_MEMBERS,
+  type GateContextMember,
+  GATE_DIFF_MEMBERS,
+  type GateDiffMember,
+  type GateDiff,
+  type GateContext,
+} from './gate-context.js';

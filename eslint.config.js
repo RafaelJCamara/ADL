@@ -445,6 +445,199 @@ const FORGE_MERGE_RULES = {
   'no-restricted-syntax': ['error', ...SPAWN_SYNTAX, ...FORGE_MERGE_SYNTAX],
 };
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * `adl/gate-fresh-context` — ROLE-03, M05 step 5.17
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ROLE-03: *"Reviewer works from fresh context — it never inherits the
+ * developer's session, transcript, or reasoning."* M05's AC3 fixes the
+ * mechanism: *"Gate context is assembled from spec, diff and repository only;
+ * the developer's session and transcript are structurally unreachable."*
+ *
+ * The **preferred** guard is the type, and it exists:
+ * `@adl/core/stage`'s `GateContext` has no member through which a session, a
+ * transcript, a transcript root, a rendered prompt, or a send-back brief can be
+ * named, and `GATE_CONTEXT_MEMBERS` proves that list complete at compile time
+ * with `packages/core/test/stage/gate-context.test.ts` rejecting a forbidden
+ * name in it. `packages/manager/src/worker-entry/gate-context.ts` is the single
+ * place an `AssignMessage` — which carries every one of those — is narrowed
+ * down to that type.
+ *
+ * This rule closes the residual that guard structurally cannot reach, and it is
+ * the same residual, in the same shape, that `adl/no-forge-merge` exists for
+ * (5.12): a gate does not have to arrive at the developer's transcript through
+ * its parameters. It can `import { transcriptPathFor } from
+ * '../../store/transcript-path.js'` and build the path itself out of ids it
+ * legitimately knows. A parameter list cannot stop that; a module boundary can.
+ *
+ * ── Scoped to a DIRECTORY, not a filename convention ──────────────────────
+ *
+ * `packages/manager/src/worker-entry/gates/**` — a gate is a file in that
+ * directory, which is a place rather than a name, so a future reviewer gate
+ * that happens not to be called `*-gate.ts` is still governed. It names the
+ * directory rather than the one file in it today for D-27's reason, the same
+ * one `packages/forge-*`'s package prefix rests on: the rule that lands before
+ * the thing it would have prevented is the only kind that prevents it. M07's
+ * reviewer and M08's behaviour tester are the things.
+ *
+ * ── Verified empirically before it was written (convention 15) ────────────
+ *
+ * A throwaway probe against this repository's own eslint confirmed each of the
+ * following, and two of them changed what got written:
+ *
+ * 1. `no-restricted-imports`' `patterns` **does** match RELATIVE specifiers —
+ *    `'../../store/transcript-path.js'` is reported by the group `**\/store/*`.
+ *    The documented examples only ever show bare package names, so this was not
+ *    safe to assume.
+ * 2. `MemberExpression[property.name=…]` alone is **not enough**:
+ *    `const { logsRoot } = assign` lints clean under it. That is the same class
+ *    of blind spot `adl/no-forge-merge` documents for call expressions, and it
+ *    is why {@link GATE_FRESH_CONTEXT_SYNTAX} bans `Property[key.name=…]` too.
+ * 3. `a['logsRoot']` is clean under both, so the computed form is banned
+ *    separately.
+ * 4. `@adl/core/loop`, `@adl/core/stage`, `../../ipc/stage-verdict.js` and
+ *    `./sibling.js` are clean under every pattern here — the ban is precise,
+ *    not a blanket on relative imports.
+ *
+ * **The one residual this rule cannot reach** is a fully dynamic property name
+ * (`a[k]` where `k` is a variable), which no static selector can see. Stated
+ * rather than left for a reader to discover: the type is the primary guard and
+ * this is defence in depth, not the other way round.
+ */
+
+/**
+ * How the developer's session, transcript, or reasoning is spelled in this
+ * codebase — every name a gate could read one through.
+ *
+ * Each entry is a real field on a real type a worker holds, not a hypothetical:
+ *
+ * | Name | Declared on | What reading it would give a gate |
+ * |---|---|---|
+ * | `logsRoot` | `AssignMessage` | the root every transcript is addressed under — plus `roundId`/`stageId`, which a gate legitimately knows, that is a path |
+ * | `sessionRef` | `AgentTask`, `AgentRunResult`, `AgentStartedEvent` | the backend's opaque resumable session — the developer's conversation, verbatim |
+ * | `sendBackBriefJson` | `AssignMessage` | a prior round's findings: not spec, not diff, not repository |
+ * | `stageAttemptId` | `AssignMessage` | the transcript's own join key |
+ * | `systemPrompt` / `instructions` | `AgentTask` | what the developer was asked — its reasoning's input |
+ *
+ * `roundId` is deliberately **absent**: a gate needs to know which round it is
+ * in for its own fingerprinting and logging, and banning it would flag the
+ * legitimate use while the transcript still needs `logsRoot` — which is banned
+ * — to be reachable at all. Banning the field that is never legitimate beats
+ * banning the field that usually is.
+ *
+ * Exported so `test/lint/no-restricted-imports.test.ts` can iterate it: a name
+ * added here gains its resolved-config assertion automatically, and a name
+ * whose selector is lost goes red without anyone remembering to add a case.
+ */
+export const GATE_FORBIDDEN_MEMBERS = Object.freeze([
+  'logsRoot',
+  'sessionRef',
+  'sendBackBriefJson',
+  'stageAttemptId',
+  'systemPrompt',
+  'instructions',
+]);
+
+/**
+ * The modules a gate may not import, as `no-restricted-imports` pattern groups.
+ *
+ * Relative globs, because a gate's imports of these are relative — see probe
+ * finding 1 above. Each group is the *directory* rather than the file, so a
+ * second transcript reader or a second prompt renderer added later is covered
+ * on the day it lands rather than on the day someone remembers this list.
+ *
+ * `ipc/protocol.js` is named as a single file on purpose: `ipc/stage-verdict.js`
+ * lives beside it and is exactly what a gate must import — it is the envelope a
+ * gate's own answer travels home in. A directory ban would take both.
+ */
+export const GATE_FORBIDDEN_IMPORT_GROUPS = Object.freeze([
+  ['**/store/*', 'the transcript store'],
+  ['**/prompt/*', 'the prompt builder and its artifact writer'],
+  ['**/loop/*', "the manager's own round-loop modules"],
+  ['**/ipc/protocol.js', 'the AssignMessage envelope'],
+]);
+
+const GATE_FRESH_CONTEXT_MESSAGE =
+  "is not gate context (ROLE-03, M05 AC3: gate context is assembled from spec, diff and repository ONLY). A gate works from fresh context and never inherits the developer's session, transcript, or reasoning — `docs/plan/DECISIONS.md` records the measured reason: models exploit conflicting tests up to 76% of the time, and a reviewer handed the developer's own argument for why a test is wrong is a reviewer handed the argument for agreeing with it. Everything a gate may see is on @adl/core/stage's GateContext, which packages/manager/src/worker-entry/gate-context.ts builds by narrowing the assign message. If a gate needs something new, ask which of spec, diff or repository it comes from — and if the answer is none of them, it does not belong to a gate.";
+
+/**
+ * Three selector families per forbidden name, derived from the one tuple so
+ * they cannot come to cover different vocabularies — the same derivation, for
+ * the same reason, as `SPAWN_SYNTAX` and `FORGE_MERGE_SYNTAX` above.
+ *
+ * `Property[key.name=…]` is the one that is easy to leave out and the one probe
+ * finding 2 says is load-bearing: it catches `const { logsRoot } = x`,
+ * `function f({ logsRoot })`, `const { logsRoot: root } = x`, and building an
+ * object literal with that key. All four are ways to arrive at the value
+ * without ever writing a member expression.
+ */
+const GATE_FRESH_CONTEXT_SYNTAX = GATE_FORBIDDEN_MEMBERS.flatMap((member) => [
+  {
+    selector: `MemberExpression[property.name='${member}']`,
+    message: `.${member} ${GATE_FRESH_CONTEXT_MESSAGE}`,
+  },
+  {
+    selector: `Property[key.name='${member}']`,
+    message: `${member} (destructured or as an object key) ${GATE_FRESH_CONTEXT_MESSAGE}`,
+  },
+  {
+    selector: `MemberExpression[computed=true][property.value='${member}']`,
+    message: `['${member}'] ${GATE_FRESH_CONTEXT_MESSAGE}`,
+  },
+]);
+
+/** Where a gate implementation lives. See the block comment above for why a directory. */
+const GATE_PACKAGES = [
+  mod('packages/manager/src/worker-entry/gates/**/*'),
+  mod('test/lint/fixtures/gate-*'),
+];
+
+/**
+ * The rule object — and BOTH merges below are mandatory rather than tidy.
+ *
+ * This glob is matched by two entries that already configure these rule ids,
+ * and flat config REPLACES rather than merges per rule id for an overlapping
+ * glob (02-RESEARCH.md § Pitfall 1):
+ *
+ * - `adl/no-direct-spawn` (`files: ['**\/*']`) configures BOTH
+ *   `no-restricted-imports` (via `FORBIDDEN_SPAWN`) and `no-restricted-syntax`
+ *   (via `SPAWN_SYNTAX`). Omitting either would make `worker-entry/gates/` the
+ *   one place in the repository a direct `execa` import lints clean.
+ * - `adl/worker-entry-no-db` (`files: ['packages/manager/src/worker-entry/**\/*']`)
+ *   configures `no-restricted-imports` with the `@adl/db` ban. `gates/` is
+ *   *inside* that directory, so omitting this would lift D-01's database ban for
+ *   exactly the files it matters most on — a gate that could open the database
+ *   could read `stage_attempts` and reach a transcript address that way, which
+ *   is this rule's own property defeated through the hole this rule opened.
+ *
+ * `test/lint/no-restricted-imports.test.ts` asserts all three layers survive at
+ * a real gate source path, by reading the RESOLVED config rather than this
+ * source — flat-config rule replacement is invisible to a source-level read.
+ */
+const GATE_FRESH_CONTEXT_RULES = {
+  'no-restricted-imports': [
+    'error',
+    {
+      paths: [
+        ...FORBIDDEN_SPAWN,
+        { name: '@adl/db', message: WORKER_ENTRY_DB_BAN_MESSAGE },
+      ],
+      patterns: [
+        { group: ['@adl/db/*'], message: WORKER_ENTRY_DB_BAN_MESSAGE },
+        ...GATE_FORBIDDEN_IMPORT_GROUPS.map(([group, label]) => ({
+          group: [group],
+          message: `${label} ${GATE_FRESH_CONTEXT_MESSAGE}`,
+        })),
+      ],
+    },
+  ],
+  'no-restricted-syntax': [
+    'error',
+    ...SPAWN_SYNTAX,
+    ...GATE_FRESH_CONTEXT_SYNTAX,
+  ],
+};
+
 /**
  * The one and only exemption from the spawn ban.
  *
@@ -812,6 +1005,24 @@ export const architectureConfigs = [
         },
       ],
     },
+  },
+  {
+    // ROLE-03 / 5.17 — see GATE_FORBIDDEN_MEMBERS above for the full reasoning.
+    //
+    // Registered LAST, and that position IS the enforcement here, unlike
+    // `adl/no-direct-spawn`'s (whose own comment says its position is about
+    // reading order). `packages/manager/src/worker-entry/gates/**` is a strict
+    // subset of `adl/worker-entry-no-db`'s glob, and flat config resolves per
+    // rule id by LAST match — so this entry has to come after it to take
+    // effect at all, and `GATE_FRESH_CONTEXT_RULES` has to re-merge that
+    // entry's `@adl/db` ban because winning means replacing it. Moving this
+    // above `adl/worker-entry-no-db` would silently switch the whole rule off
+    // while leaving it looking configured; `test/lint/no-restricted-imports.test.ts`
+    // measures the resolved options rather than reading this file, which is
+    // what makes that observable instead of arguable.
+    name: 'adl/gate-fresh-context',
+    files: GATE_PACKAGES,
+    rules: GATE_FRESH_CONTEXT_RULES,
   },
 ];
 

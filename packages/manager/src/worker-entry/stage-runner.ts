@@ -10,9 +10,15 @@
  * the developer agent at index 0, or a {@link runCommandGate} at any later
  * index whose stage id this build has an implementation for. A stage id it
  * cannot run is refused before a workspace is opened. The steps below describe
- * the developer path; the gate path shares 1, 4 and 7 and skips the rest,
- * which is ROLE-03's isolation arriving as a property of the code rather than
- * as a rule (M05 step 5.17 is the formal version).
+ * the developer path; the gate path shares 1, 4 and 7 and skips the rest.
+ *
+ * **The gate path also narrows** (M05 step 5.17). It does not hand a gate the
+ * `assign` message — it calls `buildGateContext` and hands over the
+ * {@link GateContext} that returns: spec, diff and repository, and no member
+ * naming the developer's session, transcript, rendered prompt or send-back
+ * brief. This module is therefore the last place both types are in scope
+ * together, which is exactly why the narrowing lives at this boundary and not
+ * inside the gate (ROLE-03, AC3).
  *
  * Given an `assign` message, this module:
  *
@@ -21,9 +27,11 @@
  *    creating one only when there is none** (M05 step 5.14) — never naming a
  *    backend factory itself (the registry is the only module allowed to, per
  *    `@adl/workspace`'s own barrel comment);
- * 2. loads the normalized spec directly from the worktree (the assign
- *    message carries no spec, and this module — like every file under
- *    `worker-entry/` — must not import `@adl/db` to fetch one);
+ * 2. loads the normalized spec from the worktree through
+ *    `spec-from-worktree.ts` — shared with gate-context assembly, since the
+ *    developer and the gate judging it must not read two different documents
+ *    (the assign message carries no spec, and this module — like every file
+ *    under `worker-entry/` — must not import `@adl/db` to fetch one);
  * 3. renders the developer prompt through `buildDeveloperPrompt` — the
  *    adapter builds no prompt of its own;
  * 4. opens a transcript writer at the path the message's attempt address
@@ -48,16 +56,9 @@
  * whole `worker-entry/` directory and say so. Everything the manager needs
  * to persist travels over the existing `fork()` IPC channel as `verdictJson`.
  */
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import type { EffectiveConfig } from '@adl/core/config';
-import {
-  detectFormat,
-  loadAdlTemplateSpec,
-  loadGherkinSpec,
-  LoadError,
-  type NormalizedSpec,
-} from '@adl/core/spec';
+import { LoadError, type NormalizedSpec } from '@adl/core/spec';
 import {
   stageErrorPolicy,
   type AgentErrorEvent,
@@ -80,7 +81,9 @@ import {
 } from '@adl/agent-claude-code';
 import { composeBranchFeatureId } from '../branch-identity.js';
 import { parseSendBackBriefJson } from '../loop/send-back-brief.js';
-import { runCommandGate } from './command-gate.js';
+import { buildGateContext } from './gate-context.js';
+import { runCommandGate } from './gates/command-gate.js';
+import { loadSpecFromWorktree } from './spec-from-worktree.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
 import { writePromptArtifact } from '../prompt/artifact.js';
@@ -125,34 +128,6 @@ function commitIdentityEnv(): Record<string, string> {
     GIT_COMMITTER_NAME: COMMIT_IDENTITY_NAME,
     GIT_COMMITTER_EMAIL: COMMIT_IDENTITY_EMAIL,
   };
-}
-
-/**
- * Detect the format and load the normalized spec directly from the worktree
- * — the assign message carries no spec.
- *
- * `workspaceHandle` (== `feature.path`, e.g. `"features/export-widgets"`) is
- * the repo-relative feature folder — NOT `assign.featureId`, which is the
- * `features` ROW's own ULID primary key (D-13's identity, unrelated to the
- * `features/<id>/` folder-name identity `NormalizedSpec.id` and the git
- * branch suffix use). Conflating the two here means resolving a folder that
- * does not exist for any feature whose folder name is not itself a ULID.
- * `NormalizedSpec`'s own `id` argument is the folder's *basename* —
- * `features/<basename>/` is the convention D-16 documents.
- */
-async function loadSpecFromWorktree(
-  workspaceRoot: string,
-  workspaceHandle: string,
-): Promise<NormalizedSpec> {
-  const featureDir = join(workspaceRoot, workspaceHandle);
-  const folderName = basename(workspaceHandle);
-  const filenames = await readdir(featureDir);
-  const detected = detectFormat(filenames);
-  const entryPath = join(featureDir, detected.entryFile);
-  const raw = await readFile(entryPath, 'utf8');
-  return detected.sourceFormat === 'adl-template'
-    ? loadAdlTemplateSpec(raw, folderName)
-    : loadGherkinSpec(raw, folderName, detected.entryFile);
 }
 
 function stageErrorResult(
@@ -388,21 +363,33 @@ export function createProductionStageRunner(
       }
 
       if (role.kind === 'command-gate') {
-        // M05 step 5.14. The gate takes the workspace and one command and
-        // nothing else — no spec, no prompt, no artifact, no agent. That is
-        // ROLE-03's fresh-context isolation showing up as the *shape of the
-        // call* rather than as a rule somebody has to remember: there is no
-        // parameter through which the developer's session or transcript could
-        // reach it. The formal version is M05 step 5.17.
+        // M05 step 5.17. **This is the only place a gate is constructed, and
+        // `assign` does not cross the line.** `buildGateContext` narrows the
+        // message down to spec + diff + repository — ROLE-03's three permitted
+        // sources — and a gate then sees nothing but that context and its own
+        // `adl.yml` block. There is no parameter through which the developer's
+        // session, transcript, rendered prompt, or send-back brief could
+        // arrive, which is the property AC3 asks for stated as a type rather
+        // than as a rule (`@adl/core/stage`'s `gate-context.ts` carries the
+        // guard, `eslint.config.js`'s `adl/gate-fresh-context` the residual).
         const appendPromises: Promise<void>[] = [];
-        const verdict = await runCommandGate({
+        const built = await buildGateContext({
           workspace,
-          stageId: assign.stageId,
-          command: effectiveConfig.commands.test,
-          path: process.env['PATH'] ?? '',
+          assign,
           onEvent: (event: AgentEvent) => {
             appendPromises.push(appendRecord(event));
           },
+        });
+        if (!built.ok) {
+          // Context assembly failed, so the gate never ran, so nothing was
+          // judged. A `StageError`, never a verdict (CORE-06, D-12) — the same
+          // answer `command-gate.ts` gives for a command it had to kill.
+          await Promise.all(appendPromises);
+          return stageErrorResult(built.kind, built.detail);
+        }
+        const verdict = await runCommandGate(built.gate, {
+          command: effectiveConfig.commands.test,
+          path: process.env['PATH'] ?? '',
         });
         // Every record on disk before the result is reported, matching the
         // developer path's own `await Promise.all(appendPromises)` — a verdict
@@ -414,10 +401,7 @@ export function createProductionStageRunner(
 
       let spec: NormalizedSpec;
       try {
-        spec = await loadSpecFromWorktree(
-          workspace.root,
-          assign.workspaceHandle,
-        );
+        spec = await loadSpecFromWorktree(workspace, assign.workspaceHandle);
       } catch (error) {
         const detail =
           error instanceof LoadError

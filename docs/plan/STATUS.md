@@ -24,15 +24,15 @@ weekends, no deadline.
 ## Where we are
 
 **4 of 18 milestones delivered. Milestone 5 is in progress — the opener (5.0, 5.0b), all of
-group A (5.1–5.7), all of group B (5.8–5.12), and group C's 5.13, 5.14, 5.15 and 5.16 are
-done.**
+group A (5.1–5.7), all of group B (5.8–5.12) and all of group C (5.13–5.17) are done. Only
+group D — accounting and the end-to-end proof — remains.**
 
 ```
 M01 Core Contracts .................. ✅ done
 M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
-M05 The Loop Closes ................. ◀ IN PROGRESS — opener, groups A and B, 5.13–5.15 done
+M05 The Loop Closes ................. ◀ IN PROGRESS — opener + groups A, B, C done; group D next
 M06–M18 ............................. not started
 ```
 
@@ -365,10 +365,65 @@ was never the right signal for "the manager's own async work is done".
 **D-2-R-3 is unmoved by this step** — the diff reads git's object database through
 `ManagerGitClient`, never a worktree path through `assertWithinRoot`, so this is not that
 debt item's live TOCTOU instance; it stays open for whichever future step first reads
-agent-influenced worktree files (5.17's gate context, most likely).
+agent-influenced worktree files (5.17's gate context, most likely). *(It was — see below.)*
 
-**What does not exist yet:** formal gate isolation (5.17) and per-round accounting
-(group D).
+And a gate now works from fresh context **because of what it is handed, not because it was
+asked to** (5.17, ROLE-03, AC3). `@adl/core/stage`'s new `GateContext` is a gate's whole
+parameter list — `stageId`, `workspace`, `spec`, `diff`, `onEvent`, `signal` — and it has no
+member through which a `sessionRef`, a transcript, a `logsRoot`, a rendered prompt or a
+send-back brief can be *named*. Every one of those exists in this codebase and every one
+rides on the `AssignMessage` a worker receives, which is exactly why a gate is no longer
+handed one: `packages/manager/src/worker-entry/gate-context.ts`'s `buildGateContext` is the
+single narrowing point, reading three fields off the message (`stageId`, `workspaceHandle`,
+`baseRef` — all repository state) and taking the commit under judgement from the workspace's
+own `HEAD` rather than the wire. It is guarded the way 5.12 guarded FORGE-10, in the same
+two shapes for the same reasons. **Door 1, compile time:** `GATE_CONTEXT_MEMBERS` and
+`GATE_DIFF_MEMBERS` (two lists, because `GateDiff` is nested and a member-name guard is blind
+through a nested type) each pair their interface with a frozen list in the house's
+`Exclude<T, Arr[number]> extends never` shape, so an unlisted member fails the **build**.
+**Door 2, the suite:** `packages/core/test/stage/gate-context.test.ts` rejects any
+session-, transcript- or prompt-shaped name in either list, so getting past door 1 by listing
+one lands on it. **Layer 2, the residual a type cannot reach:** `eslint.config.js`'s new
+`adl/gate-fresh-context`, scoped to `packages/manager/src/worker-entry/gates/**` — a
+*directory*, so M07's reviewer is governed the day it is written — bans four module groups
+(`store/`, `prompt/`, `loop/`, and `ipc/protocol.js` by *file*, since `ipc/stage-verdict.js`
+beside it is exactly what a gate must import) and six member names, because a gate does not
+have to reach the developer's transcript through its parameters: it can import
+`transcriptPathFor` and rebuild the path from ids it legitimately knows. That is the identical
+argument `adl/no-forge-merge` rests on. `runCommandGate` now takes
+`(gate: GateContext, config: CommandGateConfig)` and lives in `gates/`; it *ignores* `spec`
+and `diff`, which is the point — what a gate cannot do is reach for context it was not given.
+**Two probe findings changed what got written** (convention 15): `no-restricted-imports`'
+`patterns` does match *relative* specifiers, which the documented examples never show and the
+whole import layer rested on; and `MemberExpression[property.name=…]` alone lints
+`const { logsRoot } = assign` clean — the destructuring analogue of 5.12's aliasing blind
+spot — so each name carries three selector families. Both flat-config merges are mandatory
+(`gates/**` is matched by `adl/no-direct-spawn` *and* is a strict subset of
+`adl/worker-entry-no-db`'s glob) and the entry must be registered **after** the latter or it
+is silently overwritten while still looking configured; dropping each merge and moving the
+entry earlier were each watched failing.
+**The one link that lives outside the type is asserted rather than argued.**
+`GateContext.workspace` is a live filesystem handle and looks like the widest member here;
+that it is not comes down entirely to transcripts living *outside* a workspace root —
+`logsRootFor(db)` is `dirname(db)/logs` while a workspace root sits under
+`dirname(db)/scratch`, two independent derivations in two modules that happen to be siblings.
+`packages/manager/test/worker-entry/gate-context.test.ts` asserts that separation with
+`isWithinRoot`, and asserts the narrowing **over the value, not only the type** — a builder
+that spread the whole `AssignMessage` in typechecks fine, since a wider object satisfies a
+narrower interface everywhere except at a fresh object literal, and that defect was
+reproduced.
+**`DEBT.md` WR-02 is closed and D-2-R-3 is now live** — both because this is the first read
+in the project to happen *after* an agent has had write access to the directory being walked.
+WR-02 is closed at the source: one shared `worker-entry/spec-from-worktree.ts` (the developer
+stage and the gate must not read two different documents) resolves through `resolveWithinRoot`
+and reads through `Workspace.read`'s own `assertWithinRoot`. D-2-R-3's check-then-use race is
+**accepted**, with the entry's own nominated deliverable done — `paths.ts`'s docblock now says
+outright that the realpath walk cannot see a symlink planted after the check. Bounded by
+ROLE-11: the attack needs an *uncommitted* working-tree swap, since a committed one hard-fails
+the round before the gate is dispatched. Owner M15.
+
+**What does not exist yet:** per-round accounting and the milestone's own end-to-end proof
+(group D, 5.18–5.19).
 
 The two 🟡 milestones are *not* unfinished work. Their code is merged, tested and CI-green;
 what's outstanding is one environment precondition each (a live API key; a Linux host),
@@ -378,23 +433,35 @@ batched deliberately into an end-of-project verification pass. See [`DEBT.md`](.
 
 ## What to do next
 
-Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and continue
-group C with **5.17 — fresh-context gate isolation (ROLE-03)**. Groups A and B are closed,
-and 5.13/5.14/5.15/5.16 have turned the loop with a real gate, real send-back context, and a
-real, unconditional protected-path check.
+Open [`milestones/m05-the-loop-closes.md`](./milestones/m05-the-loop-closes.md) and start
+**group D**. Groups A, B and C are all closed: the loop turns, with a real gate, real
+send-back context, a real unconditional protected-path check, and gates that structurally
+cannot see the developer's session or transcript.
 
-**5.17 makes gate context a type the gate cannot name a developer session or transcript
-through, rather than a rule it is asked to follow** — spec + diff + repository, structurally.
-5.16's `checkProtectedPaths`/`ManagerGitClient.diffNameOnly` is real, proven diff plumbing
-this step can likely reuse or sit beside, and D-2-R-3 (`assertWithinRoot`'s TOCTOU) is worth
-a second look here specifically, since gate context assembly is a plausible first real reader
-of agent-influenced worktree files — 5.16 turned out not to be. Group D (accounting) can run
-in parallel — real rounds exist to record against.
+**5.18 — record tokens and cost for every agent invocation (BACK-09).** M04 built the
+recording path and proved it for `dev-run`; extend it to every role and round, degrading
+visibly to `cost_source: 'unknown'` rather than silently. The `usage` IPC message and
+`usageRepository(db).record` already exist and already fire for the developer stage — what is
+missing is coverage across the loop, and gates that run no agent must be honest about
+reporting nothing rather than reporting zero (D-31).
 
-**Before you plan M05 in detail, skim:**
+**5.19 — the end-to-end scenario test**, which is AC2's proof and the milestone's tracer:
+feature folder → draft CR at round 1 → gate fails → send back → round 2 passes → promoted to
+ready. **It must fail the first time through by construction.** Much of the chain already has
+a scenario test of its own (`test/scenario/command-gate-loop.test.ts`,
+`test/tracer/draft-cr-wiring.test.ts`, `test/scenario/protected-paths-loop.test.ts`); 5.19 is
+the one that runs all of it in a single daemon lifetime, detection included.
+
+**This is also the moment for the cost-accounting spike** — M06 is blocked on reconciling a
+reported cost against a real bill ([`DEBT.md`](./DEBT.md) item 1.2), and 5.18 is the step that
+puts the numbers in front of you.
+
+**Before you start, skim:**
 - [`DECISIONS.md`](./DECISIONS.md) — so settled questions stay settled
-- [`DEBT.md`](./DEBT.md) § 2 — D-2-R-3 (a TOCTOU in the path guard) is currently harmless
-  *because nothing runs concurrently with ADL's own file access*. **M05 changes that.**
+- [`DEBT.md`](./DEBT.md) § 3 — **D-5-14-2** (a worker whose `stage_result` was accepted is
+  still logged as "exited without an accepted result") and **D-5-13-2** (`features.round` and
+  `rounds.number` are silently one apart) are both owned by M06 and both sit directly on
+  group D's path. Neither is blocking; both will be in the logs you are reading.
 
 ---
 
@@ -451,21 +518,25 @@ minted at `.adl/daemon.json` on first run): `GET /health`, `GET /features`,
 
 | Package | Does | Depends on |
 |---------|------|------------|
-| `packages/core` | The settled vocabulary — verdicts, findings, criterion IDs, normalized specs, `adl.yml`/`EffectiveConfig`, the lifecycle state machine, **the round loop's decision** (5.13, `@adl/core/loop`), and the port *declarations* (`Workspace`, `AgentRunner`, `Stage`). **Pure and I/O-free, lint-enforced.** | nothing, deliberately |
+| `packages/core` | The settled vocabulary — verdicts, findings, criterion IDs, normalized specs, `adl.yml`/`EffectiveConfig`, the lifecycle state machine, **the round loop's decision** (5.13, `@adl/core/loop`), **what a gate may see** (5.17, `@adl/core/stage`'s `GateContext`), and the port *declarations* (`Workspace`, `AgentRunner`, `Stage`). **Pure and I/O-free, lint-enforced.** | nothing, deliberately |
 | `packages/plugin-sdk` | The small published contract a third-party gate depends on. Re-exports `@adl/core`; **defines nothing of its own.** | core |
 | `packages/db` | Kysely schema, hand-written migrations, migration runner, repositories, model pricing. Only package touching `better-sqlite3`. | core (dev) |
 | `packages/workspace` | **The exec boundary.** Worktree lifecycle — including `attach`/`detach`, so a workspace outlives the stage that created it (5.14) — zero-inherit child env, scratch `HOME`, privilege drop, git-config neutralisation, backend registry, GC. Only package allowed to import `execa` / `simple-git` / `child_process`. | core |
 | `packages/agent-claude-code` | The Claude Code headless adapter. Translates `--output-format stream-json` into ADL `AgentEvent`s. Receives a `Workspace`, never constructs one. | core |
 | `packages/forge-github` | The GitHub `ForgeAdapter` (M05). `octokit` + `@octokit/auth-app` — a GitHub App, never a PAT. Wired into the manager's automatic dispatch for the polling loop's read-only calls (5.5, gated behind `StartDaemonOptions.forge`) and for the credentialed publish side — push, open a draft change request, upsert each role's sticky comment (5.10, 5.11). Both list calls paginate. | core |
-| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, `src/worker-entry/command-gate.ts`), **the protected-path check** (5.16, `src/loop/protected-paths-check.ts` — runs in the manager, not a pipeline stage), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
+| `packages/manager` | The control-plane daemon — lease queue, worker supervision via `fork()`, reaper, GC schedule, **the round loop** (5.13, `src/loop/round-runner.ts`), **the command gate** (5.14, now `src/worker-entry/gates/command-gate.ts`), **the protected-path check** (5.16, `src/loop/protected-paths-check.ts` — runs in the manager, not a pipeline stage), **gate-context assembly** (5.17, `src/worker-entry/gate-context.ts` — the one place an `AssignMessage` is narrowed for a gate), Hono HTTP API, prompt builder, NDJSON transcript store, worker entry. **Only package that writes to the DB.** Ships the real, installed `adl` binary (5.7, `src/bin.ts`). | core, db, workspace, agent-claude-code, cli (forge-github: test-only so far) |
 | `packages/cli` | The `adl` verb set. Talks to the daemon **over HTTP only** — structurally cannot resolve `@adl/db` or `@adl/manager`, unchanged by 5.7. A library, not the installed binary itself (`@adl/manager` depends on it and owns `bin.ts`; `daemon start` is the one verb `@adl/manager` fills in via `BuildProgramDeps.startDaemon`). | nothing, by design |
 
 No `apps/` directory — the dashboard is M17 and unbuilt.
 
-**Architecture guards** live in `eslint.config.js` (784 annotated lines) and `test/`:
+**Architecture guards** live in `eslint.config.js` (~1,000 annotated lines) and `test/`:
 `adl/no-direct-spawn`, `adl/core-purity`, `adl/verdict-schema`, `adl/worker-entry-no-db`,
 `adl/no-forge-merge` (5.12 — ADL never merges, paired with `@adl/core/forge`'s
 compile-time-exhaustive `FORGE_ADAPTER_MEMBERS`),
+`adl/gate-fresh-context` (5.17 — a gate never inherits the developer's session or
+transcript, paired with `@adl/core/stage`'s compile-time-exhaustive
+`GATE_CONTEXT_MEMBERS`/`GATE_DIFF_MEMBERS`; **must stay registered last**, since its glob is
+a strict subset of `adl/worker-entry-no-db`'s and flat config resolves by last match),
 plus `test/toolchain.test.ts` (TypeScript pinned to exactly 6.0.3),
 `test/ci-matrix.test.ts`, and `test/platform-gate-discipline.test.ts`. Each rule is proven
 by a deliberate-violation fixture in `test/lint/fixtures/`.
@@ -478,7 +549,7 @@ sudoers rule so the privilege-drop assertions actually execute.
 
 ## Open blockers
 
-Nothing blocks M05. Two things to know before you start:
+Nothing blocks M05. Three things to know before you start:
 
 1. **The end-of-project verification pass** ([`DEBT.md`](./DEBT.md) § 1) — 6 items needing
    either a live `ANTHROPIC_API_KEY` + the unshadowed pinned CLI, or a Linux host. Batched
@@ -488,7 +559,7 @@ Nothing blocks M05. Two things to know before you start:
 2. **D-2-R-1** ([`DEBT.md`](./DEBT.md) § 2) — the highest-severity open item. Concurrent
    features are not isolated from each other. Accepted for v1, with "concurrency > 1 on a
    shared host" as an explicit revisit trigger.
-3. **D-5-14-1** ([`DEBT.md`](./DEBT.md) § 3, new) — a finished feature's worktree is now
+3. **D-5-14-1** ([`DEBT.md`](./DEBT.md) § 3) — a finished feature's worktree is now
    never collected. `TERMINAL_STATES` is `merged`/`abandoned`, and v1 produces neither
    (ADL never merges; nothing watches for a human doing it until M10). Invisible before
    5.14 only because the stage runner destroyed the worktree every stage, which was itself

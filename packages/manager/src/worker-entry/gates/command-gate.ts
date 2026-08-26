@@ -45,22 +45,38 @@
  *   whole lifecycle is ROLE-07, and the behaviour tester (M08) is what owns it.
  *   A gate that quietly ran three more commands would be reporting on something
  *   other than what its stage id names.
- * - **It reads no spec.** It needs the workspace and the command, and nothing
- *   else — which is ROLE-03's fresh-context isolation (M05 step 5.17) arriving
- *   as a property of what this function *takes* rather than as a rule it is
- *   asked to follow.
+ * - **It reads no spec.** It is handed one — `GateContext.spec`, M05 step 5.17
+ *   — and ignores it, along with `GateContext.diff`, because an exit code is
+ *   the whole of what it judges on. That a gate may ignore its context is the
+ *   point: what it *cannot* do is reach for context it was not given, and
+ *   {@link GateContext} has no member naming the developer's session,
+ *   transcript, or rendered prompt (ROLE-03). This function's parameter list is
+ *   the whole of what it can see.
+ *
+ * ## Where this file lives, and why that is load-bearing
+ *
+ * `worker-entry/gates/` is governed by `eslint.config.js`'s
+ * `adl/gate-fresh-context`: no importing the transcript store, the prompt
+ * builder, or `ipc/protocol.js`'s `AssignMessage`, and no reading a
+ * `logsRoot`/`sessionRef`/`systemPrompt` off anything. That rule closes the
+ * residual the type structurally cannot — a gate reaching *around* its
+ * parameters to the modules directly — which is the same two-layer shape
+ * FORGE-10 needed in 5.12, for the same reason: an interface with no merge
+ * method cannot stop an adapter merging through the client it already holds.
+ * A new gate belongs in this directory so it inherits both layers on the day
+ * it is created (D-27).
  */
 import { parseDuration, type CommandSpec } from '@adl/core/config';
 import type {
   AgentEvent,
   ExecResult,
+  GateContext,
   LogChunk,
-  Workspace,
 } from '@adl/core/stage';
 import { stageErrorPolicy } from '@adl/core/stage';
 import { join } from 'node:path';
 import { fingerprintFinding, type Verdict } from '@adl/core/verdict';
-import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
+import type { StageRunnerVerdict } from '../../ipc/stage-verdict.js';
 
 /**
  * How much of the command's output travels on the finding.
@@ -175,23 +191,23 @@ function chunkEvent(chunk: LogChunk): AgentEvent {
   return { kind: 'text', messageId: chunk.stream, delta: chunk.text };
 }
 
-export interface CommandGateParams {
-  /** The workspace the command runs inside — already carrying the developer's commit. */
-  readonly workspace: Workspace;
-  /** The pipeline entry this gate is running as; the fingerprint's other half. */
-  readonly stageId: string;
+/**
+ * This gate's own configuration — the second and last parameter.
+ *
+ * Deliberately separate from {@link GateContext} rather than a member of it.
+ * Context is what a gate is told *about the feature*; this is what a gate is
+ * told *about itself*, and it comes from `adl.yml` — the maintainer's file,
+ * which ROLE-11 hard-fails a round for editing (M05 step 5.16). Folding a
+ * command into the shared context type would make every future gate's private
+ * configuration part of the surface ROLE-03's guard has to reason about, for
+ * no gain: neither field below can name a session or a transcript, which is
+ * what keeps the two-parameter shape honest.
+ */
+export interface CommandGateConfig {
   /** The `adl.yml` command to run. */
   readonly command: CommandSpec;
   /** The child's `PATH`. Required by `ExecSpec`, and required here for the same reason. */
   readonly path: string;
-  /**
-   * Every transcript event, as it happens — appended by the caller, never
-   * buffered until the run ends. That is what makes `adl logs -f` live on a
-   * gate for the same reason it is live on the developer, and what keeps a
-   * mid-run crash from losing the output that explains it.
-   */
-  readonly onEvent: (event: AgentEvent) => void;
-  readonly signal?: AbortSignal;
 }
 
 /**
@@ -204,9 +220,11 @@ export interface CommandGateParams {
  * still rejects; the caller classifies that.
  */
 export async function runCommandGate(
-  params: CommandGateParams,
+  gate: GateContext,
+  config: CommandGateConfig,
 ): Promise<StageRunnerVerdict> {
-  const { workspace, command, stageId } = params;
+  const { workspace, stageId } = gate;
+  const { command } = config;
 
   // `command.cwd` is repo-relative by schema (`RepoRelativePathSchema`), and
   // the containment check is `exec`'s own: every backend calls
@@ -231,10 +249,10 @@ export async function runCommandGate(
       {
         argv: command.argv,
         cwd,
-        path: params.path,
+        path: config.path,
         ...(command.env !== undefined ? { env: command.env } : {}),
         timeoutMs: timeoutMsFor(command),
-        ...(params.signal !== undefined ? { signal: params.signal } : {}),
+        ...(gate.signal !== undefined ? { signal: gate.signal } : {}),
         // v1's only values, at the one call site that could have hardcoded
         // them invisibly. See `NetworkPolicy`'s docblock for why the field
         // exists before any backend can enforce it.
@@ -243,7 +261,7 @@ export async function runCommandGate(
       },
       (chunk) => {
         tail = appendTail(tail, chunk);
-        params.onEvent(chunkEvent(chunk));
+        gate.onEvent(chunkEvent(chunk));
       },
     );
   } catch (error) {
@@ -260,7 +278,7 @@ export async function runCommandGate(
   // `cancelled` for a child ADL killed and `completed` for one that exited on
   // its own — `AGENT_RESULT_OUTCOMES` has exactly three members and
   // `turn_limit_reached` is meaningless here, so these are the two honest ones.
-  params.onEvent({
+  gate.onEvent({
     kind: 'result',
     outcome: result.exitCode === null ? 'cancelled' : 'completed',
     durationMs: result.durationMs,
