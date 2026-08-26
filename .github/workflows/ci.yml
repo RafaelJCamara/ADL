@@ -165,6 +165,25 @@ jobs:
           echo "ADL_WORKER_USER=adl-worker" >> "$GITHUB_ENV"
           echo "ADL_WORKER_GROUP=adl-worker" >> "$GITHUB_ENV"
 
+      - name: DIAGNOSTIC - worker traversal probe
+        if: runner.os == 'Linux'
+        run: |
+          set -x
+          echo "--- id as caller ---"
+          id
+          echo "--- id as adl-worker ---"
+          sudo --non-interactive --user adl-worker -- id || true
+          echo "--- namei on the fixture path ---"
+          namei -om "$GITHUB_WORKSPACE/packages/manager/test/helpers/fake-claude-success.mjs" || true
+          echo "--- can adl-worker read the fixture? ---"
+          sudo --non-interactive --user adl-worker -- cat "$GITHUB_WORKSPACE/packages/manager/test/helpers/fake-claude-success.mjs" > /dev/null && echo OK || echo FAIL
+          echo "--- can adl-worker list HOME dir ---"
+          sudo --non-interactive --user adl-worker -- ls -la /home/runner 2>&1 || echo FAIL
+          echo "--- can adl-worker list workspace root ---"
+          sudo --non-interactive --user adl-worker -- ls -la "$GITHUB_WORKSPACE" 2>&1 || echo FAIL
+          echo "--- stat chain ---"
+          stat -c '%A %U %G %n' /home /home/runner /home/runner/work /home/runner/work/ADL /home/runner/work/ADL/ADL || true
+
       - name: Test
         # The command is unchanged; only the credentials it runs under are.
         # `usermod` above added this user to the adl-worker group, but
