@@ -43,15 +43,40 @@ against `packages/core/schema/verdict.schema.json` — the published JSON Schema
 for the same `Verdict` union this package exports as Zod. Any language, any
 runtime, as long as the JSON is well-formed.
 
-## `Workspace` is not real yet
+## `Workspace` is real; four other `StageContext` members are not yet
 
-`StageContext.workspace: Workspace` is currently a **forward declaration** — an
-opaque placeholder type, not the real `exec`/`read`/`write`/`snapshot` interface.
-`@adl/core` is pure: no filesystem, no child processes, no environment. It
-cannot depend on a workspace implementation, so Phase 1 publishes the shape of
-`Stage` with a placeholder for the one thing that has to come from elsewhere.
-Phase 2 replaces `Workspace` with the real interface; the rest of `StageContext`
-does not change.
+`StageContext.workspace: Workspace` **is** the real
+`exec`/`read`/`write`/`snapshot` interface, as of M02. It also gained
+`attach`/`detach` in M05 — a workspace outlives the stage that created it, so
+the gate at the next pipeline index judges the commit the developer just made
+rather than a fresh checkout of the base ref.
+
+Four members of `StageContext` are still **forward declarations** — opaque
+placeholder types, not real interfaces: `feature: FeatureView`,
+`config: StageConfig`, `artifacts: ArtifactSink`, and `history: RoundSummary[]`.
+They are declared so `Stage`'s shape could be published before the things it
+collaborates with existed; each one is filled by the milestone that first needs
+it. Write a gate against `workspace`, `priorFindings`, `agents`, `log` and
+`signal` and you are on solid ground today.
+
+## Why `GateContext` is not here
+
+`@adl/core/stage` also exports a `GateContext`, and this package deliberately
+does **not** re-export it. It is not your contract.
+
+`GateContext` is what ADL's own **built-in** gates take — a narrow type carrying
+a feature's spec, the diff its branch wrote, and the workspace, and carrying no
+member through which the developer agent's session, transcript or rendered
+prompt could be named (ROLE-03: a gate works from fresh context and never
+inherits the developer's reasoning). It exists because the built-ins are plain
+functions today rather than `Stage` implementations, and `StageContext`'s four
+unfilled forward declarations mean it cannot yet carry that guarantee itself.
+
+Publishing a second context type here before a real third-party harness has
+shaped it would freeze the wrong one: every signature this package exports is
+one-way from its first release. **`StageContext` is the interface a gate
+implements.** When the forward declarations above are filled, the fresh-context
+guarantee is re-derived over `StageContext` and this section goes away.
 
 ## Installing
 

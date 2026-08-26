@@ -30,11 +30,41 @@ a worker:
   the concurrency caps, and — in a later phase — round/budget accounting all
   live here, never in a worker's environment.
 
-What it does **not** own: feature detection, agent backends, and forge
-operations are later phases. This phase proves the queue, the recovery
-guarantees, and the API/CLI surface with a scripted worker and zero AI in the
-loop — see `test/scenario/concurrency-crash-restart.test.ts` for the
-end-to-end proof.
+Since M05 it also owns three things this section used to list as "later
+phases":
+
+- **Feature detection.** A croner poll re-scans the watched repository's default
+  branch, filters to folders that are undeveloped _and_ authored by someone with
+  write access, and enqueues what is left. It starts only when a forge is
+  configured — see the config file below.
+- **The round loop.** `develop → gates → aggregate → advance or send back`, one
+  forked worker per stage, with the decision itself pure and the writes
+  transactional. A feature mid-pipeline is re-dispatched from the stage it is on
+  and its effective configuration is **not** re-merged, so editing `adl.yml`
+  cannot change a running feature's pipeline.
+- **Forge operations.** Push, open a draft change request at round 1, upsert one
+  sticky comment per role, and promote to ready only when every gate is green.
+  **ADL never merges** — that is a build property, not a policy (FORGE-10).
+
+What it still does **not** own: the reviewer agent (M07), the behaviour tester
+(M08), third-party harnesses (M13), webhook detection (M10), and budget
+enforcement (M06).
+
+Two boundaries inside the worker are worth knowing about, because both are
+lint-enforced rather than conventional. A worker **never opens the database**
+(`adl/worker-entry-no-db`) — everything it learns arrives on the `fork()` IPC
+channel, and everything it reports leaves the same way. And a **gate** — any
+module under `src/worker-entry/gates/` — additionally cannot reach the
+transcript store, the prompt builder, or the assign message itself
+(`adl/gate-fresh-context`), so it works from the feature's spec, the diff, and
+the repository, and structurally cannot inherit the developer agent's session or
+reasoning (ROLE-03).
+
+For the end-to-end proofs: `test/scenario/concurrency-crash-restart.test.ts`
+covers the queue and recovery guarantees with a scripted worker and zero AI in
+the loop; `test/scenario/command-gate-loop.test.ts` drives a real send-back and
+recovery through the real stage runner; `test/tracer/draft-cr-wiring.test.ts`
+runs detection through to a real draft change request.
 
 ---
 

@@ -50,16 +50,25 @@ There is deliberately **no** `src/index.ts`. Subsystems are reached through
 subpath exports, so a plan that adds a subsystem creates its own barrel and
 never edits a shared one:
 
-| Subpath             | Contents                                                    |
-| ------------------- | ----------------------------------------------------------- |
-| `@adl/core/verdict` | `Verdict`, `Finding`, `CriterionRef`, `Waiver`, `aggregate` |
-| `@adl/core/spec`    | `NormalizedSpec`, `AcceptanceCriterion`, the spec loaders   |
-| `@adl/core/stage`   | `Stage`, `StageContext`, `StageError`, `DeveloperOutcome`   |
-| `@adl/core/config`  | `adl.yml` schema, `EffectiveConfig` merge and clamps        |
-| `@adl/core/state`   | `FeatureState`, `FeatureEvent`, `transition`                |
+| Subpath             | Contents                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `@adl/core/verdict` | `Verdict`, `Finding`, `CriterionRef`, `Waiver`, `aggregate`, `SendBackBrief`                         |
+| `@adl/core/spec`    | `NormalizedSpec`, `AcceptanceCriterion`, the spec loaders                                            |
+| `@adl/core/stage`   | `Stage`, `StageContext`, `GateContext`, `Workspace`, `AgentRunner`, `StageError`, `DeveloperOutcome` |
+| `@adl/core/config`  | `adl.yml` schema, `EffectiveConfig` merge and clamps, `resolvePipeline`                              |
+| `@adl/core/state`   | `FeatureState`, `FeatureEvent`, `transition`                                                         |
+| `@adl/core/loop`    | `planRoundStep` (the round loop's decision), `violatedProtectedPaths`                                |
+| `@adl/core/detect`  | `scanFeatureFolders`, `undevelopedFeatureFolders`, `evaluateSpecTrust`                               |
+| `@adl/core/forge`   | `ForgeAdapter`, `ChangeRequest`, `FORGE_ADAPTER_MEMBERS`, `renderStickyComment`                      |
 
 The bare `.` export points at `./verdict` for convenience; prefer the explicit
 subpath.
+
+**This table is drift-asserted.** `test/subpath-exports.test.ts` compares it
+against `package.json`'s own `exports` map, because it had gone stale by three
+whole subpaths before anyone noticed — `loop`, `detect` and `forge` shipped with
+no row here at all, and a table that silently omits a third of the package reads
+as "these are the five subsystems" to exactly the reader it exists for.
 
 ## Schema discipline
 
