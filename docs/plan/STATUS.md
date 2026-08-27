@@ -1,6 +1,6 @@
 # STATUS — start here
 
-_Last updated: 2026-08-26_
+_Last updated: 2026-08-27_
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -28,8 +28,9 @@ weekends, no deadline.
 `pnpm typecheck` / `pnpm lint` / `pnpm format` are all clean on `main`. M05 carries one
 deferred check, same shape as M02 and M04: a real draft change request against a real,
 installed GitHub App has never been opened — only against the local mock GitHub server.
-M06 is next, with a real prerequisite of its own still open — see "Open blockers" below
-before you start it.**
+M06 is in progress: 6.2 (the round-ceiling proof) and 6.3 (spend visible in `adl status`,
+OBS-05) are done; 6.1's live cost reconciliation is deferred provisionally by maintainer
+decision (2026-08-27, see below); 6.4 is next.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -37,7 +38,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ NEXT — blocked on the cost-accounting spike (see below)
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2, 6.3 done; 6.1 deferred; 6.4 next
 M07–M18 .............................. not started
 ```
 
@@ -488,32 +489,34 @@ end-of-project verification pass. See [`DEBT.md`](./DEBT.md) § 1 — M05's own 
 
 ## What to do next
 
-**M06 (Accountant) is next per the roadmap, but its own file
-([`milestones/m06-accountant.md`](./milestones/m06-accountant.md)) states a real
-prerequisite that is still open, not merely a nice-to-have:**
+**Maintainer decision, 2026-08-27 (`milestones/m06-accountant.md`'s own header carries the
+full text): M06 proceeds provisionally.** Step 6.1 — one real agent turn, reported cost
+reconciled against the provider's billed usage — stays open, folded into
+[`DEBT.md`](./DEBT.md) § 1's existing end-of-project batch (items 1.1–1.4, the same
+precondition M04 already deferred) rather than blocking this milestone. A pre-implementation
+audit found nothing else in M06 actually needs the live reconciliation to be _built_ or
+_tested_ — every requirement's mechanism can be designed and proven against the same mocks and
+replay doubles M01–M05 already used throughout; the live run only adds confidence that
+`cost_source: 'reported'` numbers are accurate, not new code paths.
 
-> Prerequisite: the cost-accounting spike must close before this is planned.
+**Done this session:** the audit also found LOOP-03's round ceiling already fully
+implemented and production-wired (`transition.ts`'s `gating`/`send_back` edge, fed by
+`round-runner.ts`'s `maxRoundsOf`) — 6.2 is the real/integration proof through the manager it
+was missing, in `test/scenario/round-loop.test.ts`. 6.3 (OBS-05) followed: `usageRepository`'s
+new `spendByFeature()` reads every feature's spend, broken down by role, in one query;
+`GET /features` and `adl status`'s table both surface it now — M03's old
+`not.toMatch(/cost|spend/)` guard on that route is the same test, inverted, not deleted.
 
-Step 6.1 _is_ that spike — one real agent turn, its reported cost reconciled against the
-provider's billed usage, and the `cost_source: 'unknown'` degradation path decided from real
-evidence rather than a guess. 5.18 put every number 6.2–6.5's budget gate will read onto the
-ledger, but every one of them came from a replay double (`fake-claude-success.mjs`); nothing
-in this project has yet invoked the real, billed `claude` CLI. The reconciliation needs a live
-`ANTHROPIC_API_KEY` plus the unshadowed pinned CLI — [`DEBT.md`](./DEBT.md) § 1 items 1.1–1.4,
-the same precondition M04 already deferred, batched by the same 2026-08-21 maintainer
-decision **so that gating a milestone on it doesn't stall the roadmap.** M05 was flagged as
-"the natural moment" to close it while a real agent turn was already running in anger, and
-that moment passed without live credentials being available in this environment — the spike
-is still open.
-
-**This is a real fork, not a formality — see the question below before doing anything else.**
-Either the end-of-project verification pass (§ 1, all 7 items — it needs both a live API key
-and a Linux host, so batching it is what M05's own item 1.7 and M02's items 1.5–1.6 have been
-waiting for too) runs now, out of its normal end-of-project order, to unblock M06 for real; or
-M06 gets planned and built up to the point 6.1 blocks it, with the budget gate's
-`cost_source: 'unknown'` degradation path built provisionally and revisited once the spike
-closes. Both are legitimate; only a human can make this call, the same way the 2026-08-21
-batching decision itself was made.
+**6.4 is next: the per-feature token/cost budget (LOOP-04), checked before dispatch, with
+the `cost_source: 'unknown'` degradation policy decided in the same step.** Extend
+`dispatchOnce`'s existing pre-lease candidate predicate — the concurrency cap already checked
+there, before a lease is acquired, is this milestone's own template (M03's precedent). Full
+detail, including the exact edge to route an over-budget candidate's escalation through
+(`transition.ts`'s existing generic `limit_exceeded → escalated`), is in
+`milestones/m06-accountant.md`'s step list. **6.8 (escalation posts to the PR) needs a
+maintainer check-in when it starts** — exposing a full transcript on the pull request sits in
+direct tension with FORGE-06's "PR stays readable" constraint, and that is not a call to make
+unilaterally.
 
 **Before you start, skim:**
 
@@ -609,16 +612,17 @@ sudoers rule so the privilege-drop assertions actually execute.
 
 ## Open blockers
 
-M05 is done, code-complete. One thing genuinely blocks starting M06 for real; two more are
-worth knowing before you touch it:
+M05 is done, code-complete. Nothing blocks M06 as of the 2026-08-27 maintainer decision; one
+thing is deferred rather than resolved, and two more are worth knowing before you touch M06:
 
 1. **The end-of-project verification pass** ([`DEBT.md`](./DEBT.md) § 1) — now 7 items (5.19
    added item 1.7) needing either a live `ANTHROPIC_API_KEY` + the unshadowed pinned CLI, or a
    Linux host. Batched by maintainer decision so they don't stall the roadmap.
-   **M06 is blocked on one of them** (reconciling reported cost against a real bill, items
-   1.1–1.4) — the natural moment to close it was _during_ M05, and that moment passed without
-   live credentials in this environment. See "What to do next" above — this needs a human
-   decision, not another milestone step.
+   **M06's step 6.1** (reconciling reported cost against a real bill, items 1.1–1.4) is folded
+   into this same batch rather than gating M06 — the natural moment to close it was _during_
+   M05, that moment passed without live credentials in this environment, and rather than stall
+   a second milestone on it, M06 proceeds provisionally (`milestones/m06-accountant.md`'s own
+   header). Revisit 6.1 for real once credentials exist.
 2. **D-2-R-1** ([`DEBT.md`](./DEBT.md) § 2) — the highest-severity open item. Concurrent
    features are not isolated from each other. Accepted for v1, with "concurrency > 1 on a
    shared host" as an explicit revisit trigger.
