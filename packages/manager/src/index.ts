@@ -23,7 +23,7 @@ export {
 // The Hono app factory — exported so a test can mount it directly (against an
 // ephemeral port) without going through the full daemon startup sequence.
 export { createApi, UNAUTHENTICATED_PATHS, type ApiDeps } from './api/app.js';
-export type { FeatureView } from './api/routes/features.js';
+export type { FeatureView, FeatureSpendView } from './api/routes/features.js';
 
 // The control surface's request/response schemas and route registrar
 // (D-20, D-26, D-27..29) — published so a CLI (`03-08`) or a test can

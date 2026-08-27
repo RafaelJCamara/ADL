@@ -36,6 +36,7 @@ export {
   type UsageRepository,
   type NewUsageEvent,
   type SpendByCategory,
+  type SpendByRole,
 } from './usage.js';
 
 export {

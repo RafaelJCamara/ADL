@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { statusCommand } from '../src/commands/status.js';
-import type { FeatureRow } from '../src/render/status-table.js';
+import {
+  formatSpend,
+  type FeatureRow,
+  type FeatureSpendRow,
+} from '../src/render/status-table.js';
 import type { DaemonClient } from '../src/http-client.js';
 import { buildProgram, type CliConfig } from '../src/index.js';
 
@@ -56,6 +60,7 @@ const SAMPLE_ROW: FeatureRow = {
   ageMs: 65_000,
   worker: { pid: 4242 },
   staleRejections: 0,
+  spend: { totalUsd: 0.0325, unpricedEvents: 0, byRole: { develop: 0.0325 } },
 };
 
 describe('statusCommand', () => {
@@ -104,6 +109,46 @@ describe('statusCommand', () => {
       { client: fakeClient([SAMPLE_ROW]), stdout },
     );
     expect(stdout.text()).toContain('gating 2/4 (test)');
+  });
+
+  it('the table renders spend (OBS-05, M06 step 6.3)', async () => {
+    const stdout = new CapturingSink();
+    await statusCommand(
+      { json: false },
+      { client: fakeClient([SAMPLE_ROW]), stdout },
+    );
+    const text = stdout.text();
+    expect(text).toContain('SPEND');
+    expect(text).toContain('$0.03');
+  });
+});
+
+describe('formatSpend', () => {
+  const spend = (
+    overrides: Partial<FeatureSpendRow> = {},
+  ): FeatureSpendRow => ({
+    totalUsd: 0,
+    unpricedEvents: 0,
+    byRole: {},
+    ...overrides,
+  });
+
+  it('renders zero spend plainly', () => {
+    expect(formatSpend(spend())).toBe('$0.00');
+  });
+
+  it('renders sub-cent spend with enough precision to be distinguishable from zero', () => {
+    expect(formatSpend(spend({ totalUsd: 0.005 }))).toBe('$0.0050');
+  });
+
+  it('renders a cent and above at two decimal places, never four', () => {
+    expect(formatSpend(spend({ totalUsd: 1.2345 }))).toBe('$1.23');
+  });
+
+  it('marks a total that includes an unpriced row with a trailing "?", never folding it in silently (D-31)', () => {
+    expect(formatSpend(spend({ totalUsd: 0.02, unpricedEvents: 1 }))).toBe(
+      '$0.02?',
+    );
   });
 });
 

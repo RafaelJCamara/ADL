@@ -657,6 +657,30 @@ describe('a full dev-run against the replay double', () => {
           // a unit fixture.
           expect(row.cache_creation_input_tokens).toBeNull();
           expect(row.cache_read_input_tokens).toBeNull();
+
+          // OBS-05 (M06 step 6.3): the real usage row above is exactly what
+          // `GET /features` should now surface — the real production
+          // `listFeatureViews` wiring in `daemon.ts`, not a hand-fed double.
+          const featuresResponse = await fetch(
+            `http://127.0.0.1:${handle.port}/features`,
+            { headers: { Authorization: `Bearer ${API_TOKEN}` } },
+          );
+          const features = (await featuresResponse.json()) as Array<{
+            id: string;
+            spend: {
+              totalUsd: number;
+              unpricedEvents: number;
+              byRole: Record<string, number>;
+            };
+          }>;
+          const featureView = features.find(
+            (f) => f.id === devRunBody.featureId,
+          );
+          expect(featureView?.spend).toEqual({
+            totalUsd: 0.001,
+            unpricedEvents: 0,
+            byRole: { develop: 0.001 },
+          });
         } finally {
           await handle.stop();
         }

@@ -29,10 +29,36 @@ export interface SpendByCategory {
   unpricedEvents: number;
 }
 
+/**
+ * One feature's spend, broken down by role (OBS-05, M06 step 6.3).
+ *
+ * "Role" is a `stage_attempts.stage_id` — `'develop'`, `'test'`, and so on —
+ * the same vocabulary the sticky comment already addresses a round by
+ * (`publish/role-rounds.ts`). A row whose `stage_attempt_id` cannot be
+ * resolved to one (deleted, or never set) folds into `'unknown'` rather than
+ * being silently dropped from `total` — the totals-vs-per-role split must
+ * agree with each other, the same discipline `SpendByCategory` already holds
+ * `feature`/`overhead` to.
+ */
+export interface SpendByRole {
+  readonly total: number;
+  /** Rows with no `cost_usd`. Never folded into `total` as zero (D-31). */
+  readonly unpricedEvents: number;
+  readonly byRole: Readonly<Record<string, number>>;
+}
+
 export interface UsageRepository {
   record(event: NewUsageEvent): Promise<void>;
   listForFeature(featureId: string): Promise<UsageEventsTable[]>;
   spendByCategory(featureId: string): Promise<SpendByCategory>;
+  /**
+   * Every feature's spend, broken down by role, in one query — the shape
+   * `GET /features` needs (D-24: one read for the whole response, never one
+   * query per row). A feature with no usage rows simply has no entry; the
+   * caller supplies its own zeroed default, the same convention
+   * `staleRejectionCounter.forFeature` already uses for an unseen feature.
+   */
+  spendByFeature(): Promise<ReadonlyMap<string, SpendByRole>>;
   /**
    * The price row in force for a model and speed tier at an instant.
    *
@@ -93,6 +119,50 @@ export function usageRepository(db: Kysely<Database>): UsageRepository {
       }
 
       return totals;
+    },
+
+    async spendByFeature() {
+      const rows = await db
+        .selectFrom('usage_events')
+        .leftJoin(
+          'stage_attempts',
+          'stage_attempts.id',
+          'usage_events.stage_attempt_id',
+        )
+        .select([
+          'usage_events.feature_id as featureId',
+          'stage_attempts.stage_id as stageId',
+          'usage_events.cost_usd as costUsd',
+        ])
+        .execute();
+
+      const byFeature = new Map<string, SpendByRole>();
+      for (const row of rows) {
+        const existing = byFeature.get(row.featureId) ?? {
+          total: 0,
+          unpricedEvents: 0,
+          byRole: {},
+        };
+        const role = row.stageId ?? 'unknown';
+        const byRole = { ...existing.byRole };
+
+        if (row.costUsd === null) {
+          byFeature.set(row.featureId, {
+            ...existing,
+            unpricedEvents: existing.unpricedEvents + 1,
+          });
+          continue;
+        }
+
+        byRole[role] = (byRole[role] ?? 0) + row.costUsd;
+        byFeature.set(row.featureId, {
+          ...existing,
+          total: existing.total + row.costUsd,
+          byRole,
+        });
+      }
+
+      return byFeature;
     },
 
     priceAt({ modelId, speed, at }) {

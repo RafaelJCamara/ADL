@@ -82,10 +82,45 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       immediately — corrected in place, and the comments explain why rather than only
       asserting the corrected value. No production code changed; the mechanism was already
       correct.
-- [ ] **6.3** — Spend visible per feature in `adl status` (OBS-05). `usageRepository`'s
+- [x] **6.3** — Spend visible per feature in `adl status` (OBS-05). `usageRepository`'s
       `spendByCategory`/`listForFeature` (5.18) already have everything needed; this is a
       `FeatureView` field plus CLI rendering, not new accounting. Cheap, demoable
       immediately, and no dependency on 6.4–6.8 — a deliberately early, low-risk step.
+      **Shipped:** a new `usageRepository().spendByFeature()` (`packages/db/src/repository/usage.ts`)
+      reads every feature's spend, broken down by role (`stage_attempts.stage_id`), in
+      **one** query — `daemon.ts`'s `listFeatureViews` calls it once per `GET /features`
+      request, the same "single read for the whole response" discipline `ageMs`'s clock
+      read already holds itself to, never once per row. `FeatureView` gains a `spend`
+      field (`{totalUsd, unpricedEvents, byRole}`), always present with a zeroed default
+      for a feature with no usage rows yet, mirroring `staleRejections`'s own
+      never-absent convention. `adl status`'s table gains a `SPEND` column
+      (`formatSpend`, `packages/cli/src/render/status-table.ts`): sub-cent amounts render
+      to four decimal places so a real but tiny cost is still distinguishable from zero,
+      a cent and above renders to two, and a total that includes an unpriced row (D-31)
+      carries a trailing `?` rather than folding it in silently.
+      **A real bug found while adding the column, before it shipped:** the table's
+      dimming logic for an idle `WORKER` cell (`row.worker === null`) located that column
+      by `header.length - 1` — correct only because `WORKER` happened to be the last
+      column. Appending `SPEND` after it would have silently moved the dim styling onto
+      the new column instead, with no test failure (the assertions check content, not
+      color codes). Fixed to `header.indexOf('WORKER')` before it ever shipped wrong.
+      **`GET /features`'s own negative guard inverted, not deleted:** M03's
+      `features-view.test.ts` had asserted `not.toMatch(/cost|spend/)` since Phase 3 —
+      deliberately, per `FeatureView`'s own docblock at the time ("OBS-05 is mapped to
+      Phase 6"). That assertion is now the positive case it was always waiting to become,
+      renamed rather than silently dropped. **Proof the real wiring works, not only the
+      hand-fed route tests:** `test/usage/recording.test.ts`'s existing real-daemon,
+      real-usage-row scenario (5.18's own tracer) now also asserts `GET /features` reports
+      that exact recorded spend back — `totalUsd: 0.001`, `byRole: {develop: 0.001}` —
+      through the real production `listFeatureViews`, not a double.
+      New `packages/db/test/repos-usage.test.ts` covers `spendByFeature` directly: grouping
+      by feature and role, an unresolvable `stage_attempt_id` folding into `'unknown'`
+      rather than being dropped, an unpriced row counted separately per D-31, and the
+      zero-rows case. **Empirically verified before writing it** (convention 15): foreign
+      keys are enforced on this connection (`stage_attempts.round_id`,
+      `usage_events.feature_id`) — a first, minimal-fixture draft of the test failed with
+      a real `FOREIGN KEY constraint failed`, corrected to seed a full
+      repo → feature → round → stage_attempt chain.
 - [ ] **6.4** — Per-feature token/cost budget, checked before dispatch (LOOP-04), and the
       `cost_source: 'unknown'` degradation policy (6.5's original ask) decided here rather
       than later, since the budget check has to have an answer for an unreliable

@@ -31,12 +31,23 @@ export interface FeatureView {
    * D-09's stale-rejection counter, surfaced per feature. Zero for a feature
    * that has never had a zombie write rejected — this field always has a
    * value, never `null`/absent, so its presence is not itself a signal.
-   *
-   * Spend is deliberately absent from this view: OBS-05 is mapped to Phase
-   * 6, and with no AI in the loop every row would render zero — a column
-   * that always reads zero is worse than no column.
    */
   readonly staleRejections: number;
+  /**
+   * OBS-05 (M06 step 6.3): this feature's spend, broken down by role. Always
+   * present with a zeroed default for a feature with no usage rows yet — the
+   * same "never absent" discipline `staleRejections` already holds itself
+   * to, and the reason a column that always reads zero for an AI-free
+   * feature is still better than no column at all now that spend is real.
+   */
+  readonly spend: FeatureSpendView;
+}
+
+/** `FeatureView.spend` — `@adl/db`'s `SpendByRole`, restated at the API boundary. */
+export interface FeatureSpendView {
+  readonly totalUsd: number;
+  readonly unpricedEvents: number;
+  readonly byRole: Readonly<Record<string, number>>;
 }
 
 export interface FeaturesRouteDeps {

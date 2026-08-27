@@ -18,6 +18,13 @@ export interface StageCellView {
   readonly label: string;
 }
 
+/** `FeatureView.spend` (OBS-05, M06 step 6.3) — `@adl/manager`'s `FeatureSpendView`, restated. */
+export interface FeatureSpendRow {
+  readonly totalUsd: number;
+  readonly unpricedEvents: number;
+  readonly byRole: Readonly<Record<string, number>>;
+}
+
 export interface FeatureRow {
   readonly id: string;
   readonly repoId: string;
@@ -28,6 +35,24 @@ export interface FeatureRow {
   readonly ageMs: number;
   readonly worker: { readonly pid: number } | null;
   readonly staleRejections: number;
+  readonly spend: FeatureSpendRow;
+}
+
+/**
+ * `$0.0050` below a cent, `$1.23` and up otherwise — enough precision to see
+ * a small run cost something without every row reading `$0.00`, but never
+ * more decimal places than a dollar figure needs once spend is real. An
+ * unpriced row is surfaced with a trailing `?` rather than folded silently
+ * into the total (D-31) — `$0.02?` means "at least this much, and one or
+ * more invocations couldn't be priced," never "exactly this much."
+ */
+export function formatSpend(spend: FeatureSpendRow): string {
+  const amount =
+    spend.totalUsd > 0 && spend.totalUsd < 0.01
+      ? spend.totalUsd.toFixed(4)
+      : spend.totalUsd.toFixed(2);
+  const suffix = spend.unpricedEvents > 0 ? '?' : '';
+  return `$${amount}${suffix}`;
 }
 
 /** `12s`, `34m`, `5h` — coarse enough to scan, never fractional. */
@@ -59,7 +84,8 @@ export function truncateId(id: string, length = 10): string {
 /**
  * `renderStatusTable(rows)` — `--json`'s table-form sibling. Columns, in
  * order: feature, repo, state, stage, round, age, worker (criterion 1's
- * three required fields plus the context that makes them actionable).
+ * three required fields plus the context that makes them actionable), spend
+ * (OBS-05, M06 step 6.3).
  *
  * The empty case renders one explanatory line, never a bare header — a
  * header with nothing under it reads as a rendering bug, and this command's
@@ -78,6 +104,7 @@ export function renderStatusTable(rows: readonly FeatureRow[]): string {
     'ROUND',
     'AGE',
     'WORKER',
+    'SPEND',
   ];
   const lines = rows.map((row) => [
     truncateId(row.id),
@@ -87,6 +114,7 @@ export function renderStatusTable(rows: readonly FeatureRow[]): string {
     String(row.round),
     formatAge(row.ageMs),
     row.worker ? String(row.worker.pid) : '-',
+    formatSpend(row.spend),
   ]);
 
   // Pad every column to its widest cell (header included) so rows line up
@@ -96,7 +124,7 @@ export function renderStatusTable(rows: readonly FeatureRow[]): string {
   const widths = header.map((_, col) =>
     Math.max(...allRows.map((row) => row[col]?.length ?? 0)),
   );
-  const workerCol = header.length - 1;
+  const workerCol = header.indexOf('WORKER');
 
   return (
     allRows

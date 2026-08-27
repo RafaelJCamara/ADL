@@ -131,7 +131,7 @@ describe('resolveStageCell', () => {
 });
 
 describe('GET /features', () => {
-  it('returns every field the status view needs, and no cost/spend field', async () => {
+  it('returns every field the status view needs, spend included (OBS-05, M06 step 6.3)', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
       const repoId = await seedRepo(db);
@@ -160,6 +160,7 @@ describe('GET /features', () => {
           ageMs: now - Date.parse(row.updated_at),
           worker: null,
           staleRejections: 0,
+          spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
         }));
       }
 
@@ -178,6 +179,7 @@ describe('GET /features', () => {
           state: 'gating',
           round: 2,
           staleRejections: 0,
+          spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
         });
         for (const field of [
           'id',
@@ -189,10 +191,10 @@ describe('GET /features', () => {
           'ageMs',
           'worker',
           'staleRejections',
+          'spend',
         ]) {
           expect(row, `missing field ${field}`).toHaveProperty(field);
         }
-        expect(JSON.stringify(body).toLowerCase()).not.toMatch(/cost|spend/);
       });
     });
   });
@@ -233,6 +235,7 @@ describe('GET /features', () => {
           ageMs: now - Date.parse(row.updated_at),
           worker: null,
           staleRejections: 0,
+          spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
         }));
       }
 
@@ -274,6 +277,7 @@ describe('GET /features', () => {
           ageMs: 0,
           worker: null,
           staleRejections: 0,
+          spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
         }));
       }
 
@@ -326,6 +330,7 @@ describe('GET /features', () => {
           ageMs: 1234,
           worker: null,
           staleRejections: 0,
+          spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
         }));
       }
 

@@ -215,6 +215,7 @@ describe('GET /features', () => {
       ageMs: 10,
       worker: null,
       staleRejections: 2,
+      spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
     };
     const app = createApi({
       apiToken: 'tok',

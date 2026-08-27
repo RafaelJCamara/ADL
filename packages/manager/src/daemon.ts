@@ -640,8 +640,13 @@ export async function startDaemon(
       .selectAll()
       .orderBy('id')
       .execute();
+    // OBS-05 (M06 step 6.3): one query for every feature's spend, not one
+    // per row — the same "single read for the whole response" discipline
+    // `now` above already holds itself to.
+    const spendByFeature = await usageRepository(db).spendByFeature();
     return rows.map((row): FeatureView => {
       const active = supervisor.get(row.id);
+      const spend = spendByFeature.get(row.id);
       return {
         id: row.id,
         repoId: row.repo_id,
@@ -652,6 +657,11 @@ export async function startDaemon(
         ageMs: now - Date.parse(row.updated_at),
         worker: active ? { pid: active.worker.pid } : null,
         staleRejections: staleRejectionCounter.forFeature(row.id),
+        spend: {
+          totalUsd: spend?.total ?? 0,
+          unpricedEvents: spend?.unpricedEvents ?? 0,
+          byRole: spend?.byRole ?? {},
+        },
       };
     });
   }

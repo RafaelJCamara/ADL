@@ -317,6 +317,7 @@ const FIXTURE_FEATURE_VIEW: FeatureView = {
   ageMs: 1234,
   worker: { pid: 4242 },
   staleRejections: 0,
+  spend: { totalUsd: 0, unpricedEvents: 0, byRole: {} },
 };
 
 describe('createApi', () => {
@@ -371,6 +372,7 @@ describe('createApi', () => {
           'ageMs',
           'worker',
           'staleRejections',
+          'spend',
         ].sort(),
       );
     });
