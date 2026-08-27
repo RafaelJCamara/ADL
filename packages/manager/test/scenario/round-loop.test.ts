@@ -78,6 +78,13 @@ const ADL_YML: AdlYml = AdlYmlSchema.parse({
 interface RunOptions {
   /** One entry per gate invocation, consumed in order across rounds. */
   readonly gateOutcomes: string;
+  /**
+   * Overrides `ADL_YML`'s `limits.max_rounds` (default 6) for the round
+   * ceiling proof (LOOP-03, M06 step 6.2) — kept as an option on the same
+   * fixture rather than a second `AdlYml` constant, since every other field
+   * is identical.
+   */
+  readonly maxRounds?: number;
   readonly assert: (ctx: {
     readonly db: Kysely<Database>;
     readonly featureId: string;
@@ -107,6 +114,15 @@ async function runLoop(options: RunOptions): Promise<void> {
       const counterPath = join(scratchRoot, 'gate-cursor');
       await writeFile(counterPath, '0', 'utf8');
 
+      const maxRounds = options.maxRounds;
+      const adlYml: AdlYml =
+        maxRounds === undefined
+          ? ADL_YML
+          : AdlYmlSchema.parse({
+              ...ADL_YML,
+              limits: { max_rounds: maxRounds },
+            });
+
       const daemonConfig: DaemonConfig = DaemonConfigSchema.parse({
         repos: [
           {
@@ -127,7 +143,6 @@ async function runLoop(options: RunOptions): Promise<void> {
         leaseTtlMs: 30_000,
         heartbeatIntervalMs: 500,
         daemonConfig,
-        resolveAdlYml: () => ADL_YML,
         mainRepo,
         scratchRoot,
         workerEntryPath: PIPELINE_WORKER_ENTRY,
@@ -137,6 +152,7 @@ async function runLoop(options: RunOptions): Promise<void> {
           ADL_TEST_GATE_COUNTER: counterPath,
         },
         dispatchIntervalMs: 20,
+        resolveAdlYml: () => adlYml,
       });
 
       try {
@@ -263,6 +279,77 @@ describe('scenario: the round loop turns', () => {
           const row = (await featuresRepository(db).findById(featureId))!;
           // The send-back is the one thing that costs a round (CORE-01).
           expect(row.round).toBe(1);
+        },
+      });
+    },
+  );
+
+  it(
+    'escalates instead of sending back once the round ceiling is reached (LOOP-03, M06 step 6.2)',
+    { timeout: 60_000 },
+    async () => {
+      // `transition.ts`'s `gating`/`send_back` edge already refuses a round
+      // that would exceed `max_rounds`, checked before the round is handed
+      // out (`packages/core/test/state/transition.test.ts`'s own "the
+      // ceilings, checked inside the transition" suite proves the pure
+      // boundary). What that suite cannot prove is that a real daemon ever
+      // reaches this edge with a real `maxRounds` read off a real feature's
+      // snapshotted config — this is that proof. `max_rounds: 1` is the
+      // cheapest ceiling that still exercises "one more send-back is
+      // allowed, the next one escalates": round 1's gate objects (allowed,
+      // `1 + 1 > 1` is false), round 2's gate objects again
+      // (`2 + 1 > 1` is true) — escalating on the round the ceiling forbids,
+      // never on the one it allows.
+      await runLoop({
+        gateOutcomes: 'send_back,send_back',
+        maxRounds: 1,
+        assert: async ({ db, featureId, waitUntil: until }) => {
+          await until(async () => {
+            const row = await featuresRepository(db).findById(featureId);
+            return row?.state === 'escalated';
+          });
+
+          const row = (await featuresRepository(db).findById(featureId))!;
+          expect(row.state).toBe('escalated');
+          expect(row.lease_token).toBeNull();
+          // The escalating transition does not itself consume a further
+          // round (`transition.test.ts`'s own `counters.round === 0` on the
+          // escalating edge) — round 1's send-back already advanced it once.
+          expect(row.round).toBe(1);
+
+          const rounds = await db
+            .selectFrom('rounds')
+            .selectAll()
+            .where('feature_id', '=', featureId)
+            .orderBy('number')
+            .execute();
+          // Two rounds ran — the one the ceiling allowed, and the one whose
+          // send-back tripped it. A third round would mean the ceiling was
+          // never checked at all. Both close as `send_back` — that is the
+          // gate's own real verdict either time, recorded by
+          // `round-runner.ts`'s `closeRound` from `planRoundStep`'s decision
+          // before `transition()` ever runs. The ceiling is not a different
+          // *round* outcome; it is `transition()` refusing to open a third
+          // round at all, which is why `features.state` — asserted above —
+          // is the only place "the ceiling fired" is actually visible.
+          expect(rounds).toHaveLength(2);
+          expect(rounds.map((r) => r.outcome)).toEqual([
+            'send_back',
+            'send_back',
+          ]);
+          expect(JSON.parse(rounds[1]!.outcome_json!)).toMatchObject({
+            kind: 'send_back',
+          });
+
+          // No third round was ever opened — the gate never ran a third
+          // time, and no developer attempt exists for it either.
+          const attempts = await db
+            .selectFrom('stage_attempts')
+            .innerJoin('rounds', 'rounds.id', 'stage_attempts.round_id')
+            .select(['rounds.number as round'])
+            .where('rounds.feature_id', '=', featureId)
+            .execute();
+          expect(Math.max(...attempts.map((a) => a.round))).toBe(2);
         },
       });
     },
