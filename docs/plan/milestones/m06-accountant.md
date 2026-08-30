@@ -39,9 +39,10 @@ silently — every limit reached ends in a human being told where they will see 
 - [x] A per-feature round cap and a per-feature token/cost budget both exist, and whichever
       is hit first stops the feature — **checked before the next agent turn is dispatched,
       never after it has been paid for.** (6.2, 6.4)
-- [ ] A global spend cap above the per-feature caps halts new dispatch across every
+- [x] A global spend cap above the per-feature caps halts new dispatch across every
       feature once reached, and where a backend's usage reporting is unreliable the budget
-      **visibly degrades** to round and wall-clock caps rather than silently ceasing to enforce.
+      **visibly degrades** to round and wall-clock caps rather than silently ceasing to
+      enforce. (6.5)
 - [ ] A developer/reviewer stalemate is caught by repeated finding fingerprints and
       escalated _before_ the round cap is reached.
 - [ ] A provider outage, rate limit, or auth failure consumes neither a round nor budget,
@@ -163,11 +164,40 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       budget; never checks a fresh `queued` candidate even against usage rows already on
       file for it; and skips one over-budget candidate to dispatch the next admissible one
       behind it. `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` all clean.
-- [ ] **6.5** — Global spend cap (LOOP-05), same `dispatchOnce` predicate extended with a
+- [x] **6.5** — Global spend cap (LOOP-05), same `dispatchOnce` predicate extended with a
       second, feature-independent condition. Fully greenfield: a new `DaemonConfig` field
       (no `global_budget_usd`-shaped field exists anywhere in the schema today) and a new
       repository method summing spend across every feature. `budget.warn` at 80% (the
       original 6.10) is a cheap addition here, on the same check, not a separate step.
+      **Shipped:** `DaemonConfigSchema` gains `global_budget_usd` — optional, no default,
+      no repo-side counterpart (like `concurrency`), sitting *above* every feature's own
+      `limits.budget_usd` (LOOP-04) rather than instead of it. `usageRepository()` gains
+      `totalSpend()`, summing every `usage_events` row across every feature into one
+      `{total, unpricedEvents}` — the same "never fold an unpriced row in as zero" (D-31)
+      shape `spendByCategory`/`spendByFeature` already hold themselves to, implemented the
+      same way (read the rows, reduce in application code) rather than reaching for a SQL
+      aggregate this codebase had not yet used. `dispatchOnce` checks it **once per tick**,
+      before the per-candidate loop — this cap is feature-independent, so there is nothing
+      candidate-specific to check it against, unlike LOOP-04's per-candidate read. When
+      fleet-wide confirmed spend exceeds the cap, dispatch halts entirely for that tick
+      (`{dispatched: false}`, no candidate touched, nothing escalated) — a fleet-wide limit
+      is not any single feature's fault, so the response is the concurrency cap's own
+      "dispatch nothing" shape, never a per-feature `limit_exceeded`. `budget.warn` (the
+      original step 6.10, folded in here rather than tracked separately) fires as a
+      structured `logger.warn({event: 'budget.warn', ...})` once spend crosses 80% of the
+      cap, without halting — a heads-up before the hard stop. Absent `global_budget_usd`,
+      `checkGlobalBudget` is never called at all: zero extra reads on every tick for an
+      install that never configured a fleet-wide ceiling, matching every other "absent
+      means skip" seam in this file. Six new cases across
+      `packages/db/test/repos-usage.test.ts` (`totalSpend` summing, unpriced-row handling,
+      the zero-rows case) and `packages/manager/test/scheduler/dispatcher.test.ts` (halts
+      with the candidate left untouched, dispatches under the cap, `budget.warn` at 80%
+      without halting, the incomplete-cost-data warning, and — absent `global_budget_usd`
+      — the check never runs at all, proven against a spend row huge enough that it would
+      have failed loudly if the guard were live). Three new cases in
+      `packages/core/test/config/daemon-config-schema.test.ts` for the schema field itself.
+      `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code —
+      `docs/plan/`'s pre-existing formatting debt is unrelated, see `DEBT.md` § 3) all clean.
 - [ ] **6.6** — Stalemate detection over repeated finding fingerprints (LOOP-06),
       independent of the round and budget caps. `fingerprintFinding` and
       `limits.repeat_finding_threshold` already exist (CORE-04, `finding.ts`); nothing

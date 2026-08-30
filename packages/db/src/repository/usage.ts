@@ -47,6 +47,17 @@ export interface SpendByRole {
   readonly byRole: Readonly<Record<string, number>>;
 }
 
+/**
+ * Every feature's spend, summed into one fleet-wide total (LOOP-05, M06 step
+ * 6.5) — the number the global spend cap is checked against, before per-role
+ * or per-feature attribution.
+ */
+export interface TotalSpend {
+  readonly total: number;
+  /** Rows with no `cost_usd`. Never folded into `total` as zero (D-31). */
+  readonly unpricedEvents: number;
+}
+
 export interface UsageRepository {
   record(event: NewUsageEvent): Promise<void>;
   listForFeature(featureId: string): Promise<UsageEventsTable[]>;
@@ -59,6 +70,12 @@ export interface UsageRepository {
    * `staleRejectionCounter.forFeature` already uses for an unseen feature.
    */
   spendByFeature(): Promise<ReadonlyMap<string, SpendByRole>>;
+  /**
+   * Every `usage_events` row across every feature, summed into one total
+   * (LOOP-05, M06 step 6.5) — what `dispatchOnce`'s global spend cap checks
+   * against, once per tick, before any feature-specific reasoning.
+   */
+  totalSpend(): Promise<TotalSpend>;
   /**
    * The price row in force for a model and speed tier at an instant.
    *
@@ -163,6 +180,25 @@ export function usageRepository(db: Kysely<Database>): UsageRepository {
       }
 
       return byFeature;
+    },
+
+    async totalSpend() {
+      const rows = await db
+        .selectFrom('usage_events')
+        .select('cost_usd')
+        .execute();
+
+      let total = 0;
+      let unpricedEvents = 0;
+      for (const row of rows) {
+        if (row.cost_usd === null) {
+          unpricedEvents += 1;
+          continue;
+        }
+        total += row.cost_usd;
+      }
+
+      return { total, unpricedEvents };
     },
 
     priceAt({ modelId, speed, at }) {

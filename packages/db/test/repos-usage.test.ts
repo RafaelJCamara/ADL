@@ -277,3 +277,58 @@ describe('usageRepository().spendByFeature', () => {
     });
   });
 });
+
+describe('usageRepository().totalSpend', () => {
+  it('sums every row across every feature into one fleet-wide total', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const usage = usageRepository(db);
+
+      const repoId = await seedRepo(db);
+      const featureA = await seedFeature(db, repoId);
+      const featureB = await seedFeature(db, repoId);
+
+      await usage.record(usageEvent({ feature_id: featureA, cost_usd: 0.02 }));
+      await usage.record(usageEvent({ feature_id: featureA, cost_usd: 0.03 }));
+      await usage.record(usageEvent({ feature_id: featureB, cost_usd: 0.05 }));
+
+      const spend = await usage.totalSpend();
+
+      expect(spend).toEqual({ total: 0.1, unpricedEvents: 0 });
+    });
+  });
+
+  it('counts an unpriced row separately, never as zero spend (D-31)', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const usage = usageRepository(db);
+
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, repoId);
+
+      await usage.record(usageEvent({ feature_id: featureId, cost_usd: 0.01 }));
+      await usage.record(
+        usageEvent({
+          feature_id: featureId,
+          cost_usd: null,
+          cost_source: 'unknown',
+        }),
+      );
+
+      const spend = await usage.totalSpend();
+
+      expect(spend).toEqual({ total: 0.01, unpricedEvents: 1 });
+    });
+  });
+
+  it('reports a zero total with zero unpriced events when no usage rows exist at all', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const usage = usageRepository(db);
+
+      const spend = await usage.totalSpend();
+
+      expect(spend).toEqual({ total: 0, unpricedEvents: 0 });
+    });
+  });
+});

@@ -355,6 +355,24 @@ export const DaemonConfigSchema = z
     // defaults, so the empty-object literal is parsed once here to produce
     // the concrete default instead of duplicating each field's value.
     concurrency: ConcurrencySchema.default(ConcurrencySchema.parse({})),
+    /**
+     * The fleet-wide spend ceiling (LOOP-05, M06 step 6.5), above every
+     * feature's own `limits.budget_usd` (LOOP-04) rather than instead of it.
+     * No repo-side counterpart — like `concurrency`, `adl.yml` never
+     * mentions it. No default: absent means no global cap at all, only the
+     * per-feature ceiling.
+     */
+    global_budget_usd: z
+      .number()
+      .positive()
+      .optional()
+      .describe(
+        'A fleet-wide spend ceiling across every feature, in USD. No default: absent ' +
+          'means no global cap — only each feature’s own limits.budget_usd (LOOP-04) ' +
+          'applies. Checked before dispatch, the same discipline as the per-feature ' +
+          'budget: once fleet-wide spend reaches it, new dispatch halts across every ' +
+          'feature until it is raised or the spend is investigated.',
+      ),
     api: ApiConfigSchema.default(ApiConfigSchema.parse({})),
     gc: GcConfigSchema.default(GcConfigSchema.parse({})),
     poll: PollConfigSchema.default(PollConfigSchema.parse({})),

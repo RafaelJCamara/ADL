@@ -765,3 +765,156 @@ describe('dispatchOnce — the per-feature budget (LOOP-04, M06 step 6.4)', () =
     });
   });
 });
+
+describe('dispatchOnce — the global spend cap (LOOP-05, M06 step 6.5)', () => {
+  // A `leased` feature never appears in `listDispatchable()` (it matches
+  // neither of that method's two branches), so it is a clean place to attach
+  // fleet-wide `usage_events` rows without the sink itself becoming a
+  // dispatch candidate — `totalSpend()` sums across every feature regardless
+  // of state, exactly what makes this cap fleet-wide rather than per-feature.
+  async function seedSpendSink(
+    db: Kysely<Database>,
+    repoId: string,
+  ): Promise<string> {
+    return seedFeature(db, { repoId, state: 'leased' });
+  }
+
+  it('halts new dispatch entirely once fleet-wide confirmed spend exceeds the cap, leaving the candidate untouched', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const sinkId = await seedSpendSink(db, repoId);
+      await seedUsageEvent(db, sinkId, 120);
+      const candidateId = await seedFeature(db, { repoId, state: 'queued' });
+
+      const { logger, logs } = createCapturingLogger();
+      const daemonConfig = DaemonConfigSchema.parse({
+        concurrency: { global: 5 },
+        global_budget_usd: 100,
+      });
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        logger,
+      });
+
+      expect(decision.dispatched).toBe(false);
+
+      // The halt is fleet-wide, not a judgement on this candidate — it is
+      // left exactly as it was, unlike LOOP-04's per-feature escalation.
+      const row = (await featuresRepository(db).findById(candidateId))!;
+      expect(row.state).toBe('queued');
+
+      expect(
+        logs.some(
+          (log) =>
+            log.msg ===
+            'dispatch: the global spend cap is exceeded — halting new dispatch across every feature until it is raised or the spend is investigated',
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('dispatches normally when fleet-wide spend stays under the global cap', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const sinkId = await seedSpendSink(db, repoId);
+      await seedUsageEvent(db, sinkId, 50);
+      const candidateId = await seedFeature(db, { repoId, state: 'queued' });
+
+      const daemonConfig = DaemonConfigSchema.parse({
+        concurrency: { global: 5 },
+        global_budget_usd: 100,
+      });
+      const decision = await dispatchOnce(baseDeps(db, daemonConfig));
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(candidateId);
+    });
+  });
+
+  it('logs budget.warn once fleet-wide spend crosses 80% of the cap, without halting dispatch', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const sinkId = await seedSpendSink(db, repoId);
+      await seedUsageEvent(db, sinkId, 85);
+      const candidateId = await seedFeature(db, { repoId, state: 'queued' });
+
+      const { logger, logs } = createCapturingLogger();
+      const daemonConfig = DaemonConfigSchema.parse({
+        concurrency: { global: 5 },
+        global_budget_usd: 100,
+      });
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        logger,
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(candidateId);
+
+      expect(
+        logs.some(
+          (log) =>
+            log.event === 'budget.warn' &&
+            log.spendUsd === 85 &&
+            log.globalBudgetUsd === 100,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('logs the degradation warning when fleet-wide spend includes an unpriced event, without halting', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const sinkId = await seedSpendSink(db, repoId);
+      await seedUsageEvent(db, sinkId, 10);
+      await seedUsageEvent(db, sinkId, null);
+      const candidateId = await seedFeature(db, { repoId, state: 'queued' });
+
+      const { logger, logs } = createCapturingLogger();
+      const daemonConfig = DaemonConfigSchema.parse({
+        concurrency: { global: 5 },
+        global_budget_usd: 100,
+      });
+      const decision = await dispatchOnce({
+        ...baseDeps(db, daemonConfig),
+        logger,
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(candidateId);
+
+      expect(
+        logs.some(
+          (log) =>
+            log.msg ===
+              'dispatch: the global spend check ran against incomplete cost data — some usage events reported no confirmed cost, so fleet-wide enforcement for the unconfirmed portion relies on each feature’s own round ceiling' &&
+            log.unpricedEvents === 1,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('never reads fleet-wide spend at all when no global_budget_usd is configured', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const sinkId = await seedSpendSink(db, repoId);
+      await seedUsageEvent(db, sinkId, 1_000_000);
+      const candidateId = await seedFeature(db, { repoId, state: 'queued' });
+
+      const daemonConfig = DaemonConfigSchema.parse({
+        concurrency: { global: 5 },
+      });
+      expect(daemonConfig.global_budget_usd).toBeUndefined();
+
+      const decision = await dispatchOnce(baseDeps(db, daemonConfig));
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(candidateId);
+    });
+  });
+});

@@ -173,6 +173,22 @@ export async function dispatchOnce(
     return { dispatched: false };
   }
 
+  // LOOP-05 (M06 step 6.5): the fleet-wide spend cap, checked once per tick —
+  // above every feature's own per-feature ceiling (LOOP-04), never instead of
+  // it, and feature-independent, so it is read before the per-candidate loop
+  // rather than folded into it. No `DaemonConfig.global_budget_usd` means no
+  // global cap at all, matching every other "absent means skip" seam in this
+  // file (`controlState`, `forge`).
+  if (deps.daemonConfig.global_budget_usd !== undefined) {
+    const halted = await checkGlobalBudget(
+      deps,
+      deps.daemonConfig.global_budget_usd,
+    );
+    if (halted) {
+      return { dispatched: false };
+    }
+  }
+
   // Snapshot in-flight once per tick, from the database rather than a
   // counter this process may not have seen every fork for (T-3-14).
   const leased = await repo.listLeased();
@@ -465,6 +481,63 @@ export async function dispatchOnce(
     workspaceHandle,
     baseRef,
   });
+}
+
+/**
+ * Read fleet-wide confirmed spend against the global cap (LOOP-05, M06 step
+ * 6.5) and report whether new dispatch should halt this tick.
+ *
+ * Runs once per tick, before the per-candidate loop — this cap is
+ * feature-independent, so there is nothing candidate-specific to check it
+ * against. Same "never fold an unpriced row in as zero" discipline as the
+ * per-feature check (D-31): an unpriced event makes `spendUsd` a confirmed
+ * floor rather than true spend, so it is logged every time it is seen rather
+ * than silently trusted, and fleet-wide enforcement for the unconfirmed
+ * portion leans on each feature's own round ceiling (LOOP-03), the same
+ * degradation policy 6.4 already decided.
+ *
+ * `budget.warn` fires at 80% of the cap (the original step 6.10, folded into
+ * this one rather than tracked separately) — a heads-up before the hard
+ * stop, not a substitute for it.
+ */
+async function checkGlobalBudget(
+  deps: DispatcherDeps,
+  globalBudgetUsd: number,
+): Promise<boolean> {
+  const spend = await usageRepository(deps.db).totalSpend();
+
+  if (spend.unpricedEvents > 0) {
+    deps.logger?.warn(
+      {
+        unpricedEvents: spend.unpricedEvents,
+        spendUsd: spend.total,
+        globalBudgetUsd,
+      },
+      'dispatch: the global spend check ran against incomplete cost data — some usage events reported no confirmed cost, so fleet-wide enforcement for the unconfirmed portion relies on each feature’s own round ceiling',
+    );
+  }
+
+  if (spend.total > globalBudgetUsd) {
+    deps.logger?.warn(
+      { spendUsd: spend.total, globalBudgetUsd },
+      'dispatch: the global spend cap is exceeded — halting new dispatch across every feature until it is raised or the spend is investigated',
+    );
+    return true;
+  }
+
+  if (spend.total >= globalBudgetUsd * 0.8) {
+    deps.logger?.warn(
+      {
+        event: 'budget.warn',
+        spendUsd: spend.total,
+        globalBudgetUsd,
+        ratio: spend.total / globalBudgetUsd,
+      },
+      'dispatch: fleet-wide spend has crossed 80% of the global spend cap',
+    );
+  }
+
+  return false;
 }
 
 /** What one candidate's budget check found. */

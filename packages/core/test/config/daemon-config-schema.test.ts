@@ -58,6 +58,27 @@ describe('DaemonConfigSchema — Phase 3 fields, defaults', () => {
   });
 });
 
+describe('DaemonConfigSchema — global_budget_usd (LOOP-05, M06 step 6.5)', () => {
+  it('is absent by default — no global cap unless the daemon administrator sets one', () => {
+    const result = DaemonConfigSchema.parse({});
+    expect(result.global_budget_usd).toBeUndefined();
+  });
+
+  it('accepts a positive value', () => {
+    const result = DaemonConfigSchema.parse({ global_budget_usd: 500 });
+    expect(result.global_budget_usd).toBe(500);
+  });
+
+  it('rejects zero and negative values', () => {
+    expect(DaemonConfigSchema.safeParse({ global_budget_usd: 0 }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonConfigSchema.safeParse({ global_budget_usd: -10 }).success,
+    ).toBe(false);
+  });
+});
+
 describe('DaemonConfigSchema — D-02 lease-timing rule (lease_ttl_ms >= 3x heartbeat_interval_ms)', () => {
   it('rejects lease_ttl_ms 100 with heartbeat_interval_ms 50, naming both fields', () => {
     const result = DaemonConfigSchema.safeParse({
