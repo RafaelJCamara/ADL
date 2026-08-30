@@ -43,8 +43,8 @@ silently — every limit reached ends in a human being told where they will see 
       feature once reached, and where a backend's usage reporting is unreliable the budget
       **visibly degrades** to round and wall-clock caps rather than silently ceasing to
       enforce. (6.5)
-- [ ] A developer/reviewer stalemate is caught by repeated finding fingerprints and
-      escalated _before_ the round cap is reached.
+- [x] A developer/reviewer stalemate is caught by repeated finding fingerprints and
+      escalated _before_ the round cap is reached. (6.6)
 - [ ] A provider outage, rate limit, or auth failure consumes neither a round nor budget,
       and the feature resumes rather than being marked failed.
 - [ ] Hitting any limit posts the full transcript and the disagreement to the pull request
@@ -198,7 +198,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       `packages/core/test/config/daemon-config-schema.test.ts` for the schema field itself.
       `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code —
       `docs/plan/`'s pre-existing formatting debt is unrelated, see `DEBT.md` § 3) all clean.
-- [ ] **6.6** — Stalemate detection over repeated finding fingerprints (LOOP-06),
+- [x] **6.6** — Stalemate detection over repeated finding fingerprints (LOOP-06),
       independent of the round and budget caps. `fingerprintFinding` and
       `limits.repeat_finding_threshold` already exist (CORE-04, `finding.ts`); nothing
       counts repeats across a feature's round history yet. A pure function in `@adl/core`
@@ -209,6 +209,52 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       `DEBT.md` — it lives in the archived `.planning/research/01-RESEARCH.md` § Open
       Questions 1 (cross-referenced from `finding.ts`'s own docblock). Real evidence from
       this step is still the right moment to revisit it; the pointer was just stale.
+      **Shipped:** `@adl/core/loop`'s new `detectStalemate` (`packages/core/src/loop/stalemate.ts`)
+      takes this round's `send_back` findings and a fingerprint→occurrence-count map and
+      reports which findings have already met `limits.repeat_finding_threshold` — pure, and
+      de-duplicated by fingerprint so a gate that lists the identical finding twice in one
+      round's own output cannot inflate the count. The manager half,
+      `loop/stalemate-check.ts`'s `checkStalemate`, reads the count from a new
+      `verdictsRepository().fingerprintCountsForFeature()` — how many *distinct rounds*
+      (never raw finding rows) have raised each fingerprint across a feature's whole
+      history — and hands it to the pure function, following `checkProtectedPaths`'s exact
+      three-way `clean`/`stalled`/`error` shape (never fail-open on a database read
+      failure, CORE-06). `round-runner.ts` fires it unconditionally on every gate's
+      `send_back` (never `warn`, which does not consume a round), **after**
+      `recordGateVerdict` writes this round's own findings — so the count it reads already
+      includes the round just judged, with no separate "+1" adjustment needed — and
+      **before** `planRoundStep` ever runs, exactly the ROLE-11 precedent: a stalled finding
+      overrides `planRoundStep`'s own `aggregate()`-driven decision with a hard `escalate`,
+      via a new `stalemateStep`, rather than letting the loop send the developer back one
+      more time to fail identically. `command-gate.ts`'s finding title already carries "the
+      stage and the exit code and nothing that varies between runs" — a comment written
+      during 5.14 anticipating exactly this step — which is what makes an identical command
+      failure recurring across rounds recognisable as the same finding at all.
+      **`repeatFindingThresholdOf` mirrors `maxRoundsOf`'s exact degrade-on-malformed
+      shape** (a missing/unreadable snapshot degrades to `0`, the same fail-closed direction
+      `maxRoundsOf` already chose for the round ceiling) — which promptly found two existing
+      test fixtures whose minimal fake snapshots omitted `repeat_finding_threshold`
+      entirely, previously harmless because nothing read it: `round-runner.test.ts`'s shared
+      `snapshot()` helper gained the same kind of defaulted parameter `maxRounds` already
+      has, and `round-loop.test.ts`'s LOOP-03 ceiling scenario — whose scripted gate reports
+      the identical fingerprint on both of its two send-backs by construction — needed an
+      explicit higher threshold to keep proving the round ceiling in isolation from this new
+      check (its own `RunOptions` docblock explains why, and the fix had to raise the
+      *daemon's* ceiling too, not just the repo's requested value, since `mergeConfig` clamps
+      a repo's request down to the daemon's own limit and never lets it rise past it, D-22).
+      **A new scenario proves the collision the other way round:** `round-loop.test.ts`
+      gained "escalates a repeated identical finding before the round ceiling is reached",
+      using the *default* threshold (2) against a round ceiling six rounds away, so the
+      "Done when" claim — stall detection firing before the round cap, not merely capable of
+      firing — is checked through a real daemon, not only argued. Three new unit cases in
+      `round-runner.test.ts` (under threshold sends back normally; at threshold escalates
+      without touching `round`/`current_stage_index`, matching the round ceiling's own
+      `NO_COUNTER_CHANGE` shape; a `warn` is never checked at all), nine new cases across
+      `packages/core/test/loop/stalemate.test.ts` (the pure boundary) and
+      `packages/db/test/repos-verdicts.test.ts` (`fingerprintCountsForFeature`'s
+      per-round-not-per-row counting, cross-feature isolation, and the zero-rows case).
+      `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code) all
+      clean.
 - [ ] **6.7** — Provider-failure backoff, decoupled from the crash-count ceiling (LOOP-07).
       Classification already exists (`StageError`'s `provider_error`/`timeout`/`auth`
       kinds, CORE-06) and a retryable error already costs no round (5.13's own doing) — but

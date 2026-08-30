@@ -85,6 +85,18 @@ interface RunOptions {
    * is identical.
    */
   readonly maxRounds?: number;
+  /**
+   * Overrides `ADL_YML`'s `limits.repeat_finding_threshold` (default 2).
+   * `verdictNamed('send_back')` always reports the identical fingerprint
+   * (`'f'.repeat(64)`), so a script that repeats `'send_back'` — exactly
+   * what the round-ceiling case below needs — would also trip LOOP-06's
+   * stall detection (M06 step 6.6) at the default threshold, escalating one
+   * round earlier than the ceiling itself and turning that round's outcome
+   * into `'escalate'` rather than the `'send_back'` this file asserts. Set
+   * high enough there to isolate the ceiling from the stall detector; the
+   * default is exercised by 6.6's own scenario instead.
+   */
+  readonly repeatFindingThreshold?: number;
   readonly assert: (ctx: {
     readonly db: Kysely<Database>;
     readonly featureId: string;
@@ -115,12 +127,18 @@ async function runLoop(options: RunOptions): Promise<void> {
       await writeFile(counterPath, '0', 'utf8');
 
       const maxRounds = options.maxRounds;
+      const repeatFindingThreshold = options.repeatFindingThreshold;
       const adlYml: AdlYml =
-        maxRounds === undefined
+        maxRounds === undefined && repeatFindingThreshold === undefined
           ? ADL_YML
           : AdlYmlSchema.parse({
               ...ADL_YML,
-              limits: { max_rounds: maxRounds },
+              limits: {
+                ...(maxRounds === undefined ? {} : { max_rounds: maxRounds }),
+                ...(repeatFindingThreshold === undefined
+                  ? {}
+                  : { repeat_finding_threshold: repeatFindingThreshold }),
+              },
             });
 
       const daemonConfig: DaemonConfig = DaemonConfigSchema.parse({
@@ -133,6 +151,14 @@ async function runLoop(options: RunOptions): Promise<void> {
             features_dir: 'features',
           },
         ],
+        // `mergeConfig` clamps a repo's requested `limits` DOWN to the
+        // daemon's own ceiling, never up (D-22) — so raising
+        // `repeatFindingThreshold` in `adlYml` alone would be silently
+        // clamped back to the daemon's default ceiling of 2. The daemon's
+        // own ceiling has to move too, or the repo's request never sticks.
+        ...(repeatFindingThreshold === undefined
+          ? {}
+          : { limits: { repeat_finding_threshold: repeatFindingThreshold } }),
       });
 
       const handle = await startDaemon({
@@ -299,10 +325,15 @@ describe('scenario: the round loop turns', () => {
       // allowed, the next one escalates": round 1's gate objects (allowed,
       // `1 + 1 > 1` is false), round 2's gate objects again
       // (`2 + 1 > 1` is true) — escalating on the round the ceiling forbids,
-      // never on the one it allows.
+      // never on the one it allows. `repeatFindingThreshold: 3` isolates
+      // this from LOOP-06's stall detector (M06 step 6.6, see `RunOptions`'s
+      // own docblock): the scripted gate's identical fingerprint would
+      // otherwise also trip at the default threshold of 2 on this same
+      // round, and this test's own claim is specifically about the ceiling.
       await runLoop({
         gateOutcomes: 'send_back,send_back',
         maxRounds: 1,
+        repeatFindingThreshold: 3,
         assert: async ({ db, featureId, waitUntil: until }) => {
           await until(async () => {
             const row = await featuresRepository(db).findById(featureId);
@@ -343,6 +374,76 @@ describe('scenario: the round loop turns', () => {
 
           // No third round was ever opened — the gate never ran a third
           // time, and no developer attempt exists for it either.
+          const attempts = await db
+            .selectFrom('stage_attempts')
+            .innerJoin('rounds', 'rounds.id', 'stage_attempts.round_id')
+            .select(['rounds.number as round'])
+            .where('rounds.feature_id', '=', featureId)
+            .execute();
+          expect(Math.max(...attempts.map((a) => a.round))).toBe(2);
+        },
+      });
+    },
+  );
+
+  it(
+    'escalates a repeated identical finding before the round ceiling is reached (LOOP-06, M06 step 6.6)',
+    { timeout: 60_000 },
+    async () => {
+      // No overrides: `ADL_YML`'s own defaults apply —
+      // `max_rounds: 6, repeat_finding_threshold: 2` — chosen precisely so
+      // the round ceiling (six rounds away) cannot be what fires here.
+      // `verdictNamed('send_back')` always reports the identical
+      // fingerprint, so round 2's send-back is this finding's *second*
+      // occurrence — exactly what trips the default threshold, on the very
+      // round the round-ceiling test above needed to raise the threshold to
+      // avoid. This is that same collision, deliberately exercised rather
+      // than avoided, on its own terms: the "Done when" claim is stall
+      // detection firing *before* the round cap, not merely that it can
+      // fire at all.
+      await runLoop({
+        gateOutcomes: 'send_back,send_back',
+        assert: async ({ db, featureId, waitUntil: until }) => {
+          await until(async () => {
+            const row = await featuresRepository(db).findById(featureId);
+            return row?.state === 'escalated';
+          });
+
+          const row = (await featuresRepository(db).findById(featureId))!;
+          expect(row.state).toBe('escalated');
+          expect(row.lease_token).toBeNull();
+          // The escalating transition moves no counter — round 1's
+          // send-back already advanced it once, and the stalemate override
+          // does not spend a second (`NO_COUNTER_CHANGE`, the same as
+          // LOOP-03's own escalating edge above).
+          expect(row.round).toBe(1);
+
+          const rounds = await db
+            .selectFrom('rounds')
+            .selectAll()
+            .where('feature_id', '=', featureId)
+            .orderBy('number')
+            .execute();
+          // Two rounds ran — round 1's own send-back (ordinary; the
+          // fingerprint has occurred once, under the threshold) and round
+          // 2's, where the identical fingerprint's second occurrence is
+          // what `stalemateStep` overrides `planRoundStep`'s own
+          // `aggregate()`-driven decision with. That override is why round
+          // 2 closes as `'escalate'`, not `'send_back'` — unlike LOOP-03's
+          // ceiling, which never changes a round's own recorded outcome.
+          expect(rounds).toHaveLength(2);
+          expect(rounds.map((r) => r.outcome)).toEqual([
+            'send_back',
+            'escalate',
+          ]);
+          expect(JSON.parse(rounds[1]!.outcome_json!)).toMatchObject({
+            kind: 'escalate',
+            reason: expect.stringContaining('stalemate'),
+          });
+
+          // No third round — a feature five rounds short of its ceiling
+          // would otherwise keep going, which is the whole point of
+          // catching this *before* the round cap.
           const attempts = await db
             .selectFrom('stage_attempts')
             .innerJoin('rounds', 'rounds.id', 'stage_attempts.round_id')

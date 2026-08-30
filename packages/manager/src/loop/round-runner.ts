@@ -18,6 +18,7 @@ import {
   type CompleteStep,
   type RoundStep,
   type StageCompletion,
+  type StalledFinding,
 } from '@adl/core/loop';
 import {
   transition,
@@ -35,6 +36,10 @@ import {
   checkProtectedPaths,
   type ProtectedPathCheckResult,
 } from './protected-paths-check.js';
+import {
+  checkStalemate,
+  type StalemateCheckResult,
+} from './stalemate-check.js';
 
 /**
  * `onStageCompleted` — the round loop's database half (LOOP-01, M05 step 5.13).
@@ -179,6 +184,42 @@ function protectedPathViolationStep(
       { t: 'dev_committed', sha },
       { t: 'unrecoverable', reason },
     ],
+    outcome: { kind: 'escalate', reason },
+  };
+}
+
+/** Same bound as {@link MAX_VIOLATED_PATHS_SHOWN}, for the same reason — a public PR comment. */
+const MAX_STALLED_FINDINGS_SHOWN = 20;
+
+/** The escalation reason for a round LOOP-06 hard-failed — bounded, never the whole list. */
+function describeStalemate(stalled: readonly StalledFinding[]): string {
+  const shown = stalled.slice(0, MAX_STALLED_FINDINGS_SHOWN);
+  const omitted = stalled.length - shown.length;
+  const list =
+    shown
+      .map(
+        (s) =>
+          `"${s.finding.title}" (raised in ${String(s.occurrences)} rounds)`,
+      )
+      .join('; ') + (omitted > 0 ? `; and ${String(omitted)} more` : '');
+  return (
+    'the developer and the gate are at a stalemate — the same finding kept recurring ' +
+    `without being resolved: ${list}`
+  );
+}
+
+/**
+ * The round this gate's `send_back` produced, overridden into a hard fail
+ * (LOOP-06). Unlike {@link protectedPathViolationStep} there is no prior
+ * event to prefix — a stalemate is discovered at a gate's own verdict, not
+ * at a developer commit, so there is nothing this step needs to record
+ * before the escalation itself.
+ */
+function stalemateStep(stalled: readonly StalledFinding[]): CompleteStep {
+  const reason = describeStalemate(stalled);
+  return {
+    kind: 'complete',
+    events: [{ t: 'unrecoverable', reason }],
     outcome: { kind: 'escalate', reason },
   };
 }
@@ -568,6 +609,7 @@ async function runStageCompleted(
   // Evidence first, state second. A CAS that loses its race must not also
   // lose the judgement that a pull request is rendered from.
   let protectedPathResult: ProtectedPathCheckResult | undefined;
+  let stalemateResult: StalemateCheckResult | undefined;
   let committedSha: string | undefined;
   if (completion.kind === 'gate') {
     await recordGateVerdict(
@@ -576,6 +618,23 @@ async function runStageCompleted(
       completion.verdict,
       at,
     );
+
+    if (completion.verdict.outcome === 'send_back') {
+      // LOOP-06 (M06 step 6.6): unconditional on every send_back, before
+      // `planRoundStep` ever runs — see `stalemate-check.ts`'s own docblock
+      // for why this is not, and must not be, a pipeline entry `adl.yml` has
+      // to remember to declare. The count this reads already includes the
+      // verdict just recorded above (evidence first), so no separate "+1 for
+      // this round" adjustment is needed.
+      stalemateResult = await checkStalemate(
+        { db: deps.db },
+        {
+          featureId: feature.id,
+          currentFindings: completion.verdict.findings,
+          threshold: repeatFindingThresholdOf(feature),
+        },
+      );
+    }
   } else if (completion.kind === 'error') {
     await recordStageError(deps, params.stageAttemptId, completion.error, at);
   } else if (completion.outcome.kind === 'committed') {
@@ -619,30 +678,34 @@ async function runStageCompleted(
       ? protectedPathViolationStep(committedSha, protectedPathResult.paths)
       : protectedPathResult?.kind === 'error'
         ? { kind: 'retry', reason: protectedPathResult.detail }
-        : pipeline.ok
-          ? planRoundStep({
-              stageIndex: params.stageIndex,
-              pipelineLength: pipeline.stages.length,
-              stageId: params.stageId,
-              completion,
-              priorVerdicts: await readRoundVerdicts(
-                deps.db,
-                params.roundId,
-                params.stageAttemptId,
-              ),
-            })
-          : // A pipeline this build cannot resolve is not something another
-            // round fixes — the configuration names a harness with no loader
-            // (M13), and the feature would fail identically every time.
-            planRoundStep({
-              stageIndex: params.stageIndex,
-              pipelineLength: 0,
-              stageId: params.stageId,
-              completion: unparseable(
-                `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
-              ),
-              priorVerdicts: [],
-            });
+        : stalemateResult?.kind === 'stalled'
+          ? stalemateStep(stalemateResult.findings)
+          : stalemateResult?.kind === 'error'
+            ? { kind: 'retry', reason: stalemateResult.detail }
+            : pipeline.ok
+              ? planRoundStep({
+                  stageIndex: params.stageIndex,
+                  pipelineLength: pipeline.stages.length,
+                  stageId: params.stageId,
+                  completion,
+                  priorVerdicts: await readRoundVerdicts(
+                    deps.db,
+                    params.roundId,
+                    params.stageAttemptId,
+                  ),
+                })
+              : // A pipeline this build cannot resolve is not something another
+                // round fixes — the configuration names a harness with no loader
+                // (M13), and the feature would fail identically every time.
+                planRoundStep({
+                  stageIndex: params.stageIndex,
+                  pipelineLength: 0,
+                  stageId: params.stageId,
+                  completion: unparseable(
+                    `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
+                  ),
+                  priorVerdicts: [],
+                });
 
   if (step.kind === 'retry') {
     // The stage broke transiently. Routed through `reapOne` — the same
@@ -788,6 +851,30 @@ function maxRoundsOf(feature: FeaturesTable): number {
       limits?: { max_rounds?: unknown };
     };
     const value = parsed.limits?.max_rounds;
+    return typeof value === 'number' ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The stall-detection threshold this feature was leased under, from its own
+ * snapshot — `maxRoundsOf`'s exact degrade-on-malformed shape (rule 5,
+ * CORE-06's spirit): a snapshot this build cannot read degrades to the same
+ * fail-closed direction as the round ceiling, `0`, rather than a lenient
+ * "effectively disabled" value. A threshold of `0` means the very first
+ * occurrence of any finding already meets it — the same "when in doubt,
+ * surface the problem to a human rather than silently continuing" choice
+ * `maxRoundsOf` already made for the round ceiling, applied here for
+ * consistency rather than argued afresh.
+ */
+function repeatFindingThresholdOf(feature: FeaturesTable): number {
+  if (feature.effective_config_json === null) return 0;
+  try {
+    const parsed = JSON.parse(feature.effective_config_json) as {
+      limits?: { repeat_finding_threshold?: unknown };
+    };
+    const value = parsed.limits?.repeat_finding_threshold;
     return typeof value === 'number' ? value : 0;
   } catch {
     return 0;

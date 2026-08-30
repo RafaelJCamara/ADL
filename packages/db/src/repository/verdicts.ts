@@ -54,6 +54,18 @@ export interface VerdictsRepository {
   listFindings(verdictId: string): Promise<FindingsTable[]>;
   /** Fingerprints raised anywhere in a round — LOOP-06's stall-detection input. */
   fingerprintsForRound(roundId: string): Promise<string[]>;
+  /**
+   * How many distinct rounds each fingerprint has been raised in, across one
+   * feature's whole round history (LOOP-06, M06 step 6.6) — the same input
+   * `fingerprintsForRound` was already built for, pivoted across every round
+   * a feature has run rather than read one round at a time. A fingerprint
+   * absent from the map has never been raised; the caller supplies that
+   * default rather than this method inventing a zero entry for every
+   * fingerprint that has never existed.
+   */
+  fingerprintCountsForFeature(
+    featureId: string,
+  ): Promise<ReadonlyMap<string, number>>;
   /** The cited coverage of every passing verdict in a round. */
   coverage(roundId: string): Promise<CoverageRow[]>;
   insertWaiver(waiver: NewWaiver): Promise<void>;
@@ -115,6 +127,31 @@ export function verdictsRepository(db: Kysely<Database>): VerdictsRepository {
         .orderBy('findings.fingerprint')
         .execute();
       return rows.map((r) => r.fingerprint);
+    },
+
+    async fingerprintCountsForFeature(featureId) {
+      // Distinct (fingerprint, round) pairs — a gate that lists the same
+      // finding twice within one round's own output must not inflate that
+      // round's contribution to the count beyond "raised in this round".
+      const rows = await db
+        .selectFrom('findings')
+        .innerJoin('verdicts', 'verdicts.id', 'findings.verdict_id')
+        .innerJoin(
+          'stage_attempts',
+          'stage_attempts.id',
+          'verdicts.stage_attempt_id',
+        )
+        .innerJoin('rounds', 'rounds.id', 'stage_attempts.round_id')
+        .select(['findings.fingerprint', 'rounds.id as roundId'])
+        .distinct()
+        .where('rounds.feature_id', '=', featureId)
+        .execute();
+
+      const counts = new Map<string, number>();
+      for (const row of rows) {
+        counts.set(row.fingerprint, (counts.get(row.fingerprint) ?? 0) + 1);
+      }
+      return counts;
     },
 
     coverage(roundId) {

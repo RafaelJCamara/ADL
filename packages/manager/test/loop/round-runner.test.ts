@@ -70,10 +70,19 @@ function snapshot(
   pipeline: readonly string[],
   maxRounds = 6,
   protectedPaths: readonly string[] = [],
+  // `LimitsSchema`'s own default (M06 step 6.6) — every test in this file
+  // reports one finding per round, never the same fingerprint twice, so this
+  // only has to be *present* (repeatFindingThresholdOf's own degrade-on-absent
+  // is 0, `maxRoundsOf`'s exact fail-closed shape, which would flag every
+  // single-occurrence finding here as an instant stalemate).
+  repeatFindingThreshold = 2,
 ): string {
   return JSON.stringify({
     pipeline,
-    limits: { max_rounds: maxRounds },
+    limits: {
+      max_rounds: maxRounds,
+      repeat_finding_threshold: repeatFindingThreshold,
+    },
     protected_paths: protectedPaths,
   } as unknown as EffectiveConfig);
 }
@@ -624,6 +633,161 @@ describe('the round loop — protected-path enforcement (ROLE-11)', () => {
         .where('id', '=', roundId)
         .executeTakeFirst();
       expect(round?.outcome).toBeNull();
+    });
+  });
+});
+
+describe('the round loop — stalemate detection (LOOP-06, M06 step 6.6)', () => {
+  const recurringFinding = {
+    fingerprint: 'e'.repeat(64),
+    severity: 'blocker' as const,
+    title: 'the same thing keeps failing',
+    detail: 'npm test exited 1',
+    criterionRef: CRITERION,
+  };
+
+  it('sends back on a finding’s first occurrence — under the threshold, ordinary handling', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db, {
+        state: 'gating',
+        current_stage_index: 1,
+        effective_config_json: snapshot(['develop', 'test'], 6, [], 2),
+      });
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        1,
+        'test',
+        gateVerdict({
+          outcome: 'send_back',
+          summary: 'changes required',
+          findings: [recurringFinding],
+        }),
+      );
+
+      const row = await reload(db, seeded.feature.id);
+      // The finding has occurred once — under `repeat_finding_threshold: 2`
+      // — so this is `planRoundStep`'s own ordinary decision, not LOOP-06's
+      // override.
+      expect(row.state).toBe('developing');
+
+      const round = await db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('id', '=', roundId)
+        .executeTakeFirst();
+      expect(round?.outcome).toBe('send_back');
+    });
+  });
+
+  it('escalates once a finding has recurred repeat_finding_threshold times, never sending back again', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db, {
+        state: 'gating',
+        current_stage_index: 1,
+        effective_config_json: snapshot(['develop', 'test'], 6, [], 2),
+      });
+
+      // Round 1: the finding's first occurrence.
+      await report(
+        db,
+        seeded,
+        1,
+        'test',
+        gateVerdict({
+          outcome: 'send_back',
+          summary: 'changes required',
+          findings: [recurringFinding],
+        }),
+      );
+      expect((await reload(db, seeded.feature.id)).state).toBe('developing');
+
+      // Round 2's developer commits again, reaching the same gate stage —
+      // `openAttempt` opens a fresh round since round 1's own is closed.
+      await report(db, seeded, 0, 'develop', committed('feed000'));
+      expect((await reload(db, seeded.feature.id)).state).toBe('gating');
+
+      // Round 2's gate reports the identical finding — its second
+      // occurrence, which meets the threshold this feature was leased under.
+      const { roundId } = await report(
+        db,
+        seeded,
+        1,
+        'test',
+        gateVerdict({
+          outcome: 'send_back',
+          summary: 'changes required',
+          findings: [recurringFinding],
+        }),
+      );
+
+      const row = await reload(db, seeded.feature.id);
+      expect(row.state).toBe('escalated');
+
+      const round = await db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('id', '=', roundId)
+        .executeTakeFirst();
+      // `stalemateStep` overrides `planRoundStep`'s own `aggregate()`-driven
+      // decision — this round closes as `escalate`, not the `send_back` its
+      // own gate verdict would ordinarily have produced.
+      expect(round?.outcome).toBe('escalate');
+      const outcome = JSON.parse(round!.outcome_json!) as {
+        kind: string;
+        reason: string;
+      };
+      expect(outcome.kind).toBe('escalate');
+      expect(outcome.reason).toContain('stalemate');
+      expect(outcome.reason).toContain('the same thing keeps failing');
+
+      // A completed round, not a crash.
+      expect(row.crash_count).toBe(0);
+      expect(row.lease_token).toBeNull();
+    });
+  });
+
+  it('never checks a warn verdict — only send_back consumes a round', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      // A three-stage pipeline so the `warn` below lands on a *non-last*
+      // gate — it neither stops the pipeline (`stopsPipeline` is false for
+      // `warn`) nor closes the round on its own, so this test's assertion
+      // rests only on whether LOOP-06 was ever consulted, not on what
+      // `aggregate()` would have decided had the round actually closed.
+      const seeded = await seedFeature(db, {
+        state: 'gating',
+        current_stage_index: 1,
+        effective_config_json: snapshot(
+          ['develop', 'review', 'test'],
+          6,
+          [],
+          1,
+        ),
+      });
+
+      // `repeat_finding_threshold: 1` — the most aggressive setting there is
+      // — and a single `warn` carrying this finding. If `warn` were checked
+      // the same as `send_back`, this would already escalate on its first
+      // appearance; it must not, because a `warn` never consumes a round.
+      await report(
+        db,
+        seeded,
+        1,
+        'review',
+        gateVerdict({
+          outcome: 'warn',
+          summary: 'non-blocking observation',
+          findings: [recurringFinding],
+        }),
+      );
+
+      const row = await reload(db, seeded.feature.id);
+      expect(row.state).toBe('gating');
+      expect(row.current_stage_index).toBe(2);
     });
   });
 });

@@ -26,3 +26,13 @@ export {
   violatedProtectedPaths,
   type ProtectedPathsInput,
 } from './protected-paths.js';
+
+// Stalemate detection over repeated finding fingerprints (LOOP-06, M06 step
+// 6.6) — pure, and the only half `@adl/core` can own: it counts against a
+// fingerprint-history read `@adl/manager`'s `loop/stalemate-check.ts`
+// computed, and reads no database itself.
+export {
+  detectStalemate,
+  type DetectStalemateInput,
+  type StalledFinding,
+} from './stalemate.js';
