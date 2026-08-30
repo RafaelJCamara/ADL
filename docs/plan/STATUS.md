@@ -1,6 +1,6 @@
 # STATUS — start here
 
-_Last updated: 2026-08-27_
+_Last updated: 2026-08-30_
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -28,9 +28,10 @@ weekends, no deadline.
 `pnpm typecheck` / `pnpm lint` / `pnpm format` are all clean on `main`. M05 carries one
 deferred check, same shape as M02 and M04: a real draft change request against a real,
 installed GitHub App has never been opened — only against the local mock GitHub server.
-M06 is in progress: 6.2 (the round-ceiling proof) and 6.3 (spend visible in `adl status`,
-OBS-05) are done; 6.1's live cost reconciliation is deferred provisionally by maintainer
-decision (2026-08-27, see below); 6.4 is next.**
+M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl status`,
+OBS-05), and 6.4 (the per-feature budget, LOOP-04) are done; 6.1's live cost
+reconciliation is deferred provisionally by maintainer decision (2026-08-27, see below);
+6.5 is next.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -38,7 +39,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2, 6.3 done; 6.1 deferred; 6.4 next
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2, 6.3, 6.4 done; 6.1 deferred; 6.5 next
 M07–M18 .............................. not started
 ```
 
@@ -499,7 +500,7 @@ _tested_ — every requirement's mechanism can be designed and proven against th
 replay doubles M01–M05 already used throughout; the live run only adds confidence that
 `cost_source: 'reported'` numbers are accurate, not new code paths.
 
-**Done this session:** the audit also found LOOP-03's round ceiling already fully
+**Done in prior sessions:** the audit found LOOP-03's round ceiling already fully
 implemented and production-wired (`transition.ts`'s `gating`/`send_back` edge, fed by
 `round-runner.ts`'s `maxRoundsOf`) — 6.2 is the real/integration proof through the manager it
 was missing, in `test/scenario/round-loop.test.ts`. 6.3 (OBS-05) followed: `usageRepository`'s
@@ -507,16 +508,35 @@ new `spendByFeature()` reads every feature's spend, broken down by role, in one 
 `GET /features` and `adl status`'s table both surface it now — M03's old
 `not.toMatch(/cost|spend/)` guard on that route is the same test, inverted, not deleted.
 
-**6.4 is next: the per-feature token/cost budget (LOOP-04), checked before dispatch, with
-the `cost_source: 'unknown'` degradation policy decided in the same step.** Extend
-`dispatchOnce`'s existing pre-lease candidate predicate — the concurrency cap already checked
-there, before a lease is acquired, is this milestone's own template (M03's precedent). Full
-detail, including the exact edge to route an over-budget candidate's escalation through
-(`transition.ts`'s existing generic `limit_exceeded → escalated`), is in
-`milestones/m06-accountant.md`'s step list. **6.8 (escalation posts to the PR) needs a
-maintainer check-in when it starts** — exposing a full transcript on the pull request sits in
-direct tension with FORGE-06's "PR stays readable" constraint, and that is not a call to make
-unilaterally.
+**Done this session: 6.4, the per-feature token/cost budget (LOOP-04).**
+`dispatchOnce`'s pre-lease candidate `.find()` became an async `for` loop — a candidate
+blocked by the pause brake or the concurrency cap is still skipped with zero reads, exactly
+as before; only a *continuation* candidate (already inside the loop, carrying a snapshotted
+`effective_config_json`) now gets a `spendByCategory` read against its own
+`limits.budget_usd`. A fresh `queued` row — including one a human just `resume`d out of an
+escalation — is never checked, matching `isContinuation`'s own "snapshotted at lease time"
+discipline. An over-budget candidate is escalated by a new `escalateFeatureForBudget`
+(`transition()`'s existing generic `limit_exceeded → escalated` edge, then a version-guarded
+CAS and audit-event append, in its own transaction — the same "manager-initiated escalation
+outside the normal round close" shape 5.16's `checkProtectedPaths` established) and the loop
+tries the next candidate; nothing about a round already open under it is touched, since the
+edge moves every counter by zero. **The `cost_source: 'unknown'` degradation policy this step
+also had to decide:** an unpriced usage row is never folded into the compared total as zero
+(D-31) — a continuation candidate with any unpriced row logs a `warn` every time it is
+checked, not only when it tips the feature over budget, so the degradation stays visible;
+enforcement for the unconfirmed portion leans on the round ceiling (6.2) rather than a dollar
+figure that cannot see it. Five new cases in
+`packages/manager/test/scheduler/dispatcher.test.ts`. `pnpm test` / `pnpm typecheck` /
+`pnpm lint` / `pnpm format` all clean.
+
+**6.5 is next: the global spend cap (LOOP-05).** Same `dispatchOnce` predicate extended with
+a second, feature-independent condition — fully greenfield, since no `global_budget_usd`-shaped
+`DaemonConfig` field exists yet, and it needs a new repository method summing spend across
+every feature. `budget.warn` at 80% (the milestone's original 6.10) is a cheap addition on
+the same check, not a separate step. Full detail is in `milestones/m06-accountant.md`'s step
+list. **6.8 (escalation posts to the PR) needs a maintainer check-in when it starts** —
+exposing a full transcript on the pull request sits in direct tension with FORGE-06's "PR
+stays readable" constraint, and that is not a call to make unilaterally.
 
 **Before you start, skim:**
 
