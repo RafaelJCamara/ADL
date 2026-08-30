@@ -36,9 +36,9 @@ silently — every limit reached ends in a human being told where they will see 
 
 ## Done when
 
-- [ ] A per-feature round cap and a per-feature token/cost budget both exist, and whichever
+- [x] A per-feature round cap and a per-feature token/cost budget both exist, and whichever
       is hit first stops the feature — **checked before the next agent turn is dispatched,
-      never after it has been paid for.**
+      never after it has been paid for.** (6.2, 6.4)
 - [ ] A global spend cap above the per-feature caps halts new dispatch across every
       feature once reached, and where a backend's usage reporting is unreliable the budget
       **visibly degrades** to round and wall-clock caps rather than silently ceasing to enforce.
@@ -121,7 +121,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       `usage_events.feature_id`) — a first, minimal-fixture draft of the test failed with
       a real `FOREIGN KEY constraint failed`, corrected to seed a full
       repo → feature → round → stage_attempt chain.
-- [ ] **6.4** — Per-feature token/cost budget, checked before dispatch (LOOP-04), and the
+- [x] **6.4** — Per-feature token/cost budget, checked before dispatch (LOOP-04), and the
       `cost_source: 'unknown'` degradation policy (6.5's original ask) decided here rather
       than later, since the budget check has to have an answer for an unreliable
       `cost_source` the first time it runs, not as a follow-up. **Extend `dispatchOnce`'s
@@ -133,6 +133,36 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       existing generic `limit_exceeded → escalated` edge, fired as its own transaction —
       the same "manager-initiated escalation outside the normal round close" shape
       `checkProtectedPaths` (5.16) already uses.
+      **Shipped:** `dispatcher.ts`'s `.find()` predicate became an async `for` loop —
+      candidates are still tried in the same FIFO order, and one blocked by the pause brake
+      or the concurrency cap is still skipped with **zero** reads, exactly as before; only a
+      candidate that clears both now gets a database read. Only a *continuation* candidate
+      (`state !== 'queued'` with an existing `effective_config_json`) is ever checked — a
+      fresh `queued` row, including one a human just `resume`d out of an escalation, has
+      spent nothing new to check and gets a clean slate, matching `isContinuation`'s own
+      existing "snapshotted at lease time" discipline one paragraph below. An over-budget
+      candidate is escalated by a new `escalateFeatureForBudget` (`transition()` then a
+      version-guarded CAS and audit-event append, in one transaction) and the loop moves on
+      to the next candidate — nothing about the concurrency slot it would have taken is
+      spent. **The degradation policy this step also had to decide:** an unpriced
+      `usage_events` row (5.18's `cost_source: 'unknown'`, or any model this build cannot
+      price) is never folded into the compared total as zero (D-31) — the dollar figure a
+      candidate is checked against is a confirmed floor, not true spend, so a continuation
+      candidate with any unpriced row logs a `warn` **every time it is checked**, not only
+      when it happens to tip the feature over budget, naming the gap rather than silently
+      trusting an understated number; enforcement for the unconfirmed portion leans on the
+      round ceiling (LOOP-03, 6.2) rather than a dollar figure that cannot see it. **No round
+      is touched by the escalation itself** — the `limit_exceeded` edge moves every counter
+      by zero (`NO_COUNTER_CHANGE`), so a round still open under a `gating` candidate is left
+      exactly as it stood; a human `resume` re-leases from the same stage, and `openAttempt`'s
+      own "reuse the open round" rule (04-04) picks it back up, the identical recovery shape a
+      retryable stage error already leaves behind via `reapOne`. Five new cases in
+      `packages/manager/test/scheduler/dispatcher.test.ts`: escalates over budget and leaves
+      `round`/`current_stage_index` untouched; dispatches normally under budget; logs the
+      degradation without escalating when an unpriced row still leaves confirmed spend under
+      budget; never checks a fresh `queued` candidate even against usage rows already on
+      file for it; and skips one over-budget candidate to dispatch the next admissible one
+      behind it. `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` all clean.
 - [ ] **6.5** — Global spend cap (LOOP-05), same `dispatchOnce` predicate extended with a
       second, feature-independent condition. Fully greenfield: a new `DaemonConfig` field
       (no `global_budget_usd`-shaped field exists anywhere in the schema today) and a new

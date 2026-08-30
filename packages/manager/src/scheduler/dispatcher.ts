@@ -6,6 +6,7 @@ import {
   featuresRepository,
   nowIso,
   reposRepository,
+  usageRepository,
   type Database,
   type FeaturesTable,
 } from '@adl/db';
@@ -177,29 +178,87 @@ export async function dispatchOnce(
   const leased = await repo.listLeased();
   const concurrency = deps.daemonConfig.concurrency;
 
-  const feature = queued.find((candidate) => {
+  // Hoisted so the budget escalation below (LOOP-04, M06 step 6.4) and the
+  // lease-expiry math further down share one instant for this whole tick,
+  // rather than each reading the clock separately.
+  const now = (deps.now ?? nowIso)();
+
+  // A plain `.find()` cannot await, and the budget check below is a real
+  // database read plus — on an over-budget candidate — a write. Candidates
+  // are still tried in the same FIFO order `.find()` walked, and a candidate
+  // that fails the pause or concurrency check is skipped with no read at
+  // all, exactly as before (M06 step 6.4 extends this predicate; it does not
+  // restructure it).
+  let feature: FeaturesTable | undefined;
+  for (const candidate of queued) {
     if (
       deps.controlState !== undefined &&
       isDispatchPaused(deps.controlState, candidate.repo_id)
     ) {
-      return false;
+      continue;
     }
     // The inclusive ceiling: in-flight >= cap blocks, never in-flight > cap
     // only. A cap reachable only by lowering it mid-flight (in-flight > cap)
     // falls into the same branch — dispatch nothing, revoke nothing.
     if (leased.length >= concurrency.global) {
-      return false;
+      continue;
     }
     if (concurrency.per_repo !== undefined) {
       const repoLeasedCount = leased.filter(
         (row) => row.repo_id === candidate.repo_id,
       ).length;
       if (repoLeasedCount >= concurrency.per_repo) {
-        return false;
+        continue;
       }
     }
-    return true;
-  });
+
+    // LOOP-04 (M06 step 6.4): the per-feature budget, checked immediately
+    // before the lease is acquired — never after a round has already been
+    // paid for. Only a continuation candidate can be over budget: a fresh
+    // `queued` row has spent nothing yet, and this dispatch is what snapshots
+    // its `effective_config_json` in the first place, so there is nothing to
+    // read a ceiling from before that happens.
+    if (
+      candidate.state !== 'queued' &&
+      candidate.effective_config_json !== null
+    ) {
+      const budget = await checkFeatureBudget(deps.db, candidate);
+      if (budget.unpricedEvents > 0) {
+        // The degradation policy this step also decides (6.5's original
+        // ask): an unpriced usage row is never folded into `spendUsd` as
+        // zero (D-31) — so the dollar figure below is a confirmed floor,
+        // not the true spend, and this feature's enforcement leans on the
+        // round ceiling (LOOP-03) for the gap rather than silently trusting
+        // an understated number. Logged every time it is checked, not only
+        // when it happens to tip the feature over budget, so the
+        // degradation itself stays visible.
+        deps.logger?.warn(
+          {
+            featureId: candidate.id,
+            unpricedEvents: budget.unpricedEvents,
+            spendUsd: budget.spendUsd,
+            budgetUsd: budget.budgetUsd,
+          },
+          'dispatch: budget check ran against incomplete cost data — some usage events reported no confirmed cost, so enforcement for this feature relies on the round ceiling for the unconfirmed portion',
+        );
+      }
+      if (budget.overBudget) {
+        deps.logger?.warn(
+          {
+            featureId: candidate.id,
+            spendUsd: budget.spendUsd,
+            budgetUsd: budget.budgetUsd,
+          },
+          'dispatch: feature exceeded its per-feature budget — escalating rather than dispatching another round',
+        );
+        await escalateFeatureForBudget(deps, candidate, now);
+        continue;
+      }
+    }
+
+    feature = candidate;
+    break;
+  }
   if (feature === undefined) {
     return { dispatched: false };
   }
@@ -220,7 +279,6 @@ export async function dispatchOnce(
   }
   const baseRef = repoRow.default_branch;
 
-  const now = (deps.now ?? nowIso)();
   const leaseToken = ulid();
   const leaseExpiresAt = new Date(
     Date.parse(now) + deps.leaseTtlMs,
@@ -406,6 +464,132 @@ export async function dispatchOnce(
       feature.current_stage_index + outcome.counters.currentStageIndex,
     workspaceHandle,
     baseRef,
+  });
+}
+
+/** What one candidate's budget check found. */
+interface FeatureBudgetCheck {
+  readonly overBudget: boolean;
+  readonly spendUsd: number;
+  readonly budgetUsd: number;
+  /** Rows with no confirmed `cost_usd` (D-31) — never folded into `spendUsd` as zero. */
+  readonly unpricedEvents: number;
+}
+
+/**
+ * Read a continuation candidate's confirmed spend against the budget it was
+ * leased under (LOOP-04, M06 step 6.4).
+ *
+ * `feature.effective_config_json` is the snapshot this same candidate was
+ * admitted under (Phase 1's versioning rule 3) — reading `limits.budget_usd`
+ * from it, rather than re-merging `adl.yml`, is exactly the discipline
+ * `dispatchOnce`'s own `isContinuation` branch already holds itself to:
+ * a running feature's ceiling cannot move because a maintainer edited the
+ * repo mid-flight.
+ */
+async function checkFeatureBudget(
+  db: Kysely<Database>,
+  feature: FeaturesTable,
+): Promise<FeatureBudgetCheck> {
+  const config = JSON.parse(
+    feature.effective_config_json as string,
+  ) as EffectiveConfig;
+  const spend = await usageRepository(db).spendByCategory(feature.id);
+  return {
+    overBudget: spend.total > config.limits.budget_usd,
+    spendUsd: spend.total,
+    budgetUsd: config.limits.budget_usd,
+    unpricedEvents: spend.unpricedEvents,
+  };
+}
+
+/**
+ * Escalate a feature for exceeding its per-feature budget, outside the
+ * normal round close — the same "manager-initiated escalation" shape M05
+ * step 5.16's `checkProtectedPaths` established for ROLE-11.
+ *
+ * No round is touched. `transition()`'s any-state `limit_exceeded` edge
+ * moves counters by zero (`NO_COUNTER_CHANGE`), so this candidate's `round`
+ * and `current_stage_index` — and any round still open under it — are left
+ * exactly as they stood; a human `resume` re-leases from precisely where the
+ * feature was when its spend tipped over, the same recovery shape a
+ * retryable stage error already leaves behind via `reapOne`.
+ *
+ * Never throws: a lost CAS race (another writer moved this row between the
+ * read that found it over budget and this write) is logged and dropped —
+ * the next tick re-reads the row fresh and re-decides, exactly like every
+ * other lost race in this function.
+ */
+async function escalateFeatureForBudget(
+  deps: DispatcherDeps,
+  feature: FeaturesTable,
+  at: string,
+): Promise<void> {
+  const events = await featuresRepository(deps.db).listEvents(feature.id);
+  const lastEventSeq = events.reduce(
+    (max, event) => Math.max(max, event.seq),
+    0,
+  );
+
+  const ctx: TransitionCtx = {
+    featureId: feature.id,
+    stateVersion: feature.state_version,
+    lastEventSeq,
+    round: feature.round,
+    // Unused by the `limit_exceeded` edge (it fires from `transition()`'s
+    // any-non-terminal-state block, before either field is consulted) — 0 is
+    // not a claim about this feature's real ceiling or pipeline length.
+    maxRounds: 0,
+    pipelineLength: 0,
+    currentStageIndex: feature.current_stage_index,
+    actor: deps.actor ?? 'manager',
+    at,
+  };
+
+  const outcome = transition(
+    feature.state as FeatureState,
+    { t: 'limit_exceeded', reason: 'budget_limit' },
+    ctx,
+  );
+  if (!outcome.ok) {
+    deps.logger?.warn(
+      { featureId: feature.id, state: feature.state, reason: outcome.reason },
+      'dispatch: budget escalation rejected by transition() — leaving the feature as it stands',
+    );
+    return;
+  }
+
+  await deps.db.transaction().execute(async (trx) => {
+    const trxRepo = featuresRepository(trx);
+    const applied = await trxRepo.compareAndSwapState({
+      id: feature.id,
+      expectedVersion: outcome.expectedStateVersion,
+      state: outcome.next,
+      round: feature.round + outcome.counters.round,
+      currentStageIndex:
+        feature.current_stage_index + outcome.counters.currentStageIndex,
+      updatedAt: at,
+    });
+    if (!applied) {
+      deps.logger?.warn(
+        { featureId: feature.id },
+        'dispatch: budget escalation lost the compareAndSwapState race — another writer moved this feature first',
+      );
+      return;
+    }
+    const [effect] = outcome.effects;
+    if (effect !== undefined) {
+      await trxRepo.appendEvent({
+        id: ulid(),
+        feature_id: effect.featureId,
+        seq: effect.seq,
+        from_state: effect.fromState,
+        to_state: effect.toState,
+        event_json: JSON.stringify(effect.event),
+        actor: effect.actor,
+        at: effect.at,
+      });
+    }
   });
 }
 
