@@ -29,9 +29,9 @@ weekends, no deadline.
 deferred check, same shape as M02 and M04: a real draft change request against a real,
 installed GitHub App has never been opened — only against the local mock GitHub server.
 M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl status`,
-OBS-05), and 6.4 (the per-feature budget, LOOP-04) are done; 6.1's live cost
-reconciliation is deferred provisionally by maintainer decision (2026-08-27, see below);
-6.5 is next.**
+OBS-05), 6.4 (the per-feature budget, LOOP-04), and 6.5 (the global spend cap, LOOP-05)
+are done; 6.1's live cost reconciliation is deferred provisionally by maintainer decision
+(2026-08-27, see below); 6.6 is next.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -39,7 +39,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2, 6.3, 6.4 done; 6.1 deferred; 6.5 next
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2, 6.3, 6.4, 6.5 done; 6.1 deferred; 6.6 next
 M07–M18 .............................. not started
 ```
 
@@ -508,14 +508,14 @@ new `spendByFeature()` reads every feature's spend, broken down by role, in one 
 `GET /features` and `adl status`'s table both surface it now — M03's old
 `not.toMatch(/cost|spend/)` guard on that route is the same test, inverted, not deleted.
 
-**Done this session: 6.4, the per-feature token/cost budget (LOOP-04).**
+**Done in a prior session: 6.4, the per-feature token/cost budget (LOOP-04).**
 `dispatchOnce`'s pre-lease candidate `.find()` became an async `for` loop — a candidate
 blocked by the pause brake or the concurrency cap is still skipped with zero reads, exactly
 as before; only a *continuation* candidate (already inside the loop, carrying a snapshotted
 `effective_config_json`) now gets a `spendByCategory` read against its own
 `limits.budget_usd`. A fresh `queued` row — including one a human just `resume`d out of an
 escalation — is never checked, matching `isContinuation`'s own "snapshotted at lease time"
-discipline. An over-budget candidate is escalated by a new `escalateFeatureForBudget`
+discipline. An over-budget candidate is escalated by `escalateFeatureForBudget`
 (`transition()`'s existing generic `limit_exceeded → escalated` edge, then a version-guarded
 CAS and audit-event append, in its own transaction — the same "manager-initiated escalation
 outside the normal round close" shape 5.16's `checkProtectedPaths` established) and the loop
@@ -525,15 +525,36 @@ also had to decide:** an unpriced usage row is never folded into the compared to
 (D-31) — a continuation candidate with any unpriced row logs a `warn` every time it is
 checked, not only when it tips the feature over budget, so the degradation stays visible;
 enforcement for the unconfirmed portion leans on the round ceiling (6.2) rather than a dollar
-figure that cannot see it. Five new cases in
-`packages/manager/test/scheduler/dispatcher.test.ts`. `pnpm test` / `pnpm typecheck` /
-`pnpm lint` / `pnpm format` all clean.
+figure that cannot see it.
 
-**6.5 is next: the global spend cap (LOOP-05).** Same `dispatchOnce` predicate extended with
-a second, feature-independent condition — fully greenfield, since no `global_budget_usd`-shaped
-`DaemonConfig` field exists yet, and it needs a new repository method summing spend across
-every feature. `budget.warn` at 80% (the milestone's original 6.10) is a cheap addition on
-the same check, not a separate step. Full detail is in `milestones/m06-accountant.md`'s step
+**Done this session: 6.5, the global spend cap (LOOP-05).** `DaemonConfigSchema` gains
+`global_budget_usd` — optional, no default, no repo-side counterpart (like `concurrency`),
+sitting *above* every feature's own `limits.budget_usd` rather than instead of it.
+`usageRepository()` gains `totalSpend()`, summing every `usage_events` row across every
+feature into one `{total, unpricedEvents}` — same D-31 discipline as `spendByCategory`/
+`spendByFeature`, same "read the rows, reduce in application code" implementation, no SQL
+aggregate. `dispatchOnce` checks it **once per tick**, before the per-candidate loop, since
+this cap is feature-independent — unlike LOOP-04's per-candidate read. Exceeding it halts
+dispatch entirely for that tick (`{dispatched: false}`, no candidate touched, nothing
+escalated) — a fleet-wide limit is not any single feature's fault, so the response mirrors
+the concurrency cap's own "dispatch nothing" shape rather than LOOP-04's per-feature
+`limit_exceeded`. `budget.warn` (the milestone's original step 6.10, folded in here) fires
+as a structured `logger.warn({event: 'budget.warn', ...})` at 80% of the cap, without
+halting. Absent `global_budget_usd`, the check never runs — zero extra reads on an install
+that never configured a fleet-wide ceiling. Fourteen new cases across
+`packages/core/test/config/daemon-config-schema.test.ts`,
+`packages/db/test/repos-usage.test.ts`, and
+`packages/manager/test/scheduler/dispatcher.test.ts`. `pnpm test` / `pnpm typecheck` /
+`pnpm lint` / `pnpm format` (on the touched code — `docs/plan/`'s pre-existing formatting
+debt, DEBT.md § 3, is unrelated) all clean.
+
+**6.6 is next: stalemate detection over repeated finding fingerprints (LOOP-06)**,
+independent of the round and budget caps. `fingerprintFinding` and
+`limits.repeat_finding_threshold` already exist (CORE-04, `finding.ts`); nothing counts
+repeats across a feature's round history yet. A pure function in `@adl/core` (sibling to
+`violatedProtectedPaths`/`planRoundStep`) plus a manager-side caller at the same point
+`checkProtectedPaths` runs — before `planRoundStep`, since this is also "detected by
+evaluating state, not by asking." Full detail is in `milestones/m06-accountant.md`'s step
 list. **6.8 (escalation posts to the PR) needs a maintainer check-in when it starts** —
 exposing a full transcript on the pull request sits in direct tension with FORGE-06's "PR
 stays readable" constraint, and that is not a call to make unilaterally.
