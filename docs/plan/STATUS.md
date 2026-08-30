@@ -29,9 +29,10 @@ weekends, no deadline.
 deferred check, same shape as M02 and M04: a real draft change request against a real,
 installed GitHub App has never been opened — only against the local mock GitHub server.
 M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl status`,
-OBS-05), 6.4 (the per-feature budget, LOOP-04), and 6.5 (the global spend cap, LOOP-05)
-are done; 6.1's live cost reconciliation is deferred provisionally by maintainer decision
-(2026-08-27, see below); 6.6 is next.**
+OBS-05), 6.4 (the per-feature budget, LOOP-04), 6.5 (the global spend cap, LOOP-05), and
+6.6 (stalemate detection over repeated finding fingerprints, LOOP-06) are done; 6.1's live
+cost reconciliation is deferred provisionally by maintainer decision (2026-08-27, see
+below); 6.7 is next.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -39,7 +40,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2, 6.3, 6.4, 6.5 done; 6.1 deferred; 6.6 next
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.6 done; 6.1 deferred; 6.7 next
 M07–M18 .............................. not started
 ```
 
@@ -527,7 +528,7 @@ checked, not only when it tips the feature over budget, so the degradation stays
 enforcement for the unconfirmed portion leans on the round ceiling (6.2) rather than a dollar
 figure that cannot see it.
 
-**Done this session: 6.5, the global spend cap (LOOP-05).** `DaemonConfigSchema` gains
+**Done in a prior session: 6.5, the global spend cap (LOOP-05).** `DaemonConfigSchema` gains
 `global_budget_usd` — optional, no default, no repo-side counterpart (like `concurrency`),
 sitting *above* every feature's own `limits.budget_usd` rather than instead of it.
 `usageRepository()` gains `totalSpend()`, summing every `usage_events` row across every
@@ -541,23 +542,52 @@ the concurrency cap's own "dispatch nothing" shape rather than LOOP-04's per-fea
 `limit_exceeded`. `budget.warn` (the milestone's original step 6.10, folded in here) fires
 as a structured `logger.warn({event: 'budget.warn', ...})` at 80% of the cap, without
 halting. Absent `global_budget_usd`, the check never runs — zero extra reads on an install
-that never configured a fleet-wide ceiling. Fourteen new cases across
-`packages/core/test/config/daemon-config-schema.test.ts`,
-`packages/db/test/repos-usage.test.ts`, and
-`packages/manager/test/scheduler/dispatcher.test.ts`. `pnpm test` / `pnpm typecheck` /
+that never configured a fleet-wide ceiling.
+
+**Done this session: 6.6, stalemate detection over repeated finding fingerprints (LOOP-06).**
+`@adl/core/loop`'s new `detectStalemate` takes this round's `send_back` findings and a
+fingerprint→occurrence-count map and reports which findings have already met
+`limits.repeat_finding_threshold` — pure, de-duplicated by fingerprint. The manager half,
+`loop/stalemate-check.ts`'s `checkStalemate`, reads the count from a new
+`verdictsRepository().fingerprintCountsForFeature()` — distinct *rounds*, never raw finding
+rows — following `checkProtectedPaths`'s exact `clean`/`stalled`/`error` shape (never
+fail-open on a database failure, CORE-06). `round-runner.ts` fires it unconditionally on
+every gate's `send_back` (never `warn`), **after** `recordGateVerdict` writes this round's
+own findings (so the count already includes it, no "+1" needed) and **before**
+`planRoundStep` ever runs — a stalled finding overrides `planRoundStep`'s own
+`aggregate()`-driven decision with a hard `escalate` via a new `stalemateStep`, rather than
+sending the developer back one more time to fail identically. `command-gate.ts`'s finding
+title already carries "the stage and the exit code and nothing that varies between runs" —
+a comment written during 5.14 anticipating exactly this step. **`repeatFindingThresholdOf`
+mirrors `maxRoundsOf`'s exact degrade-on-malformed shape** (missing/unreadable snapshot →
+`0`, fail-closed), which promptly found two existing test fixtures whose minimal fake
+snapshots omitted `repeat_finding_threshold` entirely: `round-runner.test.ts`'s `snapshot()`
+helper gained the same kind of defaulted parameter `maxRounds` already has, and
+`round-loop.test.ts`'s LOOP-03 ceiling scenario — whose scripted gate reports the identical
+fingerprint on both of its two send-backs by construction — needed an explicit higher
+threshold (raised on *both* the repo's `adl.yml` and the daemon's own ceiling, since
+`mergeConfig` clamps a repo's request down and never lets it rise past the daemon's limit,
+D-22) to keep proving the round ceiling in isolation from this new check. A new scenario
+proves the collision the other way round: "escalates a repeated identical finding before
+the round ceiling is reached", at the *default* threshold against a ceiling six rounds
+away — the "Done when" claim checked through a real daemon, not only argued. Fifteen new
+cases across `packages/core/test/loop/stalemate.test.ts`,
+`packages/db/test/repos-verdicts.test.ts`, `packages/manager/test/loop/round-runner.test.ts`,
+and `packages/manager/test/scenario/round-loop.test.ts`. `pnpm test` / `pnpm typecheck` /
 `pnpm lint` / `pnpm format` (on the touched code — `docs/plan/`'s pre-existing formatting
 debt, DEBT.md § 3, is unrelated) all clean.
 
-**6.6 is next: stalemate detection over repeated finding fingerprints (LOOP-06)**,
-independent of the round and budget caps. `fingerprintFinding` and
-`limits.repeat_finding_threshold` already exist (CORE-04, `finding.ts`); nothing counts
-repeats across a feature's round history yet. A pure function in `@adl/core` (sibling to
-`violatedProtectedPaths`/`planRoundStep`) plus a manager-side caller at the same point
-`checkProtectedPaths` runs — before `planRoundStep`, since this is also "detected by
-evaluating state, not by asking." Full detail is in `milestones/m06-accountant.md`'s step
-list. **6.8 (escalation posts to the PR) needs a maintainer check-in when it starts** —
-exposing a full transcript on the pull request sits in direct tension with FORGE-06's "PR
-stays readable" constraint, and that is not a call to make unilaterally.
+**6.7 is next: provider-failure backoff, decoupled from the crash-count ceiling (LOOP-07).**
+Classification already exists (`StageError`'s `provider_error`/`timeout`/`auth` kinds,
+CORE-06) and a retryable error already costs no round (5.13's own doing) — but today every
+retryable kind shares one generic `crash_count` ceiling (`scheduler/reaper.ts`'s
+`planRecovery`), so a sustained provider outage escalates a feature that was never actually
+broken. A new pure backoff policy (parallel to `planRecovery`), keyed on `StageErrorKind`,
+giving `provider_error`/`timeout`/`auth` their own retry budget. Full detail is in
+`milestones/m06-accountant.md`'s step list. **6.8 (escalation posts to the PR) needs a
+maintainer check-in when it starts** — exposing a full transcript on the pull request sits
+in direct tension with FORGE-06's "PR stays readable" constraint, and that is not a call to
+make unilaterally.
 
 **Before you start, skim:**
 
