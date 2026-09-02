@@ -16,6 +16,7 @@ import {
 } from '@adl/db';
 import type { Kysely } from 'kysely';
 import type { SendBackBrief } from '@adl/core/verdict';
+import { TRANSIENT_BACKOFF_BASE_MS } from '@adl/core/loop';
 import { dispatchOnce } from '../../src/index.js';
 import { createCapturingLogger } from '../helpers/capturing-logger.js';
 import {
@@ -915,6 +916,163 @@ describe('dispatchOnce — the global spend cap (LOOP-05, M06 step 6.5)', () => 
 
       expect(decision.dispatched).toBe(true);
       expect(decision.featureId).toBe(candidateId);
+    });
+  });
+});
+
+describe('dispatchOnce — the provider-failure backoff (LOOP-07, M06 step 6.7)', () => {
+  const BROKE_AT = '2026-09-01T12:00:00.000Z';
+
+  /** One finished transient failure on a feature's record, ending at `BROKE_AT`. */
+  async function seedTransientFailure(
+    db: Kysely<Database>,
+    featureId: string,
+  ): Promise<void> {
+    const roundId = ulid();
+    await db
+      .insertInto('rounds')
+      .values({
+        id: roundId,
+        feature_id: featureId,
+        number: 1,
+        outcome: null,
+        outcome_json: null,
+        head_sha: null,
+        started_at: BROKE_AT,
+        ended_at: null,
+      })
+      .execute();
+    await db
+      .insertInto('stage_attempts')
+      .values({
+        id: ulid(),
+        round_id: roundId,
+        stage_id: 'review',
+        stage_index: 1,
+        attempt: 1,
+        status: 'error',
+        error_kind: 'provider_error',
+        error_retryable: 1,
+        error_raw_ref: null,
+        started_at: BROKE_AT,
+        ended_at: BROKE_AT,
+      })
+      .execute();
+  }
+
+  const at = (offsetMs: number): string =>
+    new Date(Date.parse(BROKE_AT) + offsetMs).toISOString();
+
+  it('does not dispatch a feature still inside its backoff window', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, {
+        repoId,
+        state: 'gating',
+        currentStageIndex: 1,
+        effectiveConfigJson: snapshottedConfigJson(),
+      });
+      await seedTransientFailure(db, featureId);
+
+      const { logger, logs } = createCapturingLogger();
+      const decision = await dispatchOnce({
+        ...baseDeps(db, DaemonConfigSchema.parse({})),
+        logger,
+        now: () => at(TRANSIENT_BACKOFF_BASE_MS / 2),
+      });
+
+      // Without this the round loop's own hand-back would be re-dispatched on
+      // the very next tick, and the whole retry budget would burn in a few
+      // hundred milliseconds — a backoff nobody backs off for.
+      expect(decision.dispatched).toBe(false);
+      // Nothing is escalated and no lease is taken: the feature is simply not
+      // ready yet, the same shape as the pause brake and the concurrency cap.
+      const row = (await featuresRepository(db).findById(featureId))!;
+      expect(row.state).toBe('gating');
+      expect(row.lease_token).toBeNull();
+      expect(
+        logs.some(
+          (log) =>
+            log.msg ===
+              'dispatch: feature is inside its provider-failure backoff window — not dispatching yet' &&
+            log.featureId === featureId,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('dispatches the same feature once the window has passed', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, {
+        repoId,
+        state: 'gating',
+        currentStageIndex: 1,
+        effectiveConfigJson: snapshottedConfigJson(),
+      });
+      await seedTransientFailure(db, featureId);
+
+      const decision = await dispatchOnce({
+        ...baseDeps(db, DaemonConfigSchema.parse({})),
+        now: () => at(TRANSIENT_BACKOFF_BASE_MS),
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(featureId);
+      // Resumed at the stage that broke, not replayed from the developer:
+      // re-running the developer agent is real spend for a failure it had no
+      // part in, which is exactly what LOOP-07 forbids.
+      const row = (await featuresRepository(db).findById(featureId))!;
+      expect(row.current_stage_index).toBe(1);
+    });
+  });
+
+  it('skips a waiting candidate and dispatches the next admissible one', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      // FIFO by ULID, so the waiting candidate is seeded first and would be
+      // picked if the backoff were not consulted.
+      const waitingId = await seedFeature(db, {
+        repoId,
+        state: 'gating',
+        currentStageIndex: 1,
+        effectiveConfigJson: snapshottedConfigJson(),
+      });
+      await seedTransientFailure(db, waitingId);
+      const readyId = await seedFeature(db, { repoId, state: 'queued' });
+
+      const decision = await dispatchOnce({
+        ...baseDeps(
+          db,
+          DaemonConfigSchema.parse({ concurrency: { global: 5 } }),
+        ),
+        now: () => at(TRANSIENT_BACKOFF_BASE_MS / 2),
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(readyId);
+    });
+  });
+
+  it('never holds a fresh candidate that has no snapshot to have failed under', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repoId = await seedRepo(db);
+      const featureId = await seedFeature(db, { repoId, state: 'queued' });
+      // A never-dispatched row has no `effective_config_json`, so the history
+      // read is skipped entirely — no query, and nothing to wait for.
+      await seedTransientFailure(db, featureId);
+
+      const decision = await dispatchOnce({
+        ...baseDeps(db, DaemonConfigSchema.parse({})),
+        now: () => at(0),
+      });
+
+      expect(decision.dispatched).toBe(true);
+      expect(decision.featureId).toBe(featureId);
     });
   });
 });

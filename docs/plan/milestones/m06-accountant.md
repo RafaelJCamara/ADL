@@ -45,8 +45,8 @@ silently — every limit reached ends in a human being told where they will see 
       enforce. (6.5)
 - [x] A developer/reviewer stalemate is caught by repeated finding fingerprints and
       escalated _before_ the round cap is reached. (6.6)
-- [ ] A provider outage, rate limit, or auth failure consumes neither a round nor budget,
-      and the feature resumes rather than being marked failed.
+- [x] A provider outage, rate limit, or auth failure consumes neither a round nor budget,
+      and the feature resumes rather than being marked failed. (6.7)
 - [ ] Hitting any limit posts the full transcript and the disagreement to the pull request
       where a human will see it, and spend is visible broken down per feature and per role.
 - [ ] A daemon operator can choose a different model per agent role, that choice reaches the
@@ -278,7 +278,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       per-round-not-per-row counting, cross-feature isolation, and the zero-rows case).
       `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code) all
       clean.
-- [ ] **6.7** — Provider-failure backoff, decoupled from the crash-count ceiling (LOOP-07).
+- [x] **6.7** — Provider-failure backoff, decoupled from the crash-count ceiling (LOOP-07).
       Classification already exists (`StageError`'s `provider_error`/`timeout`/`auth`
       kinds, CORE-06) and a retryable error already costs no round (5.13's own doing) — but
       today every retryable kind shares one generic `crash_count` ceiling
@@ -290,6 +290,57 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       `StageError`s now; only confirming real Anthropic 429/5xx shapes map to the right
       `kind` needs the live batch, and that confirmation folds into `DEBT.md` §1 rather
       than blocking this step.
+      **Shipped.** The classification was right and the *routing* was wrong: every retryable
+      stage error went through `reapOne` → `planRecovery`, which decides from
+      `features.crash_count` — a counter **shared with real worker crashes**. Two defects
+      followed, and the second was worse. (1) A sustained outage escalated after three
+      immediate attempts, with no delay between them. (2) A provider blip and an actual crash
+      spent the *same* budget, so two crashes plus one rate limit escalated a feature whose
+      only genuine problem was two crashes.
+      **A third defect the step's own sketch did not anticipate, found by reading the state
+      machine:** `planRecovery`'s recovery resets `current_stage_index` to **0** (D-10, and
+      correct for a crash — a dead worker leaves an unknown state, so replay from a known
+      point). On a *gate*'s provider failure that re-runs the **developer agent**, which is
+      real spend for a failure the developer had no part in — so the old routing violated the
+      very criterion this step exists to satisfy. Resuming at the same stage is therefore
+      required, not an optimisation.
+      **The fix is a route, not a new write path.** `@adl/core/loop`'s new
+      `planTransientRetry` is pure and total, keyed on `StageErrorKind`, with an exponential
+      schedule (`MAX_CONSECUTIVE_TRANSIENT_FAILURES` 8, base 5s, ceiling 5min ≈ ten minutes of
+      sustained failure before a human is told, against `MAX_CONSECUTIVE_CRASHES`' 3). The
+      manager half, `loop/transient-retry.ts`'s `checkTransientRetry`, derives the count from
+      `stage_attempts` — **no migration and no counter column** (5.2/5.6/5.10/6.6's "evaluate
+      state, don't remember events"; a column would also need resetting on every success,
+      which is the exact bug class `resetCrashCountOnSuccess` exists to fix). It follows
+      `checkStalemate`'s `retry`/`escalate`/`error` shape and **never fails open** — an
+      unreadable history reports `error` and falls back to the bounded crash ceiling (CORE-06).
+      **Two shapes, because the feature's state decides which is reachable.** In `developing`
+      or `gating` the lease is simply handed back and **nothing else changes** —
+      `listDispatchable()` picks up exactly that unleased pair, so the same stage re-runs at
+      the same index under the configuration it was admitted under (`isContinuation` stays
+      true). Still in `leased`, nothing has applied `workspace_ready` and `listDispatchable()`
+      deliberately excludes `leased`, so handing the lease back would **strand the row where
+      neither a dispatch nor the reaper could see it again**; that case takes `lease_expired`
+      to `queued` instead, through `reapOne`'s new `RecoveryOverride` (`countsAsCrash: false`)
+      rather than a parallel copy of the transition/CAS/audit write — the divergence this
+      module's own docblock warns against. The backoff is enforced in `dispatchOnce`, guarded
+      on `effective_config_json` alone rather than the budget check's `state !== 'queued'`,
+      since a requeued first dispatch still has to serve its wait; without it the round loop's
+      hand-back would be re-dispatched on the next tick and burn the whole budget in
+      milliseconds. **`auth` needed no change** — it is not transient, so it escalates
+      immediately to a human, which is right for an expired credential and already satisfies
+      "consumes neither a round nor budget" (`stageErrorPolicy` answers `false` to both for
+      every kind). **Watched failing** (convention 13): removing the `countsAsCrash` guard
+      turned the requeue test red (`expected 1 to be +0`), and disabling the dispatcher's
+      backoff skip turned both window tests red; both restored immediately. 26 new cases
+      across `packages/core/test/loop/transient-retry.test.ts`,
+      `packages/manager/test/loop/transient-retry.test.ts` (including **both** read-failure
+      branches, which `checkStalemate`'s equivalent still lacks — see `DEBT.md`),
+      `packages/manager/test/loop/round-runner.test.ts` and
+      `packages/manager/test/scheduler/dispatcher.test.ts`. One pre-existing test asserted the
+      old behaviour and was rewritten, which is the change's own headline.
+      `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code) all
+      clean.
 - [ ] **6.8** — Escalation posts to the pull request (LOOP-08). Two real gaps, not one:
       (1) the sticky-comment/CR-open publish path (5.10/5.11) fires only on
       `dev_committed`, so a round that escalates via `blocked`/`dispute`/`limit_exceeded`

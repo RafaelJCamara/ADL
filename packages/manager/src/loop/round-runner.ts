@@ -26,6 +26,7 @@ import {
   type FeatureState,
   type TransitionCtx,
 } from '@adl/core/state';
+import { isTransientStageErrorKind } from '@adl/core/stage';
 import type { Verdict } from '@adl/core/verdict';
 import type { ManagerGitClient } from '@adl/workspace';
 import { parseStageRunnerVerdict } from '../ipc/stage-verdict.js';
@@ -40,6 +41,10 @@ import {
   checkStalemate,
   type StalemateCheckResult,
 } from './stalemate-check.js';
+import {
+  checkTransientRetry,
+  type TransientRetryCheckResult,
+} from './transient-retry.js';
 
 /**
  * `onStageCompleted` — the round loop's database half (LOOP-01, M05 step 5.13).
@@ -184,6 +189,25 @@ function protectedPathViolationStep(
       { t: 'dev_committed', sha },
       { t: 'unrecoverable', reason },
     ],
+    outcome: { kind: 'escalate', reason },
+  };
+}
+
+/**
+ * The transient-failure retry budget is spent (LOOP-07) — escalate to a human
+ * rather than wait on a provider that has not come back.
+ *
+ * Shaped exactly like `planRoundStep`'s own `escalate()` helper, and it takes
+ * the same route a **non**-retryable stage error already takes: an `escalate`
+ * round outcome recorded against a round nothing judged. That is deliberate
+ * and already the established behaviour for infrastructure failures — closing
+ * the round says what happened, and it consumes no round in LOOP-03's sense
+ * because only `send_back` carries a round delta.
+ */
+function transientBudgetSpentStep(reason: string): CompleteStep {
+  return {
+    kind: 'complete',
+    events: [{ t: 'unrecoverable', reason }],
     outcome: { kind: 'escalate', reason },
   };
 }
@@ -610,6 +634,7 @@ async function runStageCompleted(
   // lose the judgement that a pull request is rendered from.
   let protectedPathResult: ProtectedPathCheckResult | undefined;
   let stalemateResult: StalemateCheckResult | undefined;
+  let transientResult: TransientRetryCheckResult | undefined;
   let committedSha: string | undefined;
   if (completion.kind === 'gate') {
     await recordGateVerdict(
@@ -637,6 +662,19 @@ async function runStageCompleted(
     }
   } else if (completion.kind === 'error') {
     await recordStageError(deps, params.stageAttemptId, completion.error, at);
+
+    // LOOP-07 (M06 step 6.7): a transient provider failure gets its own retry
+    // budget, separate from the `crash_count` ceiling every retryable error
+    // used to share. Read *after* `recordStageError` above, so the failure
+    // being decided is already the newest row in the history this counts —
+    // the same "evidence first, state second" ordering `checkStalemate` and
+    // `checkProtectedPaths` already hold themselves to.
+    if (isTransientStageErrorKind(completion.error.kind)) {
+      transientResult = await checkTransientRetry(
+        { db: deps.db },
+        { featureId: feature.id, kind: completion.error.kind },
+      );
+    }
   } else if (completion.outcome.kind === 'committed') {
     // M05 step 5.14, closing `docs/plan/DEBT.md` D-5-11-1. The sha exists only
     // on this event: it is what the worker read back out of the workspace, and
@@ -674,59 +712,122 @@ async function runStageCompleted(
 
   const pipeline = resolveSnapshotPipeline(feature.effective_config_json);
   const step: RoundStep =
-    protectedPathResult?.kind === 'violated' && committedSha !== undefined
-      ? protectedPathViolationStep(committedSha, protectedPathResult.paths)
-      : protectedPathResult?.kind === 'error'
-        ? { kind: 'retry', reason: protectedPathResult.detail }
-        : stalemateResult?.kind === 'stalled'
-          ? stalemateStep(stalemateResult.findings)
-          : stalemateResult?.kind === 'error'
-            ? { kind: 'retry', reason: stalemateResult.detail }
-            : pipeline.ok
-              ? planRoundStep({
-                  stageIndex: params.stageIndex,
-                  pipelineLength: pipeline.stages.length,
-                  stageId: params.stageId,
-                  completion,
-                  priorVerdicts: await readRoundVerdicts(
-                    deps.db,
-                    params.roundId,
-                    params.stageAttemptId,
-                  ),
-                })
-              : // A pipeline this build cannot resolve is not something another
-                // round fixes — the configuration names a harness with no loader
-                // (M13), and the feature would fail identically every time.
-                planRoundStep({
-                  stageIndex: params.stageIndex,
-                  pipelineLength: 0,
-                  stageId: params.stageId,
-                  completion: unparseable(
-                    `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
-                  ),
-                  priorVerdicts: [],
-                });
+    // LOOP-07 first: it is the only branch here that can fire on a stage
+    // *error*, and the other two can only fire on a commit or a gate verdict,
+    // so the order is a readability choice rather than a precedence one.
+    transientResult?.kind === 'escalate'
+      ? transientBudgetSpentStep(transientResult.reason)
+      : protectedPathResult?.kind === 'violated' && committedSha !== undefined
+        ? protectedPathViolationStep(committedSha, protectedPathResult.paths)
+        : protectedPathResult?.kind === 'error'
+          ? { kind: 'retry', reason: protectedPathResult.detail }
+          : stalemateResult?.kind === 'stalled'
+            ? stalemateStep(stalemateResult.findings)
+            : stalemateResult?.kind === 'error'
+              ? { kind: 'retry', reason: stalemateResult.detail }
+              : pipeline.ok
+                ? planRoundStep({
+                    stageIndex: params.stageIndex,
+                    pipelineLength: pipeline.stages.length,
+                    stageId: params.stageId,
+                    completion,
+                    priorVerdicts: await readRoundVerdicts(
+                      deps.db,
+                      params.roundId,
+                      params.stageAttemptId,
+                    ),
+                  })
+                : // A pipeline this build cannot resolve is not something another
+                  // round fixes — the configuration names a harness with no loader
+                  // (M13), and the feature would fail identically every time.
+                  planRoundStep({
+                    stageIndex: params.stageIndex,
+                    pipelineLength: 0,
+                    stageId: params.stageId,
+                    completion: unparseable(
+                      `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
+                    ),
+                    priorVerdicts: [],
+                  });
 
   if (step.kind === 'retry') {
-    // The stage broke transiently. Routed through `reapOne` — the same
-    // function a dead worker's exit and the lease-expiry tick both call — so
-    // the consecutive-failure ceiling (D-11) applies here too and a provider
-    // outage cannot retry forever. Nothing is recorded as a round: nothing
-    // was judged (CORE-06).
+    const reaperDeps = {
+      db: deps.db,
+      logger: deps.logger,
+      ...(deps.actor !== undefined ? { actor: deps.actor } : {}),
+    };
+
+    // LOOP-07 (M06 step 6.7): a transient *provider* failure resumes the same
+    // stage on its own budget, and is not a crash.
+    //
+    // Two shapes, because the state the feature is in decides which one is
+    // even reachable. A feature already inside the loop (`developing` or
+    // `gating`) is handed straight back to `listDispatchable()`, which picks
+    // up exactly that pair of states when unleased — so releasing the lease
+    // and changing *nothing else* re-runs the stage that broke, at the index
+    // it broke at, with the configuration it was admitted under
+    // (`isContinuation` stays true). That is what "consumes neither a round
+    // nor budget" actually requires: `reapOne`'s recovery resets the stage
+    // index to 0, which on a gate failure would re-run the **developer
+    // agent** — real spend, for a failure the developer had no part in.
+    //
+    // A feature still in `leased` never reached that pair: nothing has
+    // applied `workspace_ready` yet, and `listDispatchable()` deliberately
+    // does not include `leased`, so handing the lease back there would strand
+    // the row where neither a dispatch nor the reaper could see it again. It
+    // takes `lease_expired` back to `queued` instead — the right destination
+    // for a first dispatch that never started — but with `countsAsCrash:
+    // false`, so the provider still does not spend the feature's crash
+    // ceiling.
+    if (transientResult?.kind === 'retry') {
+      const inLoop =
+        feature.state === 'developing' || feature.state === 'gating';
+      deps.logger.warn(
+        {
+          featureId: feature.id,
+          stageId: params.stageId,
+          stageIndex: params.stageIndex,
+          consecutiveFailures: transientResult.consecutiveFailures,
+          backoffMs: transientResult.backoffMs,
+          reason: step.reason,
+          resume: inLoop ? 'same-stage' : 'requeue',
+        },
+        'round loop: the provider failed transiently — backing off and retrying on the transient budget, not the crash ceiling',
+      );
+
+      if (inLoop) {
+        await repo.releaseLease({
+          id: feature.id,
+          leaseToken: params.leaseToken,
+        });
+      } else {
+        await reapOne(reaperDeps, feature, at, params.leaseToken, {
+          decision: { kind: 'recover', resetStageIndexTo: 0 },
+          countsAsCrash: false,
+        });
+      }
+      return;
+    }
+
+    // Everything else that asked to be retried — a non-provider infrastructure
+    // failure, or a transient one whose own history could not be read (which
+    // reports `'error'`, never `'retry'`, so it fails closed onto this bounded
+    // path rather than open onto an unbounded one). Routed through `reapOne`,
+    // the same function a dead worker's exit and the lease-expiry tick both
+    // call, so the consecutive-failure ceiling (D-11) applies here too.
+    // Nothing is recorded as a round: nothing was judged (CORE-06).
     deps.logger.warn(
-      { featureId: feature.id, stageId: params.stageId, reason: step.reason },
+      {
+        featureId: feature.id,
+        stageId: params.stageId,
+        reason: step.reason,
+        ...(transientResult?.kind === 'error'
+          ? { transientCheckFailed: transientResult.detail }
+          : {}),
+      },
       'round loop: the stage broke retryably — recovering through the crash-recovery path',
     );
-    await reapOne(
-      {
-        db: deps.db,
-        logger: deps.logger,
-        ...(deps.actor !== undefined ? { actor: deps.actor } : {}),
-      },
-      feature,
-      at,
-      params.leaseToken,
-    );
+    await reapOne(reaperDeps, feature, at, params.leaseToken);
     return;
   }
 

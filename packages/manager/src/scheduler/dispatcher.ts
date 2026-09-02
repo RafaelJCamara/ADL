@@ -27,6 +27,7 @@ import type { AssignMessage } from '../ipc/protocol.js';
 import { isDispatchPaused, type ControlState } from '../control/state.js';
 import { openAttempt } from '../bookkeeping/attempt.js';
 import { sendBackBriefFromClosedRound } from '../loop/send-back-brief.js';
+import { transientBackoffRemainingMs } from '../loop/transient-retry.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
 
 /**
@@ -224,6 +225,33 @@ export async function dispatchOnce(
         (row) => row.repo_id === candidate.repo_id,
       ).length;
       if (repoLeasedCount >= concurrency.per_repo) {
+        continue;
+      }
+    }
+
+    // LOOP-07 (M06 step 6.7): the provider-failure backoff, enforced at the
+    // one place a feature is picked up. The round loop hands a transiently
+    // failed feature straight back to this list, so without a wait here a
+    // provider outage would be re-dispatched on the very next tick and spend
+    // its whole retry budget in a few hundred milliseconds — a backoff nobody
+    // backs off for.
+    //
+    // Guarded on `effective_config_json` alone, not on `state !== 'queued'`
+    // like the budget check below: a transient failure during a feature's
+    // *first* dispatch goes back to `queued` (see `round-runner.ts`), and that
+    // row still has to serve its wait. A genuinely fresh candidate has no
+    // snapshot and no attempt history, so it is skipped with no read at all.
+    if (candidate.effective_config_json !== null) {
+      const waitMs = await transientBackoffRemainingMs(
+        { db: deps.db },
+        candidate.id,
+        now,
+      );
+      if (waitMs !== undefined) {
+        deps.logger?.debug(
+          { featureId: candidate.id, waitMs },
+          'dispatch: feature is inside its provider-failure backoff window — not dispatching yet',
+        );
         continue;
       }
     }

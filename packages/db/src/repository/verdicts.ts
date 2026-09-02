@@ -34,6 +34,24 @@ export interface CoverageRow {
   stage_id: string;
 }
 
+/**
+ * One finished stage attempt, newest-first, as LOOP-07's consecutive-failure
+ * count reads it (M06 step 6.7).
+ *
+ * `error_kind` is returned **uninterpreted**. Whether a kind is transient is
+ * `@adl/core`'s `isTransientStageErrorKind` to answer, and `@adl/db` depends on
+ * `@adl/core` for types only — classifying here would put a runtime dependency
+ * on the vocabulary package into the one package that must not have one.
+ */
+export interface RecentStageAttempt {
+  /** `'verdict'` when the attempt judged, `'error'` when it broke. */
+  status: string;
+  /** The `StageErrorKind` the attempt reported, as a bare string. Null unless it errored. */
+  error_kind: string | null;
+  /** When the attempt finished — the instant LOOP-07's backoff window is measured from. */
+  ended_at: string | null;
+}
+
 export interface VerdictsRepository {
   insertStageAttempt(attempt: NewStageAttempt): Promise<void>;
   /**
@@ -66,6 +84,21 @@ export interface VerdictsRepository {
   fingerprintCountsForFeature(
     featureId: string,
   ): Promise<ReadonlyMap<string, number>>;
+  /**
+   * The most recently finished stage attempts for one feature, newest first
+   * (LOOP-07, M06 step 6.7) — the history a consecutive-transient-failure
+   * count is read off.
+   *
+   * Bounded by `limit` because the only question asked of it is "how many of
+   * the most recent attempts in a row broke transiently", and that is decided
+   * by at most `ceiling + 1` rows. Unfinished attempts (`ended_at is null`)
+   * are excluded: an attempt still in flight has not reported anything yet,
+   * and counting it would count the future.
+   */
+  recentStageAttemptsForFeature(
+    featureId: string,
+    limit: number,
+  ): Promise<RecentStageAttempt[]>;
   /** The cited coverage of every passing verdict in a round. */
   coverage(roundId: string): Promise<CoverageRow[]>;
   insertWaiver(waiver: NewWaiver): Promise<void>;
@@ -152,6 +185,28 @@ export function verdictsRepository(db: Kysely<Database>): VerdictsRepository {
         counts.set(row.fingerprint, (counts.get(row.fingerprint) ?? 0) + 1);
       }
       return counts;
+    },
+
+    recentStageAttemptsForFeature(featureId, limit) {
+      // Ordered by the attempt's own ULID, not by `ended_at`: a ULID is
+      // lexicographically sortable by creation time (D-17's own reason for
+      // choosing it as the primary key), and it is total where `ended_at`
+      // is a text timestamp two attempts inside the same millisecond can
+      // tie on. "Newest first" has to be a strict order or "consecutive"
+      // is not well defined.
+      return db
+        .selectFrom('stage_attempts')
+        .innerJoin('rounds', 'rounds.id', 'stage_attempts.round_id')
+        .select([
+          'stage_attempts.status',
+          'stage_attempts.error_kind',
+          'stage_attempts.ended_at',
+        ])
+        .where('rounds.feature_id', '=', featureId)
+        .where('stage_attempts.ended_at', 'is not', null)
+        .orderBy('stage_attempts.id', 'desc')
+        .limit(limit)
+        .execute();
     },
 
     coverage(roundId) {

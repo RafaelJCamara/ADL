@@ -12,7 +12,7 @@ import {
   type FeatureState,
   type TransitionCtx,
 } from '@adl/core/state';
-import { planRecovery } from '../recovery/policy.js';
+import { planRecovery, type RecoveryDecision } from '../recovery/policy.js';
 
 /**
  * The lease-expiry backstop (D-03), the child-exit fast path's shared
@@ -36,6 +36,29 @@ export interface ReapedFeature {
 
 export interface ReapOutcome {
   readonly reaped: readonly ReapedFeature[];
+}
+
+/**
+ * Supply the recovery decision instead of computing it from `crash_count`,
+ * and say whether this failure is a crash at all (LOOP-07, M06 step 6.7).
+ *
+ * The one caller is the round loop's transient-provider-failure path. A
+ * provider outage is evidence about the *provider*, not about the feature, so
+ * it must spend neither the crash ceiling that `planRecovery` reads nor the
+ * counter that feeds it — otherwise two real crashes plus one rate limit
+ * escalate a feature whose only genuine problem was two crashes.
+ *
+ * It is deliberately an override on {@link reapOne} rather than a second
+ * recovery function: this module's whole reason for existing is that the
+ * lease-expiry tick and the fast path "cannot diverge in behaviour", and a
+ * parallel copy of the transition-plus-CAS-plus-audit write is exactly the
+ * divergence that warning is about.
+ */
+export interface RecoveryOverride {
+  /** What to do, decided by the caller's own policy rather than by `planRecovery`. */
+  readonly decision: RecoveryDecision;
+  /** `false` leaves `crash_count` untouched — this failure was not the feature crashing. */
+  readonly countsAsCrash: boolean;
 }
 
 /**
@@ -85,6 +108,7 @@ export async function reapOne(
   feature: FeaturesTable,
   now: string,
   expectedLeaseToken?: string,
+  override?: RecoveryOverride,
 ): Promise<ReapedFeature | undefined> {
   if (
     expectedLeaseToken !== undefined &&
@@ -100,12 +124,14 @@ export async function reapOne(
     0,
   );
 
-  const decision = planRecovery({
-    state: feature.state as FeatureState,
-    round: feature.round,
-    currentStageIndex: feature.current_stage_index,
-    crashCount: feature.crash_count,
-  });
+  const decision =
+    override?.decision ??
+    planRecovery({
+      state: feature.state as FeatureState,
+      round: feature.round,
+      currentStageIndex: feature.current_stage_index,
+      crashCount: feature.crash_count,
+    });
 
   const event =
     decision.kind === 'recover'
@@ -166,11 +192,16 @@ export async function reapOne(
 
     // D-11: increment in the same transaction as the state write, so a
     // manager that dies between the two cannot double-count this crash.
-    await trx
-      .updateTable('features')
-      .set({ crash_count: feature.crash_count + 1 })
-      .where('id', '=', feature.id)
-      .execute();
+    // LOOP-07's transient path opts out (`countsAsCrash: false`) — a provider
+    // outage is not the feature crashing, and spending the crash ceiling on
+    // one is what that step exists to stop.
+    if (override?.countsAsCrash !== false) {
+      await trx
+        .updateTable('features')
+        .set({ crash_count: feature.crash_count + 1 })
+        .where('id', '=', feature.id)
+        .execute();
+    }
 
     const [effect] = outcome.effects;
     if (effect !== undefined) {

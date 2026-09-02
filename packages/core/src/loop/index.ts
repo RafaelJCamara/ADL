@@ -36,3 +36,17 @@ export {
   type DetectStalemateInput,
   type StalledFinding,
 } from './stalemate.js';
+
+// Provider-failure backoff, decoupled from the crash-count ceiling (LOOP-07,
+// M06 step 6.7) — pure, and the only half `@adl/core` can own: it decides from
+// a `StageErrorKind` and a count `@adl/manager`'s `loop/transient-retry.ts`
+// read off `stage_attempts`, and reads neither a database nor a clock itself.
+export {
+  MAX_CONSECUTIVE_TRANSIENT_FAILURES,
+  TRANSIENT_BACKOFF_BASE_MS,
+  TRANSIENT_BACKOFF_CEILING_MS,
+  planTransientRetry,
+  transientBackoffMs,
+  type TransientRetryDecision,
+  type TransientRetryInput,
+} from './transient-retry.js';

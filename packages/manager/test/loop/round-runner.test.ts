@@ -1,4 +1,4 @@
-import { ulid } from 'ulid';
+import { monotonicFactory, ulid } from 'ulid';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Kysely } from 'kysely';
 import {
@@ -10,6 +10,7 @@ import {
 } from '@adl/db';
 import { githubForgeAdapter } from '@adl/forge-github';
 import type { EffectiveConfig } from '@adl/core/config';
+import { MAX_CONSECUTIVE_TRANSIENT_FAILURES } from '@adl/core/loop';
 import type { Verdict } from '@adl/core/verdict';
 import type { ManagerGitClient } from '@adl/workspace';
 import { openAttempt } from '../../src/bookkeeping/attempt.js';
@@ -182,11 +183,81 @@ function gateVerdict(verdict: Verdict): string {
   } satisfies StageRunnerVerdict);
 }
 
-function stageError(kind: 'provider_error' | 'auth', detail = 'broke'): string {
+function stageError(
+  kind: 'provider_error' | 'timeout' | 'auth',
+  detail = 'broke',
+): string {
   return JSON.stringify({
     kind: 'stage_error',
-    error: { kind, retryable: kind === 'provider_error', detail },
+    error: { kind, retryable: kind !== 'auth', detail },
   } satisfies StageRunnerVerdict);
+}
+
+/**
+ * Put finished attempts on a feature's record the way a run of provider
+ * outages would have left them (LOOP-07).
+ *
+ * They go in a **closed** round so `openAttempt` opens a fresh one rather than
+ * reusing this, which keeps the seeded history out of the way of the attempt
+ * the test then reports against — including its `unique (round_id,
+ * stage_index, attempt)` constraint.
+ */
+async function seedAttemptHistory(
+  db: Kysely<Database>,
+  featureId: string,
+  attempts: readonly { status: string; errorKind: string | null }[],
+): Promise<void> {
+  const at = nowIso();
+  const roundId = ulid();
+  await db
+    .insertInto('rounds')
+    .values({
+      id: roundId,
+      feature_id: featureId,
+      number: 99,
+      outcome: 'escalate',
+      outcome_json: JSON.stringify({ kind: 'escalate', reason: 'seeded' }),
+      head_sha: null,
+      started_at: at,
+      ended_at: at,
+    })
+    .execute();
+
+  // Strictly increasing ids — see the identical note in
+  // `test/loop/transient-retry.test.ts`: the read these rows feed is ordered
+  // newest-first by id, and plain `ulid()` does not guarantee that within a
+  // single millisecond.
+  const nextId = monotonicFactory();
+  let ordinal = 0;
+  for (const attempt of attempts) {
+    ordinal += 1;
+    await db
+      .insertInto('stage_attempts')
+      .values({
+        id: nextId(),
+        round_id: roundId,
+        stage_id: 'review',
+        stage_index: 1,
+        attempt: ordinal,
+        status: attempt.status,
+        error_kind: attempt.errorKind,
+        error_retryable: attempt.errorKind === null ? null : 1,
+        error_raw_ref: null,
+        started_at: at,
+        ended_at: at,
+      })
+      .execute();
+  }
+}
+
+/** `n` consecutive transient failures, as `seedAttemptHistory` rows. */
+function transientRun(
+  n: number,
+): readonly { status: string; errorKind: string | null }[] {
+  return Array.from({ length: n }, () => ({
+    status: 'error',
+    errorKind: 'provider_error',
+  }));
 }
 
 function deps(
@@ -829,36 +900,157 @@ describe('the round loop — stage errors (CORE-06)', () => {
     });
   });
 
-  it('recovers a retryable failure through the crash path, and records no round at all', async () => {
-    await withTempDb(async ({ db }) => {
-      await migrateToLatest(db, MIGRATIONS_DIR);
-      const seeded = await seedFeature(db, {
-        state: 'gating',
-        current_stage_index: 1,
-        crash_count: 0,
+  /**
+   * LOOP-07 (M06 step 6.7).
+   *
+   * Before this step every retryable stage error was routed through `reapOne`,
+   * so a provider outage recovered to `queued` **and incremented
+   * `crash_count`** — sharing a three-attempt ceiling with real worker
+   * crashes, and resetting `current_stage_index` to 0, which on a gate failure
+   * re-runs the developer agent. Both of those contradict LOOP-07's "consumes
+   * neither a round nor budget": re-running the developer is real spend, and
+   * escalating for the provider's downtime tells a human something untrue
+   * about their code.
+   */
+  describe('transient provider failures (LOOP-07)', () => {
+    it('resumes the same stage, spending no crash, no round and no stage index', async () => {
+      await withTempDb(async ({ db }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+        const seeded = await seedFeature(db, {
+          state: 'gating',
+          current_stage_index: 1,
+          crash_count: 0,
+        });
+
+        const { roundId } = await report(
+          db,
+          seeded,
+          1,
+          'review',
+          stageError('provider_error', '503 from the provider'),
+        );
+
+        const row = await reload(db, seeded.feature.id);
+        // The state is deliberately untouched. `listDispatchable()` picks up
+        // an unleased `developing`/`gating` row, so handing the lease back and
+        // changing nothing else re-runs the stage that broke, at the index it
+        // broke at, under the configuration it was admitted under.
+        expect(row.state).toBe('gating');
+        expect(row.current_stage_index).toBe(1);
+        expect(row.lease_token).toBeNull();
+        // The header property: a provider outage is not the feature crashing.
+        expect(row.crash_count).toBe(0);
+        expect(row.round).toBe(seeded.feature.round);
+
+        const round = await db
+          .selectFrom('rounds')
+          .selectAll()
+          .where('id', '=', roundId)
+          .executeTakeFirst();
+        // Nothing was judged, so there is no round outcome to record (CORE-06).
+        expect(round?.outcome).toBeNull();
       });
+    });
 
-      const { roundId } = await report(
-        db,
-        seeded,
-        1,
-        'review',
-        stageError('provider_error', '503 from the provider'),
-      );
+    it('requeues a failure that broke before the feature entered the loop, still without a crash', async () => {
+      await withTempDb(async ({ db }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+        // Still `leased`: nothing has applied `workspace_ready` yet, and
+        // `listDispatchable()` does not include `leased` — so handing the
+        // lease back here would strand the row where neither a dispatch nor
+        // the reaper could see it again.
+        const seeded = await seedFeature(db, {
+          state: 'leased',
+          current_stage_index: 0,
+          crash_count: 0,
+        });
 
-      const row = await reload(db, seeded.feature.id);
-      expect(row.state).toBe('queued');
-      // Routed through `reapOne`, so the consecutive-failure ceiling applies
-      // and a provider outage cannot retry forever.
-      expect(row.crash_count).toBe(1);
+        await report(
+          db,
+          seeded,
+          0,
+          'develop',
+          stageError('timeout', 'the provider timed out'),
+        );
 
-      const round = await db
-        .selectFrom('rounds')
-        .selectAll()
-        .where('id', '=', roundId)
-        .executeTakeFirst();
-      // Nothing was judged, so there is no round outcome to record (LOOP-07).
-      expect(round?.outcome).toBeNull();
+        const row = await reload(db, seeded.feature.id);
+        expect(row.state).toBe('queued');
+        expect(row.current_stage_index).toBe(0);
+        expect(row.lease_token).toBeNull();
+        expect(row.crash_count).toBe(0);
+      });
+    });
+
+    it('escalates once the transient budget is spent, rather than waiting forever', async () => {
+      await withTempDb(async ({ db }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+        const seeded = await seedFeature(db, {
+          state: 'gating',
+          current_stage_index: 1,
+          crash_count: 0,
+        });
+        // One short of the ceiling already on record, so the failure reported
+        // below is the one that reaches it. Derived from the exported ceiling
+        // rather than restating the number (rule 8).
+        await seedAttemptHistory(
+          db,
+          seeded.feature.id,
+          transientRun(MAX_CONSECUTIVE_TRANSIENT_FAILURES - 1),
+        );
+
+        const { roundId } = await report(
+          db,
+          seeded,
+          1,
+          'review',
+          stageError('provider_error', '503 from the provider'),
+        );
+
+        const row = await reload(db, seeded.feature.id);
+        expect(row.state).toBe('escalated');
+        // Escalating on the transient budget still never touches the crash
+        // ceiling — the two counters stay independent in both directions.
+        expect(row.crash_count).toBe(0);
+
+        const round = await db
+          .selectFrom('rounds')
+          .selectAll()
+          .where('id', '=', roundId)
+          .executeTakeFirst();
+        expect(round?.outcome).toBe('escalate');
+        expect(round?.outcome_json).toContain('transient-failure ceiling');
+      });
+    });
+
+    it('does not accumulate across an attempt that judged — the count is consecutive', async () => {
+      await withTempDb(async ({ db }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+        const seeded = await seedFeature(db, {
+          state: 'gating',
+          current_stage_index: 1,
+          crash_count: 0,
+        });
+        // Far past the ceiling in total, but the newest attempt on record
+        // judged — so the run is broken and the count starts again. A feature
+        // that hits one rate limit per round, forever, is making progress and
+        // must never accumulate its way to an escalation.
+        await seedAttemptHistory(db, seeded.feature.id, [
+          ...transientRun(MAX_CONSECUTIVE_TRANSIENT_FAILURES + 3),
+          { status: 'verdict', errorKind: null },
+        ]);
+
+        await report(
+          db,
+          seeded,
+          1,
+          'review',
+          stageError('provider_error', '503 from the provider'),
+        );
+
+        const row = await reload(db, seeded.feature.id);
+        expect(row.state).toBe('gating');
+        expect(row.crash_count).toBe(0);
+      });
     });
   });
 

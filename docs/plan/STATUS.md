@@ -32,7 +32,10 @@ M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl st
 OBS-05), 6.4 (the per-feature budget, LOOP-04), 6.5 (the global spend cap, LOOP-05), and
 6.6 (stalemate detection over repeated finding fingerprints, LOOP-06) are done; 6.1's live
 cost reconciliation is deferred provisionally by maintainer decision (2026-08-27, see
-below); 6.7 is next.**
+below); 6.7 (provider-failure backoff on its own budget, LOOP-07) is done; 6.8 is next
+and needs a maintainer check-in before any code. Three further steps, 6.9–6.11 (per-role
+model selection, BACK-10), were added to the milestone on 2026-09-01 at the maintainer's
+request.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -40,7 +43,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.6 done; 6.1 deferred; 6.7–6.11 left
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.7 done; 6.1 deferred; 6.8–6.11 left
 M07–M18 .............................. not started
 ```
 
@@ -604,18 +607,58 @@ cross-model review as the recommended default — a mitigation that **did not su
 transfer into `docs/plan/`** (M11's nearest criterion proves backend _neutrality_, not model
 _separation_). 6.9–6.11 make it expressible; nothing yet makes it true.
 
-**6.7 is still next — steps run in order, so 6.9–6.11 come after 6.8: provider-failure
-backoff, decoupled from the crash-count ceiling (LOOP-07).**
-Classification already exists (`StageError`'s `provider_error`/`timeout`/`auth` kinds,
-CORE-06) and a retryable error already costs no round (5.13's own doing) — but today every
-retryable kind shares one generic `crash_count` ceiling (`scheduler/reaper.ts`'s
-`planRecovery`), so a sustained provider outage escalates a feature that was never actually
-broken. A new pure backoff policy (parallel to `planRecovery`), keyed on `StageErrorKind`,
-giving `provider_error`/`timeout`/`auth` their own retry budget. Full detail is in
-`milestones/m06-accountant.md`'s step list. **6.8 (escalation posts to the PR) needs a
-maintainer check-in when it starts** — exposing a full transcript on the pull request sits
-in direct tension with FORGE-06's "PR stays readable" constraint, and that is not a call to
-make unilaterally.
+**Done this session: 6.7, provider-failure backoff decoupled from the crash-count ceiling
+(LOOP-07).** The classification was already right (`StageError`'s
+`provider_error`/`timeout` kinds, and `stageErrorPolicy` already answers `consumesRound:
+false` for every kind); the **routing** was wrong. Every retryable stage error went through
+`reapOne` → `planRecovery`, which decides from `features.crash_count` — a counter **shared
+with real worker crashes**. So a sustained outage escalated after three immediate attempts
+with no delay, and, worse, a provider blip and an actual crash spent the *same* budget: two
+crashes plus one rate limit escalated a feature whose only genuine problem was two crashes.
+**A third defect the step's own wording did not anticipate, found by reading the state
+machine rather than by a red test:** `planRecovery`'s recovery resets `current_stage_index`
+to **0** — correct for a crash, since a dead worker leaves an unknown state — which on a
+*gate*'s provider failure re-runs the **developer agent**. That is real spend for a failure
+the developer had no part in, so the old routing violated the very criterion this step
+exists to satisfy, and resuming at the same stage became a requirement rather than an
+optimisation.
+`@adl/core/loop`'s new **`planTransientRetry`** is pure and total, keyed on
+`StageErrorKind`, exponential (ceiling 8 failures, base 5s, cap 5min — roughly ten minutes
+of sustained failure before a human is told, against `MAX_CONSECUTIVE_CRASHES`' 3, because a
+crash is evidence about the *feature* and an outage is evidence about the *provider*). The
+manager half (`loop/transient-retry.ts`) derives the count from `stage_attempts` — **no
+migration and no counter column**, the same "evaluate state, don't remember events"
+discipline 5.2/5.6/5.10/6.6 each landed on independently, and a column would additionally
+have to be reset on every success, which is the exact bug class `resetCrashCountOnSuccess`
+exists to fix. It follows `checkStalemate`'s `retry`/`escalate`/`error` shape and **never
+fails open**: an unreadable history reports `error` and falls back to the bounded crash
+ceiling (CORE-06).
+**Two shapes, because the feature's state decides which is even reachable.** In `developing`
+or `gating` the lease is handed back and **nothing else changes** — `listDispatchable()`
+picks up exactly that unleased pair, so the same stage re-runs at the same index under the
+configuration it was admitted under. Still in `leased`, nothing has applied
+`workspace_ready` and `listDispatchable()` deliberately excludes `leased`, so handing the
+lease back there would **strand the row where neither a dispatch nor the reaper could see it
+again**; that case takes `lease_expired` to `queued` through `reapOne`'s new
+`RecoveryOverride` (`countsAsCrash: false`) rather than a parallel copy of the
+transition/CAS/audit write — the divergence that module's own docblock warns against. The
+backoff itself is enforced in `dispatchOnce`, guarded on `effective_config_json` alone
+rather than the budget check's `state !== 'queued'`, since a requeued first dispatch still
+has to serve its wait. **`auth` needed no change**: it is not transient, so it escalates
+straight to a human, which is right for an expired credential. **Watched failing** both
+ways — removing the `countsAsCrash` guard turned the requeue test red, disabling the
+dispatcher's backoff skip turned both window tests red — and 26 new cases landed across
+four files, including **both** read-failure branches. One pre-existing test asserted the old
+behaviour and was rewritten; that rewrite is the change's own headline. `pnpm test` /
+`pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code) all clean.
+
+**6.8 is next: escalation posts to the pull request (LOOP-08)** — and it **needs a
+maintainer check-in when it starts**, before any code. Exposing a full transcript on the
+pull request sits in direct tension with FORGE-06's "PR stays readable" constraint, and that
+is not a call to make unilaterally. Note 6.7 just widened what 6.8 has to cover: a
+transient-budget escalation is one more round that ends without a commit, so it posts
+nothing a human would see today. After 6.8 come 6.9–6.11 (per-role model selection,
+BACK-10) — steps run in order.
 
 **Before you start, skim:**
 
