@@ -97,6 +97,17 @@ the project.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.
 
+**Model selection is repo-requestable behind a daemon allowlist; backend selection is not.**
+D-22 made both daemon-only. Its rationale — _“a backend the watched repository can choose is
+a credential-selection primitive”_ — is about **credentials**, and credentials are `backend`.
+A model _within_ an already-chosen backend is a **cost** concern, and cost already has a
+clamp mechanism (`limits`). So `agents.<role>.backend` stays in `DAEMON_ONLY_FIELDS` and is
+discarded unconditionally, while `agents.<role>.model` is accepted only when the daemon
+publishes a `repo_model_allowlist` naming it. **Absent an allowlist nothing changes** — the
+field ships closed, and opening it is a deliberate daemon act. D-22 explicitly permits this
+direction: _“Loosening it later is trivial; tightening it later breaks adopters’ working
+configs.”_ (M06 step 6.11, BACK-10.)
+
 ---
 
 ## Loop and safety semantics

@@ -2,7 +2,7 @@
 
 **Status:** ◀ **IN PROGRESS**
 **Depends on:** M05
-**Requirements:** LOOP-03…08, OBS-05 (7)
+**Requirements:** LOOP-03…08, OBS-05, BACK-10 (8)
 
 **Goal:** an unattended run cannot spend without limit, loop without progress, or fail
 silently — every limit reached ends in a human being told where they will see it.
@@ -49,6 +49,29 @@ silently — every limit reached ends in a human being told where they will see 
       and the feature resumes rather than being marked failed.
 - [ ] Hitting any limit posts the full transcript and the disagreement to the pull request
       where a human will see it, and spend is visible broken down per feature and per role.
+- [ ] A daemon operator can choose a different model per agent role, that choice reaches the
+      agent CLI, and the ledger prices what actually ran. A repository may request a model
+      only from a daemon-declared allowlist. (6.9, 6.10, 6.11)
+
+> **The sixth criterion was added after the milestone opened** (maintainer request,
+> 2026-09-01) rather than derived from the original planning work. `README.md` asks that
+> acceptance criteria not be edited casually, so this is the record of why. Per-role model
+> selection turned out to be a **dead config shape rather than a missing feature**:
+> `agents.<role>.model` has existed and validated since M01, `mergeConfig` resolves it, and
+> `worker-entry/stage-runner.ts` already reads it into `AgentTask.model` — but no adapter
+> ever turns it into a CLI flag, so setting it does nothing at all. It lands in **this**
+> milestone rather than M07 because the sentinel it defaults to (`'default'`) matches no
+> `model_prices` row: per D-31 an unpriced row is never folded into the compared total, so
+> the dead field silently removes its own spend from 6.4's per-feature budget and 6.5's
+> global cap. That makes it an accounting defect, which is what M06 is for.
+>
+> A second motivation is recorded as debt rather than built here. The archived research
+> (`.planning/research/PITFALLS.md`) ranks _“reviewer rubber-stamping via self-preference”_
+> **#5** in its own risk table and prescribes two mitigations. The first, fresh context,
+> survived into the live plan as **ROLE-03** ✅. The second — _“make cross-model review a
+> first-class config, and the recommended default”_ — **did not survive the transfer into
+> `docs/plan/`** and appears in no requirement, decision or criterion. 6.9–6.11 make it
+> _configurable_; nothing yet makes it _true_. Owner **M07**, filed in `DEBT.md`.
 
 ---
 
@@ -279,6 +302,75 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       the same way 5.11's own bounded-fold mechanism had to resolve once already (link to
       an artifact vs. an excerpt within the sticky comment's `maxLength` budget). **Needs a
       maintainer check-in when this step starts**, not a unilateral pick.
+- [ ] **6.9** — The selected model actually reaches the agent CLI (BACK-10), developer role
+      only: the tracer slice through every layer before any widening (convention 14).
+      **Almost all of this already exists and does nothing.** `adl.yml`'s
+      `agents.<role>.{backend,model}` (`adl-yml.ts`, whose own `.describe()` calls it
+      “Shape-only”), `DaemonConfigSchema.agents.<role>`, `mergeConfig`'s resolution into
+      `EffectiveConfig.agents.<role>`, the vendor-neutral `AgentTask.model` port field, and
+      `worker-entry/stage-runner.ts`'s read of `effectiveConfig.agents.developer.model` are
+      all built and tested. The missing link is the last one:
+      `packages/agent-claude-code/src/backend.ts` builds its argv with **no `--model`**, and
+      a repo-wide grep confirms there is not one anywhere in the project. `task.model` is
+      consumed only as a fallback _label_ for the spend ledger, never to select anything.
+      Add `'--model', task.model` to that argv when `task.model` is present, and make the
+      manager **omit** `AgentTask.model` entirely when the resolved value is the `'default'`
+      sentinel — so the sentinel never crosses the port and the adapter structurally cannot
+      misinterpret it (convention 9). Export `BACKEND_DEFAULT_MODEL` from
+      `effective-config.ts` and derive `DEFAULT_AGENT_BLOCK.model` from it rather than
+      restating the literal (convention 8). Note the existing `!== undefined` guard at the
+      call site is dead: `ResolvedAgentBlockSchema.model` is `z.string().min(1)`, so it is
+      always present, and today always `'default'`. Nothing changes in `@adl/core`'s
+      vocabulary rule and nothing branches on backend identity, so this stays BACK-04-clean.
+      **Probe the pinned CLI before encoding the flag** (convention 15): `claude --help` on
+      a local **2.1.227** build shows `--model <model>`, but the project pins **2.1.237**
+      (`agent-claude-code/src/version.ts`) and the flag's interaction with `--bare` is
+      unverified. **Watched-failing guards:** argv carries `--model <id>` for a configured
+      model, and carries **no** `--model` under the sentinel — both watched red by reverting
+      the argv edit. **No migration and no new IPC field**: `AssignMessage` already carries
+      `effectiveConfigJson`, which is where the worker reads this from today.
+- [ ] **6.10** — Every role, not just the developer (BACK-10). `stage-runner.ts` hardcodes
+      `.agents.developer`, while `resolveStageRole` beside it already classifies a dispatch
+      as `developer` / `command-gate` / `unsupported` — so map that to core's `AgentRole` and
+      read `effectiveConfig.agents[role].model`. Drive the mapping off the exported frozen
+      `AGENT_ROLES` with the house's `Exclude<T, Arr[number]> extends never` assertion, so a
+      fourth role fails the **build** rather than silently falling back to the developer's
+      model (convention 7). A command gate runs `adl.yml`'s test command rather than an
+      agent, so it takes no model and writes no usage row — the property
+      `test/scenario/command-gate-loop.test.ts` already asserts (5.18); that assertion is
+      the negative half of this step and stays exactly as it is. `reviewer` and `tester` have
+      **no producer** until M07/M08, so their branch is built and unreached, documented as a
+      gap on the `forge.promoteToReady` precedent (5.9 built it, 5.13 wired it in one line)
+      rather than given an invented consumer. **Plus the accounting half this milestone
+      actually owns:** at boot, `logger.warn` for any configured role model with no
+      `model_prices` row. _A model you cannot price is a budget you cannot enforce_ — D-31
+      keeps unpriced rows out of the compared total, so an unpriceable model quietly removes
+      its own spend from 6.4's and 6.5's gates. A warning and never a refusal, since a new
+      model is usable before it is priced. **Proven end to end** by teaching
+      `test/helpers/fake-claude-success.mjs` to record its own argv, then asserting in a real
+      scenario both that the configured model reached the binary and that the resulting
+      `usage_events.model_id` is priceable rather than `'unknown'`.
+- [ ] **6.11** — The daemon-declared allowlist, and the D-22 amendment (BACK-10).
+      `DAEMON_ONLY_FIELDS` holds both `agents.<role>.backend` and `agents.<role>.model`
+      today, and `mergeConfig` discards a repo-supplied value for either. Keep `backend`
+      exactly as it is; gate `model` on a new optional daemon field
+      **`repo_model_allowlist: string[]`**, top-level beside `global_budget_usd`. **Absent
+      means no repository may choose a model at all** — byte-identical to today's behaviour,
+      so the field ships closed and opening it is a deliberate daemon act. (Same “absent
+      means the check never runs” _shape_ as `global_budget_usd`, but the polarity is
+      inverted — absent is restrictive here and permissive there. Say so in the
+      `.describe()`, or a reader carries the wrong intuition across from one to the other.)
+      `DiscardedField` gains `reason: 'daemon_only' | 'not_allowlisted'` as a frozen array
+      plus derived union, so a caller can tell “never permitted” from “not on this daemon's
+      list” (convention 6); `dispatcher.ts` already logs the merge report and needs no new
+      channel. **The reasoning is recorded in `DECISIONS.md`**: D-22's credential-selection
+      rationale is about `backend`, and D-22's own text calls this direction trivial —
+      _“Loosening it later is trivial; tightening it later breaks adopters' working
+      configs.”_ **Four load-bearing documents assert the opposite today and become false**
+      (convention 18) — `packages/manager/README.md`'s “A repository's `adl.yml` can never
+      set these”, `adl-yml.ts`'s `backend`/`model` `.describe()` strings, `stage/agent.ts`'s
+      `AgentTask.model` docblock (“D-22, daemon/config-controlled”), and `adl-yml.ts`'s own
+      docblock example, which `adl-yml.test.ts` executes.
 
 ## Notes
 

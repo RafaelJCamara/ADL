@@ -40,7 +40,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.6 done; 6.1 deferred; 6.7 next
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.6 done; 6.1 deferred; 6.7–6.11 left
 M07–M18 .............................. not started
 ```
 
@@ -544,7 +544,7 @@ as a structured `logger.warn({event: 'budget.warn', ...})` at 80% of the cap, wi
 halting. Absent `global_budget_usd`, the check never runs — zero extra reads on an install
 that never configured a fleet-wide ceiling.
 
-**Done this session: 6.6, stalemate detection over repeated finding fingerprints (LOOP-06).**
+**Done in a prior session: 6.6, stalemate detection over repeated finding fingerprints (LOOP-06).**
 `@adl/core/loop`'s new `detectStalemate` takes this round's `send_back` findings and a
 fingerprint→occurrence-count map and reports which findings have already met
 `limits.repeat_finding_threshold` — pure, de-duplicated by fingerprint. The manager half,
@@ -577,7 +577,35 @@ and `packages/manager/test/scenario/round-loop.test.ts`. `pnpm test` / `pnpm typ
 `pnpm lint` / `pnpm format` (on the touched code — `docs/plan/`'s pre-existing formatting
 debt, DEBT.md § 3, is unrelated) all clean.
 
-**6.7 is next: provider-failure backoff, decoupled from the crash-count ceiling (LOOP-07).**
+**Done this session — planning only, no code: M06 gained a sixth acceptance criterion and
+three new steps, 6.9–6.11 (BACK-10, per-role model selection).** The maintainer asked for the
+ability to choose a model per task; an audit found it **already exists as a dead config
+shape**. `adl.yml`'s `agents.<role>.{backend,model}` has validated since M01,
+`DaemonConfigSchema.agents.<role>` mirrors it, `mergeConfig` resolves it into
+`EffectiveConfig.agents.<role>`, `AgentTask.model` is the vendor-neutral port field for it,
+and `worker-entry/stage-runner.ts` already reads `effectiveConfig.agents.developer.model`
+into a real `AgentTask` — but `packages/agent-claude-code/src/backend.ts` builds its argv
+with **no `--model`**, and a repo-wide grep finds not one anywhere in the project.
+`task.model` is consumed only as a fallback _label_ for the spend ledger. **Configuring a
+model today is a silent no-op.** It lands in M06 rather than M07 because the sentinel it
+defaults to (`'default'`) matches no `model_prices` row, so per D-31 those runs are silently
+dropped from 6.4's per-feature budget and 6.5's global cap — an accounting defect, which is
+what this milestone is for. **Four decisions were taken with the maintainer before the steps
+were written:** `backend` stays daemon-only while `model` becomes repo-_requestable_ behind a
+new daemon-declared `repo_model_allowlist` (recorded in `DECISIONS.md` — D-22's
+credential-selection rationale is about `backend`, and D-22's own text calls this direction
+trivial); keying stays on the existing `developer`/`reviewer`/`tester` trio rather than
+arbitrary pipeline stage ids; selection is **static config only**, with no mid-run escalation
+and no `costClass`-derived tiering; and it lands as M06 steps rather than a new milestone.
+**`BACK-10` is a new requirement** — 92 → 93, with `REQUIREMENTS.md`, `ROADMAP.md`'s coverage
+table and `README.md` all updated. **A related gap is filed as `D-6-09-1`, owner M07:** the
+archived research ranks reviewer rubber-stamping **#5** in its own risk table and prescribes
+cross-model review as the recommended default — a mitigation that **did not survive the
+transfer into `docs/plan/`** (M11's nearest criterion proves backend _neutrality_, not model
+_separation_). 6.9–6.11 make it expressible; nothing yet makes it true.
+
+**6.7 is still next — steps run in order, so 6.9–6.11 come after 6.8: provider-failure
+backoff, decoupled from the crash-count ceiling (LOOP-07).**
 Classification already exists (`StageError`'s `provider_error`/`timeout`/`auth` kinds,
 CORE-06) and a retryable error already costs no round (5.13's own doing) — but today every
 retryable kind shares one generic `crash_count` ceiling (`scheduler/reaper.ts`'s

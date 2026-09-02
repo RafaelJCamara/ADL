@@ -82,7 +82,7 @@ M13–M18 are largely parallel once M12 passes.
 
 ## Requirements coverage
 
-92 v1 requirements, all mapped, no orphans. Full register with IDs and per-requirement
+93 v1 requirements, all mapped, no orphans. Full register with IDs and per-requirement
 status: [`REQUIREMENTS.md`](./REQUIREMENTS.md).
 
 | Category                | Count | Where                                                 |
@@ -93,7 +93,7 @@ status: [`REQUIREMENTS.md`](./REQUIREMENTS.md).
 | The Loop                | 9     | M05 ✅ (2) · M06 (6) · M07 (1)                        |
 | Agent Roles             | 11    | M05 ✅ (3) · M07 (2) · M08 (6)                        |
 | Harness Extensibility   | 6     | M07 (4) · M13 (2)                                     |
-| Model Backends          | 9     | M04 ✅ (2) · M05 ✅ (1) · M11 (4) · M16 (2)           |
+| Model Backends          | 10    | M04 ✅ (2) · M05 ✅ (1) · M06 (1) · M11 (4) · M16 (2) |
 | Forge Integration       | 12    | M05 🟡 (5) · M09 (5) · M14 (2)                        |
 | Execution & State       | 7     | M01 ✅ (1) · M03 ✅ (6)                               |
 | Workspace & Trust       | 10    | M02 (7) · M15 (3)                                     |

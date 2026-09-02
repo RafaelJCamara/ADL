@@ -1,6 +1,6 @@
 # Requirements
 
-92 v1 requirements. All mapped to a milestone. No orphans, no duplicates.
+93 v1 requirements. All mapped to a milestone. No orphans, no duplicates.
 
 Phrased from the perspective of the two people ADL serves: the **maintainer** who installs
 and operates the daemon, and the **reviewer** who receives its pull requests.
@@ -70,7 +70,7 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **HARN-05** _(M13)_ A security-checking harness ships as a working reference implementation
 - ⬜ **HARN-06** _(M13)_ Run an existing tool (semgrep, CodeRabbit, Greptile) as a gate with configuration rather than code
 
-## Model Backends — M04 🟡 · M05 ✅ · M11 · M16
+## Model Backends — M04 🟡 · M05 ✅ · M06 · M11 · M16
 
 - ✅ **BACK-01** Drive agentic CLIs through an `AgentBackend` port
 - ⬜ **BACK-02** _(M11)_ Drive raw model APIs, owning the loop, through a `ModelBackend` port
@@ -81,6 +81,7 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **BACK-07** _(M16)_ OpenAI works, via API and Codex CLI
 - ⬜ **BACK-08** _(M16)_ Gemini works, via API and CLI
 - ✅ **BACK-09** _(M05)_ Per-invocation token and cost recorded for every backend, degrading visibly where reporting is unreliable
+- ⬜ **BACK-10** _(M06)_ Each agent role runs on a model ADL selects rather than the backend's own default; a repository may request one only from a daemon-declared allowlist
 
 ## Forge Integration — M05 🟡 · M09 · M14
 

@@ -54,3 +54,14 @@ _Refine into small steps when this milestone starts._
   findings, one send-back); expensive agent gates default to `stop`.
 - The rubber-stamp fixture set is the point of criterion 4 — an approving reviewer is
   worse than no reviewer, and the only way to know is to measure it continuously.
+- **Cross-model review is now expressible, and still not required — decide which here.**
+  M06 steps 6.9–6.11 (BACK-10) made per-role model selection actually work; before them
+  `agents.<role>.model` validated and did nothing. This milestone is the first moment a
+  second role exists, so it is the first moment `agents.reviewer.model` can differ from
+  `agents.developer.model` in practice. The archived research asked for cross-model review
+  as *the recommended default*, on the grounds that a reviewer sharing the developer's
+  model makes the gate decorative — a risk it ranks #5. That request did not survive into
+  the live plan. **`DEBT.md`'s `D-6-09-1` owns the decision and is owed an answer by this
+  milestone**, alongside its sibling `D-5-18-1` (a gate-invoked agent has no member of
+  `GateContext` to report spend through). Both are about the reviewer being the first
+  agent-backed gate; neither is a hole in v1 today.

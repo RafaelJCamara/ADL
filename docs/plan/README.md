@@ -11,7 +11,7 @@ Plain markdown. No framework, no tooling, no generated state. Read it, edit it, 
 | [milestones/](./milestones/)         | One file per milestone: goal, acceptance criteria, and the small steps to get there                                             | As steps land                        |
 | [DECISIONS.md](./DECISIONS.md)       | Settled calls with the reasoning that settled them                                                                              | When a decision is taken or reopened |
 | [DEBT.md](./DEBT.md)                 | Everything discovered and not fixed — deferred items, accepted risks, open findings                                             | The moment something is found        |
-| [REQUIREMENTS.md](./REQUIREMENTS.md) | The 92 v1 requirements, each mapped to a milestone                                                                              | Rarely                               |
+| [REQUIREMENTS.md](./REQUIREMENTS.md) | The 93 v1 requirements, each mapped to a milestone                                                                              | Rarely                               |
 
 ## How a milestone works
 
