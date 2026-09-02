@@ -165,7 +165,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       **Shipped:** `dispatcher.ts`'s `.find()` predicate became an async `for` loop —
       candidates are still tried in the same FIFO order, and one blocked by the pause brake
       or the concurrency cap is still skipped with **zero** reads, exactly as before; only a
-      candidate that clears both now gets a database read. Only a *continuation* candidate
+      candidate that clears both now gets a database read. Only a _continuation_ candidate
       (`state !== 'queued'` with an existing `effective_config_json`) is ever checked — a
       fresh `queued` row, including one a human just `resume`d out of an escalation, has
       spent nothing new to check and gets a clean slate, matching `isContinuation`'s own
@@ -198,7 +198,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       repository method summing spend across every feature. `budget.warn` at 80% (the
       original 6.10) is a cheap addition here, on the same check, not a separate step.
       **Shipped:** `DaemonConfigSchema` gains `global_budget_usd` — optional, no default,
-      no repo-side counterpart (like `concurrency`), sitting *above* every feature's own
+      no repo-side counterpart (like `concurrency`), sitting _above_ every feature's own
       `limits.budget_usd` (LOOP-04) rather than instead of it. `usageRepository()` gains
       `totalSpend()`, summing every `usage_events` row across every feature into one
       `{total, unpricedEvents}` — the same "never fold an unpriced row in as zero" (D-31)
@@ -243,7 +243,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       de-duplicated by fingerprint so a gate that lists the identical finding twice in one
       round's own output cannot inflate the count. The manager half,
       `loop/stalemate-check.ts`'s `checkStalemate`, reads the count from a new
-      `verdictsRepository().fingerprintCountsForFeature()` — how many *distinct rounds*
+      `verdictsRepository().fingerprintCountsForFeature()` — how many _distinct rounds_
       (never raw finding rows) have raised each fingerprint across a feature's whole
       history — and hands it to the pure function, following `checkProtectedPaths`'s exact
       three-way `clean`/`stalled`/`error` shape (never fail-open on a database read
@@ -268,11 +268,11 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       the identical fingerprint on both of its two send-backs by construction — needed an
       explicit higher threshold to keep proving the round ceiling in isolation from this new
       check (its own `RunOptions` docblock explains why, and the fix had to raise the
-      *daemon's* ceiling too, not just the repo's requested value, since `mergeConfig` clamps
+      _daemon's_ ceiling too, not just the repo's requested value, since `mergeConfig` clamps
       a repo's request down to the daemon's own limit and never lets it rise past it, D-22).
       **A new scenario proves the collision the other way round:** `round-loop.test.ts`
       gained "escalates a repeated identical finding before the round ceiling is reached",
-      using the *default* threshold (2) against a round ceiling six rounds away, so the
+      using the _default_ threshold (2) against a round ceiling six rounds away, so the
       "Done when" claim — stall detection firing before the round cap, not merely capable of
       firing — is checked through a real daemon, not only argued. Three new unit cases in
       `round-runner.test.ts` (under threshold sends back normally; at threshold escalates
@@ -295,17 +295,17 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       `StageError`s now; only confirming real Anthropic 429/5xx shapes map to the right
       `kind` needs the live batch, and that confirmation folds into `DEBT.md` §1 rather
       than blocking this step.
-      **Shipped.** The classification was right and the *routing* was wrong: every retryable
+      **Shipped.** The classification was right and the _routing_ was wrong: every retryable
       stage error went through `reapOne` → `planRecovery`, which decides from
       `features.crash_count` — a counter **shared with real worker crashes**. Two defects
       followed, and the second was worse. (1) A sustained outage escalated after three
       immediate attempts, with no delay between them. (2) A provider blip and an actual crash
-      spent the *same* budget, so two crashes plus one rate limit escalated a feature whose
+      spent the _same_ budget, so two crashes plus one rate limit escalated a feature whose
       only genuine problem was two crashes.
       **A third defect the step's own sketch did not anticipate, found by reading the state
       machine:** `planRecovery`'s recovery resets `current_stage_index` to **0** (D-10, and
       correct for a crash — a dead worker leaves an unknown state, so replay from a known
-      point). On a *gate*'s provider failure that re-runs the **developer agent**, which is
+      point). On a _gate_'s provider failure that re-runs the **developer agent**, which is
       real spend for a failure the developer had no part in — so the old routing violated the
       very criterion this step exists to satisfy. Resuming at the same stage is therefore
       required, not an optimisation.
@@ -357,7 +357,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       a gist; the daemon binds `127.0.0.1` by default, so a link is dead for anyone but the
       operator). Recorded as `D-6-08-2`. (2) An escalation with **no commit posts nothing**
       and stays in the daemon log and `adl status`: a change request is opened from a
-      *branch*, and a round-1 `blocked`/`dispute` never pushed one, so there is no pull
+      _branch_, and a round-1 `blocked`/`dispute` never pushed one, so there is no pull
       request and nothing to open one from. ADL does not manufacture an empty commit or an
       issue to have somewhere to write.
       **A third gap the step's own wording did not anticipate, and the one that decided the
@@ -383,7 +383,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       escalation is the third and is **not** wired — filed as `D-6-08-1`, owner M09, because
       a fourth hand-wired publish site is the wrong answer and 9.1's outbox is the right one.
       **Two real defects the tests found rather than review:** the transcript tail reader's
-      "drop the partial first line when `start > 0`" rule silently discarded a *whole*
+      "drop the partial first line when `start > 0`" rule silently discarded a _whole_
       record when the window landed on a boundary (the lenient parse alone is correct in
       both cases — watched red as `expected [ 4 ] to deeply equal [ 3, 4 ]`), and the
       `adl resume` line was keyed on the excerpt existing rather than on the escalation

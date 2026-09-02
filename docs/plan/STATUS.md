@@ -516,7 +516,7 @@ new `spendByFeature()` reads every feature's spend, broken down by role, in one 
 **Done in a prior session: 6.4, the per-feature token/cost budget (LOOP-04).**
 `dispatchOnce`'s pre-lease candidate `.find()` became an async `for` loop — a candidate
 blocked by the pause brake or the concurrency cap is still skipped with zero reads, exactly
-as before; only a *continuation* candidate (already inside the loop, carrying a snapshotted
+as before; only a _continuation_ candidate (already inside the loop, carrying a snapshotted
 `effective_config_json`) now gets a `spendByCategory` read against its own
 `limits.budget_usd`. A fresh `queued` row — including one a human just `resume`d out of an
 escalation — is never checked, matching `isContinuation`'s own "snapshotted at lease time"
@@ -534,7 +534,7 @@ figure that cannot see it.
 
 **Done in a prior session: 6.5, the global spend cap (LOOP-05).** `DaemonConfigSchema` gains
 `global_budget_usd` — optional, no default, no repo-side counterpart (like `concurrency`),
-sitting *above* every feature's own `limits.budget_usd` rather than instead of it.
+sitting _above_ every feature's own `limits.budget_usd` rather than instead of it.
 `usageRepository()` gains `totalSpend()`, summing every `usage_events` row across every
 feature into one `{total, unpricedEvents}` — same D-31 discipline as `spendByCategory`/
 `spendByFeature`, same "read the rows, reduce in application code" implementation, no SQL
@@ -553,7 +553,7 @@ that never configured a fleet-wide ceiling.
 fingerprint→occurrence-count map and reports which findings have already met
 `limits.repeat_finding_threshold` — pure, de-duplicated by fingerprint. The manager half,
 `loop/stalemate-check.ts`'s `checkStalemate`, reads the count from a new
-`verdictsRepository().fingerprintCountsForFeature()` — distinct *rounds*, never raw finding
+`verdictsRepository().fingerprintCountsForFeature()` — distinct _rounds_, never raw finding
 rows — following `checkProtectedPaths`'s exact `clean`/`stalled`/`error` shape (never
 fail-open on a database failure, CORE-06). `round-runner.ts` fires it unconditionally on
 every gate's `send_back` (never `warn`), **after** `recordGateVerdict` writes this round's
@@ -569,11 +569,11 @@ snapshots omitted `repeat_finding_threshold` entirely: `round-runner.test.ts`'s 
 helper gained the same kind of defaulted parameter `maxRounds` already has, and
 `round-loop.test.ts`'s LOOP-03 ceiling scenario — whose scripted gate reports the identical
 fingerprint on both of its two send-backs by construction — needed an explicit higher
-threshold (raised on *both* the repo's `adl.yml` and the daemon's own ceiling, since
+threshold (raised on _both_ the repo's `adl.yml` and the daemon's own ceiling, since
 `mergeConfig` clamps a repo's request down and never lets it rise past the daemon's limit,
 D-22) to keep proving the round ceiling in isolation from this new check. A new scenario
 proves the collision the other way round: "escalates a repeated identical finding before
-the round ceiling is reached", at the *default* threshold against a ceiling six rounds
+the round ceiling is reached", at the _default_ threshold against a ceiling six rounds
 away — the "Done when" claim checked through a real daemon, not only argued. Fifteen new
 cases across `packages/core/test/loop/stalemate.test.ts`,
 `packages/db/test/repos-verdicts.test.ts`, `packages/manager/test/loop/round-runner.test.ts`,
@@ -618,7 +618,7 @@ megabytes, against `DEFAULT_COMMENT_BODY_MAX_LENGTH`'s 60,000 characters — and
 alternatives cost more than they return (`ForgeAdapter` has no artifact member and a GitHub
 App cannot create a gist; the daemon binds `127.0.0.1` by default, so a link is dead for
 anyone but the operator). **An escalation with no commit posts nothing** and stays in the
-daemon log and `adl status`: a change request is opened from a *branch*, and a round-1
+daemon log and `adl status`: a change request is opened from a _branch_, and a round-1
 `blocked`/`dispute` never pushed one. Both recorded — the first as `D-6-08-2`, the second in
 `on-escalation.ts`'s own docblock.
 **The step's wording named two gaps; there was a third, and it decided the design.**
@@ -650,7 +650,7 @@ path is strict, because one unreadable line must not be what stops a human being
 and is **not** wired — `D-6-08-1`, owner M09, because a fourth hand-wired publish site is the
 wrong answer and 9.1's outbox is the right one.
 **Two real defects the tests found rather than review.** The tail reader's "drop the partial
-first line when `start > 0`" rule silently discarded a *whole* record when the window landed
+first line when `start > 0`" rule silently discarded a _whole_ record when the window landed
 on a boundary — the lenient parse alone is correct in both cases, and the guard was watched
 red as `expected [ 4 ] to deeply equal [ 3, 4 ]`. And the `adl resume` line was keyed on the
 excerpt existing rather than on the escalation being the newest, so it vanished for exactly
