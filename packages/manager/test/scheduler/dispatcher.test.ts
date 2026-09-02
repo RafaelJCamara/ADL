@@ -17,12 +17,15 @@ import {
 import type { Kysely } from 'kysely';
 import type { SendBackBrief } from '@adl/core/verdict';
 import { TRANSIENT_BACKOFF_BASE_MS } from '@adl/core/loop';
+import { githubForgeAdapter } from '@adl/forge-github';
 import { dispatchOnce } from '../../src/index.js';
 import { createCapturingLogger } from '../helpers/capturing-logger.js';
 import {
   MIGRATIONS_DIR,
   withTempDb,
 } from '../../../db/test/helpers/temp-db.js';
+import { startMockGithubServer } from '../../../forge-github/test/helpers/mock-github-server.js';
+import { throwawayPrivateKeyPem } from '../../../forge-github/test/helpers/throwaway-key.js';
 
 /**
  * Phase 3 Plan 07, Task 1: the concurrency cap (D-15..17) — inclusive
@@ -1073,6 +1076,117 @@ describe('dispatchOnce — the provider-failure backoff (LOOP-07, M06 step 6.7)'
 
       expect(decision.dispatched).toBe(true);
       expect(decision.featureId).toBe(featureId);
+    });
+  });
+});
+
+/**
+ * LOOP-08 (M06 step 6.8) — the dispatcher's half of "escalation posts to the
+ * pull request".
+ *
+ * The per-feature budget escalation is the one this milestone is most likely
+ * to surprise someone with. It costs money, and it fires *between* rounds with
+ * no worker running — so nothing else about it was ever going to write
+ * anywhere a human looks. It is also the escalation the step's own wording
+ * names first (`limit_exceeded`).
+ */
+describe('dispatchOnce — the budget escalation posts to the change request (LOOP-08, M06 step 6.8)', () => {
+  const BUDGET_USD = 15;
+
+  /** A feature that a continuation dispatch will find over its snapshotted budget. */
+  async function seedOverBudget(db: Kysely<Database>): Promise<string> {
+    const repoId = await seedRepo(db);
+    const featureId = await seedFeature(db, {
+      repoId,
+      state: 'gating',
+      currentStageIndex: 1,
+      effectiveConfigJson: snapshottedConfigJson(),
+    });
+    await seedUsageEvent(db, featureId, BUDGET_USD + 5);
+    // A continuation is by definition a feature that already committed once,
+    // which is what gives the escalation a change request to land on. Recorded
+    // through the same writer the round loop uses.
+    const roundId = ulid();
+    await db
+      .insertInto('rounds')
+      .values({
+        id: roundId,
+        feature_id: featureId,
+        number: 1,
+        outcome: 'send_back',
+        outcome_json: null,
+        head_sha: 'deadbee',
+        started_at: nowIso(),
+        ended_at: nowIso(),
+      })
+      .execute();
+    return featureId;
+  }
+
+  it('opens the change request and posts the escalation comment', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const featureId = await seedOverBudget(db);
+
+      const server = await startMockGithubServer();
+      try {
+        const forge = githubForgeAdapter({
+          appId: 'adl-test-app',
+          privateKey: throwawayPrivateKeyPem(),
+          installationId: 1,
+          baseUrl: server.url,
+          disablePacingForTests: true,
+        });
+        const { logger } = createCapturingLogger();
+        const decision = await dispatchOnce({
+          ...baseDeps(db, DaemonConfigSchema.parse({})),
+          logger,
+          forge: {
+            pushCredential: async () => 'https://x-access-token:tok@host/r.git',
+            adapter: forge,
+            repo: { owner: 'example', repo: 'target-repo' },
+          },
+        });
+
+        expect(decision.dispatched).toBe(false);
+        expect((await featuresRepository(db).findById(featureId))!.state).toBe(
+          'escalated',
+        );
+
+        expect(server.state.pulls).toHaveLength(1);
+        const body =
+          (server.state.commentsByIssue.get(server.state.pulls[0]!.number) ??
+            [])[0]?.body ?? '';
+        expect(body).toContain('<!-- adl:role=escalation -->');
+        expect(body).toContain('the per-feature budget was exhausted');
+        expect(body).toContain(`adl resume ${featureId}`);
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
+  it('still escalates, and does not fail the tick, when no forge adapter is configured', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const featureId = await seedOverBudget(db);
+
+      // The pre-6.8 shape: a dispatcher given a push credential and nothing
+      // else. It has a job of its own to do and does it; the comment is the
+      // part that needs an adapter.
+      const { logger } = createCapturingLogger();
+      const decision = await dispatchOnce({
+        ...baseDeps(db, DaemonConfigSchema.parse({})),
+        logger,
+        forge: {
+          pushCredential: async () => 'https://x-access-token:tok@host/r.git',
+        },
+      });
+
+      expect(decision.dispatched).toBe(false);
+      expect((await featuresRepository(db).findById(featureId))!.state).toBe(
+        'escalated',
+      );
     });
   });
 });

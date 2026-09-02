@@ -31,6 +31,7 @@ import type { Verdict } from '@adl/core/verdict';
 import type { ManagerGitClient } from '@adl/workspace';
 import { parseStageRunnerVerdict } from '../ipc/stage-verdict.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
+import { publishOnEscalation } from '../publish/on-escalation.js';
 import { promoteChangeRequestToReady } from '../publish/promote.js';
 import { reapOne, resetCrashCountOnSuccess } from '../scheduler/reaper.js';
 import {
@@ -124,6 +125,17 @@ export interface RoundRunnerDeps {
   readonly forge?: {
     readonly adapter: ForgeAdapter;
     readonly repo: ForgeRepoRef;
+    /**
+     * The directory transcripts live under — `logsRootFor(dbFilePath)`, which
+     * `daemon.ts` computes once. **Required inside `forge`, not optional
+     * beside it** (M06 step 6.8): the only thing it is read for is the
+     * transcript excerpt on an escalation comment, which cannot be published
+     * without a forge anyway — so a caller that configures a forge
+     * structurally cannot forget the thing that makes its escalation comments
+     * useful (rule 9). An optional field here would degrade silently to "the
+     * escalation posted, without the transcript LOOP-08 asks for".
+     */
+    readonly logsRoot: string;
   };
 }
 
@@ -941,6 +953,35 @@ async function runStageCompleted(
 
   if (step.kind === 'complete' && step.outcome.kind === 'green') {
     await promoteOnGreen(deps, applied, at, startingSeq + events.length);
+  }
+
+  // LOOP-08 (M06 step 6.8): a round that ended by asking for a human says so
+  // on the change request. Until this step, the only thing that ever published
+  // was a real commit (`onDeveloperCommitted`), so every escalation — a
+  // `blocked` developer, a `dispute`, a protected-path violation, a stalemate,
+  // a spent transient-retry budget — closed its round in the database and put
+  // nothing anywhere a reviewer would ever look.
+  //
+  // **Keyed on the state the feature actually reached, not on the outcome
+  // kind.** That is not a stylistic choice: `transition()` diverts a
+  // `send_back` to `escalated` when the round it would hand out is past
+  // `maxRounds` (LOOP-03, step 6.2), so the round ceiling — the first limit
+  // LOOP-08 names — produces `outcome.kind === 'send_back'` and an escalated
+  // feature. A condition written over `RoundOutcome` would have missed it, and
+  // would miss the next edge added to `escalated` too. `applied` is the row as
+  // the transaction above left it, so this reads what happened rather than
+  // re-deriving what should have.
+  if (deps.forge !== undefined && applied.state === 'escalated') {
+    await publishOnEscalation(
+      {
+        db: deps.db,
+        logger: deps.logger,
+        forge: deps.forge.adapter,
+        forgeRepo: deps.forge.repo,
+        logsRoot: deps.forge.logsRoot,
+      },
+      { feature: applied },
+    );
   }
 }
 

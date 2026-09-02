@@ -113,9 +113,23 @@ export interface ChangeRequestRef {
   readonly url: string;
 }
 
-/** Why a limit fired. Recorded on the escalation, so the reason survives. */
-export type LimitReason =
-  'round_limit' | 'budget_limit' | 'budget_limit_midstage';
+/**
+ * Why a limit fired. Recorded on the escalation, so the reason survives.
+ *
+ * Frozen list first, union derived from it — the same pairing `FEATURE_STATES`
+ * and `FEATURE_EVENT_KINDS` above use, and for the same reason: a consumer
+ * that renders these to a human (`@adl/manager`'s escalation comment, M06 step
+ * 6.8) needs the runtime list to assert it has described every one of them, so
+ * a fourth reason fails a **build** rather than reaching a public change
+ * request as its own wire value.
+ */
+export const LIMIT_REASONS = Object.freeze([
+  'round_limit',
+  'budget_limit',
+  'budget_limit_midstage',
+] as const);
+
+export type LimitReason = (typeof LIMIT_REASONS)[number];
 
 /**
  * Every labelled edge in the architecture's diagram, as a discriminated union.

@@ -7,6 +7,7 @@ import { nowIso } from '@adl/db';
 import {
   openTranscriptWriter,
   readTranscriptFrom,
+  readTranscriptTail,
   transcriptLength,
   TranscriptOffsetError,
 } from '../../src/index.js';
@@ -343,6 +344,145 @@ describe('transcriptLength', () => {
     await withTempDir(async (dir) => {
       const path = join(dir, 'never-written.ndjson');
       await expect(transcriptLength(path)).resolves.toBeUndefined();
+    });
+  });
+});
+
+/**
+ * `readTranscriptTail` (M06 step 6.8) — the third reader of this file, asking
+ * a question the other two cannot: what is at the *end*.
+ *
+ * The properties that matter are the two `readTranscriptFrom` deliberately
+ * does not have. A window starting at `size - maxBytes` lands mid-record for
+ * every file bigger than the window, so the first partial line must be
+ * discarded — and unlike the follow path, a line that does not parse is
+ * skipped rather than thrown, because the caller is rendering a pull-request
+ * comment and one bad line must not be what stops a human being told their
+ * feature escalated.
+ */
+describe('readTranscriptTail (M06 step 6.8)', () => {
+  it('returns every record when the whole file fits inside the window', async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      try {
+        for (const seq of [1, 2, 3]) await writer.append(record(seq));
+      } finally {
+        await writer.close();
+      }
+
+      const tail = await readTranscriptTail(path, 64 * 1024);
+      expect(tail?.map((r) => r.seq)).toEqual([1, 2, 3]);
+    });
+  });
+
+  it('drops the partial first record when the window starts mid-file', async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      try {
+        for (const seq of [1, 2, 3, 4]) await writer.append(record(seq));
+      } finally {
+        await writer.close();
+      }
+
+      const size = (await stat(path)).size;
+      // Deliberately sized to bisect the third record rather than to land on a
+      // boundary — the two cases are asserted separately, because a single
+      // "drop the first line when start > 0" rule passes this one and fails
+      // the next.
+      const oneRecord = size / 4;
+      const tail = await readTranscriptTail(path, Math.floor(oneRecord * 2.5));
+
+      // The bisected record is gone and no partial survived it. The point of
+      // the assertion is the ABSENCE of a malformed entry, which is what a
+      // naive slice would have produced.
+      expect(tail?.map((r) => r.seq)).toEqual([3, 4]);
+    });
+  });
+
+  it('keeps the first record when the window starts exactly on a record boundary', async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      const offsets: number[] = [];
+      try {
+        for (const seq of [1, 2, 3, 4])
+          offsets.push(await writer.append(record(seq)));
+      } finally {
+        await writer.close();
+      }
+
+      const size = (await stat(path)).size;
+      // The exact byte after record 2's newline — so the window's first line
+      // is record 3, whole. This is the case that makes an unconditional
+      // "shift the first line when start > 0" a data-loss bug rather than a
+      // harmless belt-and-braces: it would report [4] and drop a good record.
+      const boundary = offsets[1] ?? 0;
+      const tail = await readTranscriptTail(path, size - boundary);
+
+      expect(tail?.map((r) => r.seq)).toEqual([3, 4]);
+    });
+  });
+
+  it('skips a line it cannot parse and still returns the ones around it', async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      try {
+        await writer.append(record(1));
+      } finally {
+        await writer.close();
+      }
+      // Two distinct failures, because they fail at different layers: one is
+      // not JSON at all, the other is JSON that is not a TranscriptRecord.
+      await appendFile(path, 'not json at all\n', 'utf8');
+      await appendFile(path, `${JSON.stringify({ seq: 2 })}\n`, 'utf8');
+      const writer2 = await openTranscriptWriter(path);
+      try {
+        await writer2.append(record(3));
+      } finally {
+        await writer2.close();
+      }
+
+      const tail = await readTranscriptTail(path, 64 * 1024);
+      expect(tail?.map((r) => r.seq)).toEqual([1, 3]);
+      // The contrast that makes the leniency load-bearing rather than
+      // incidental: the follow path throws on exactly this file.
+      await expect(readTranscriptFrom(path, 0)).rejects.toThrow();
+    });
+  });
+
+  it('reports undefined for a file that does not exist, and an empty array for one that is empty', async () => {
+    await withTempDir(async (dir) => {
+      // Two different facts about a failed run — "the agent wrote no
+      // transcript" and "it wrote one and it is empty" — which the escalation
+      // comment renders as two different sentences.
+      expect(await readTranscriptTail(join(dir, 'missing.ndjson'), 1024)).toBe(
+        undefined,
+      );
+
+      const path = join(dir, 'empty.ndjson');
+      const writer = await openTranscriptWriter(path);
+      await writer.close();
+      expect(await readTranscriptTail(path, 1024)).toEqual([]);
+    });
+  });
+
+  it('reports an empty array rather than throwing for a non-positive window', async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, 'transcript.ndjson');
+      const writer = await openTranscriptWriter(path);
+      try {
+        await writer.append(record(1));
+      } finally {
+        await writer.close();
+      }
+      // Unlike `readTranscriptFrom`'s offset, a zero window is not a caller
+      // bug worth a named error — it is "show me nothing", and this renders a
+      // comment rather than serving a stream.
+      expect(await readTranscriptTail(path, 0)).toEqual([]);
+      expect(await readTranscriptTail(path, -1)).toEqual([]);
     });
   });
 });

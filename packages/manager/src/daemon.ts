@@ -515,6 +515,11 @@ export async function startDaemon(
                 forge: {
                   adapter: configuredForge.adapter,
                   repo: configuredForge.repo,
+                  // M06 step 6.8: where the escalation comment reads its
+                  // transcript excerpt from. The same `logsRoot` the dispatcher
+                  // threads onto every assign message and the logs route serves
+                  // from — one derivation, per `logsRootFor`'s own docblock.
+                  logsRoot: logsRootFor(options.dbFilePath),
                 },
               }
             : {}),
@@ -702,8 +707,20 @@ export async function startDaemon(
       // M05 step 5.10: absent unless the configured forge also carries a
       // `pushCredential` — `adapter`/`repo` alone (5.5's read-only poll
       // schedule) are not enough to publish anything.
+      //
+      // M06 step 6.8 adds `adapter`/`repo` beside it, for the *other* thing a
+      // dispatch can now do to the forge: post the escalation comment when a
+      // candidate is refused for being over its budget (LOOP-04/LOOP-08). They
+      // ride the same `pushCredential` condition rather than a second one —
+      // a dispatcher that cannot push has no branch to comment against.
       ...(configuredForge?.pushCredential !== undefined
-        ? { forge: { pushCredential: configuredForge.pushCredential } }
+        ? {
+            forge: {
+              pushCredential: configuredForge.pushCredential,
+              adapter: configuredForge.adapter,
+              repo: configuredForge.repo,
+            },
+          }
         : {}),
     });
   }

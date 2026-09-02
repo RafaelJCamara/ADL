@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { monotonicFactory, ulid } from 'ulid';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Kysely } from 'kysely';
@@ -50,8 +53,19 @@ const CRITERION = { kind: 'global', category: 'other' } as const;
 
 let server: MockGithubServer;
 let forge: ReturnType<typeof githubForgeAdapter>;
+/**
+ * A transcript root that exists but holds nothing (M06 step 6.8).
+ *
+ * The escalation comment's excerpt reader reports `absent` for a transcript
+ * file that is not there, which is the honest state for every attempt in this
+ * file — none of them runs a real worker, so none writes one. That path is
+ * exercised on purpose here; `test/publish/on-escalation.test.ts` is where a
+ * transcript with records in it is asserted.
+ */
+let logsRoot: string;
 
 beforeEach(async () => {
+  logsRoot = await mkdtemp(join(tmpdir(), 'adl-round-runner-logs-'));
   server = await startMockGithubServer();
   forge = githubForgeAdapter({
     appId: 'adl-test-app',
@@ -64,6 +78,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close();
+  await rm(logsRoot, { recursive: true, force: true });
 });
 
 /** A snapshotted `EffectiveConfig`, reduced to what the loop actually reads. */
@@ -270,7 +285,9 @@ function deps(
     db,
     logger,
     git,
-    ...(withForge ? { forge: { adapter: forge, repo: FORGE_REPO } } : {}),
+    ...(withForge
+      ? { forge: { adapter: forge, repo: FORGE_REPO, logsRoot } }
+      : {}),
   };
 }
 
@@ -1189,6 +1206,184 @@ describe('the round loop — green promotes the change request (FORGE-05)', () =
 
       const open = await forge.listOpenChangeRequests(FORGE_REPO);
       expect(open[0]?.draft).toBe(true);
+    });
+  });
+});
+
+/**
+ * LOOP-08 (M06 step 6.8) — the round loop's half of "escalation posts to the
+ * pull request".
+ *
+ * Before this step the only thing that ever published was a real commit
+ * (`onDeveloperCommitted`), so every escalation the loop produces closed its
+ * round in the database and put nothing anywhere a reviewer would look. The
+ * two properties worth the most:
+ *
+ * 1. **The trigger is the state the feature reached, not the outcome kind.**
+ *    A round that hits the round ceiling closes as `send_back` and lands in
+ *    `escalated`, because `transition()` diverts the edge (LOOP-03, step 6.2).
+ *    A condition written over `RoundOutcome` passes every other test in this
+ *    block and silently misses the first limit LOOP-08 names.
+ * 2. **A round that did not escalate posts nothing** — the negative half, and
+ *    the one that stops this from becoming the comment spam FORGE-06 exists to
+ *    prevent.
+ */
+describe('the round loop — escalation posts to the change request (LOOP-08)', () => {
+  /** The escalation comment on this feature's change request, if one exists. */
+  async function escalationComment(
+    featureId: string,
+  ): Promise<string | undefined> {
+    const open = await forge.listOpenChangeRequests(FORGE_REPO);
+    const cr = open.find((candidate) => candidate.head.includes(featureId));
+    if (cr === undefined) return undefined;
+    const comments = server.state.commentsByIssue.get(cr.number) ?? [];
+    return comments.find((comment) =>
+      comment.body.includes('<!-- adl:role=escalation -->'),
+    )?.body;
+  }
+
+  it('posts the escalation when a gate’s verdict escalates the round', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db, {
+        state: 'gating',
+        current_stage_index: 2,
+      });
+      // A round that committed, so a branch (and therefore a change request)
+      // exists for the escalation to land on.
+      await db
+        .updateTable('rounds')
+        .set({ head_sha: 'deadbee' })
+        .where('feature_id', '=', seeded.feature.id)
+        .execute();
+      const attempt = await openAttempt(
+        { db },
+        { featureId: seeded.feature.id, stageId: 'develop', stageIndex: 0 },
+      );
+      await featuresRepository(db).recordRoundHeadSha({
+        id: attempt.roundId,
+        headSha: 'deadbee',
+      });
+
+      await report(
+        db,
+        seeded,
+        2,
+        'test',
+        gateVerdict({
+          outcome: 'fail',
+          summary: 'cannot proceed',
+          reason: 'the harness will never pass with this schema',
+        }),
+        { withForge: true },
+      );
+
+      expect((await reload(db, seeded.feature.id)).state).toBe('escalated');
+      const body = await escalationComment(seeded.feature.id);
+      expect(body).toContain('Escalated');
+      expect(body).toContain('the harness will never pass with this schema');
+    });
+  });
+
+  it('posts the escalation when the ROUND CEILING diverts a send_back', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      // `maxRounds` of 1 with the feature already on round 1: the send-back
+      // below would hand out round 2, so `transition()` escalates instead.
+      const seeded = await seedFeature(db, {
+        state: 'gating',
+        current_stage_index: 2,
+        effective_config_json: snapshot(['develop', 'review', 'test'], 1),
+      });
+      const attempt = await openAttempt(
+        { db },
+        { featureId: seeded.feature.id, stageId: 'develop', stageIndex: 0 },
+      );
+      await featuresRepository(db).recordRoundHeadSha({
+        id: attempt.roundId,
+        headSha: 'deadbee',
+      });
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        2,
+        'test',
+        gateVerdict({
+          outcome: 'send_back',
+          summary: 'not yet',
+          findings: [
+            {
+              fingerprint: 'e'.repeat(64),
+              severity: 'blocker',
+              title: 'still red',
+              detail: 'x',
+              criterionRef: CRITERION,
+            },
+          ],
+        }),
+        { withForge: true },
+      );
+
+      // The round closed as `send_back` — its own decision was to send back —
+      // and the feature is nonetheless escalated. That divergence is the whole
+      // reason the publish trigger reads the state rather than the outcome.
+      const round = await db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('id', '=', roundId)
+        .executeTakeFirst();
+      expect(round?.outcome).toBe('send_back');
+      expect((await reload(db, seeded.feature.id)).state).toBe('escalated');
+
+      const body = await escalationComment(seeded.feature.id);
+      expect(body).toContain('Escalated');
+      expect(body).toContain('the round limit was reached');
+      expect(body).toContain('1 finding');
+    });
+  });
+
+  it('posts nothing for a round that sent back normally', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db, {
+        state: 'gating',
+        current_stage_index: 2,
+      });
+      const attempt = await openAttempt(
+        { db },
+        { featureId: seeded.feature.id, stageId: 'develop', stageIndex: 0 },
+      );
+      await featuresRepository(db).recordRoundHeadSha({
+        id: attempt.roundId,
+        headSha: 'deadbee',
+      });
+
+      await report(
+        db,
+        seeded,
+        2,
+        'test',
+        gateVerdict({
+          outcome: 'send_back',
+          summary: 'not yet',
+          findings: [
+            {
+              fingerprint: 'f'.repeat(64),
+              severity: 'blocker',
+              title: 'still red',
+              detail: 'x',
+              criterionRef: CRITERION,
+            },
+          ],
+        }),
+        { withForge: true },
+      );
+
+      // The loop working as designed is not an escalation, and must not read
+      // as one on the pull request.
+      expect((await reload(db, seeded.feature.id)).state).toBe('developing');
+      expect(await escalationComment(seeded.feature.id)).toBe(undefined);
     });
   });
 });

@@ -250,3 +250,89 @@ export async function transcriptLength(
     throw error;
   }
 }
+
+/**
+ * The last whole records of the transcript at `path`, reading at most
+ * `maxBytes` from the end of the file (M06 step 6.8).
+ *
+ * `readTranscriptFrom` cannot serve this. It is built for a *follower* — a
+ * reader that holds an offset the writer handed it, so every byte from that
+ * offset onward begins on a record boundary. A tail reader has no such
+ * offset: `size - maxBytes` lands wherever it lands, which is mid-record for
+ * every file bigger than the window. So the first partial line is discarded
+ * here, and only here; the follow path's byte accounting is untouched.
+ *
+ * **Lenient where `readTranscriptFrom` is strict, deliberately.** That
+ * function parses with `TranscriptRecordSchema.parse` and lets a malformed
+ * line throw, which is right for a live view whose consumer can retry. This
+ * one renders a **pull-request comment**: a single unreadable line must not
+ * be the thing that stops a human being told their feature escalated, for
+ * exactly the reason `publish/role-rounds.ts`'s `describeRoundOutcome` gives
+ * about degrading rather than throwing while rendering a change request. A
+ * line that does not parse is skipped and the rest are still returned.
+ *
+ * `undefined` — never an empty array — when the file does not exist, so a
+ * caller can say "this attempt wrote no transcript" rather than "the agent
+ * emitted nothing", which are different facts about a failed run.
+ */
+export async function readTranscriptTail(
+  path: string,
+  maxBytes: number,
+): Promise<readonly TranscriptRecord[] | undefined> {
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) return [];
+
+  let handle;
+  try {
+    handle = await open(path, 'r');
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return undefined;
+    throw error;
+  }
+
+  try {
+    const { size } = await handle.stat();
+    if (size === 0) return [];
+
+    const length = Math.min(size, maxBytes);
+    const start = size - length;
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+
+    // Splitting the decoded string on '\n' is safe for the same reason
+    // `readTranscriptFrom` states: 0x0A never appears as a UTF-8
+    // continuation byte, so every split point is a newline the writer
+    // emitted. A window starting mid-file may still begin mid-*character*,
+    // which `toString('utf8')` renders as U+FFFD — harmless, because that
+    // first line is dropped below as a partial record regardless.
+    const lines = buffer.toString('utf8').split('\n');
+    // Whatever followed the last newline: empty when the file ends on one
+    // (the common case), the partial bytes of an in-flight write otherwise.
+    lines.pop();
+
+    // **The partial first line needs no special case, and must not get one.**
+    // A window opened at `size - maxBytes` usually begins inside a record, and
+    // the obvious fix — drop the first line whenever `start > 0` — is wrong:
+    // the window sometimes lands exactly *on* a newline, and then that first
+    // line is a whole record the drop would silently throw away. The lenient
+    // parse below already handles both, and handles them correctly: a proper
+    // suffix of a serialised record can never itself parse, because the outer
+    // object's closing brace is present without its opening one, while a
+    // record that starts on a boundary parses like any other. One mechanism,
+    // right in both cases, instead of two that disagree at the boundary.
+    const records: TranscriptRecord[] = [];
+    for (const line of lines) {
+      if (line.length === 0) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const record = TranscriptRecordSchema.safeParse(parsed);
+      if (record.success) records.push(record.data);
+    }
+    return records;
+  } finally {
+    await handle.close();
+  }
+}

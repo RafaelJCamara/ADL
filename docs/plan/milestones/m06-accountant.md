@@ -47,8 +47,13 @@ silently — every limit reached ends in a human being told where they will see 
       escalated _before_ the round cap is reached. (6.6)
 - [x] A provider outage, rate limit, or auth failure consumes neither a round nor budget,
       and the feature resumes rather than being marked failed. (6.7)
-- [ ] Hitting any limit posts the full transcript and the disagreement to the pull request
+- [x] Hitting any limit posts the full transcript and the disagreement to the pull request
       where a human will see it, and spend is visible broken down per feature and per role.
+      (6.3, 6.8) — **with "full transcript" resolved by the 2026-09-02 maintainer decision
+      to a bounded 40-event tail plus the literal `adl logs <id>` for the whole file**,
+      because the whole file cannot fit a comment budget FORGE-06 also has to hold. Stated
+      here rather than left implied, and recorded as `D-6-08-2`. One escalation source is
+      still unwired — `reapOne`'s crash ceiling, `D-6-08-1`, owner M09.
 - [ ] A daemon operator can choose a different model per agent role, that choice reaches the
       agent CLI, and the ledger prices what actually ran. A repository may request a model
       only from a daemon-declared allowlist. (6.9, 6.10, 6.11)
@@ -341,18 +346,52 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       old behaviour and was rewritten, which is the change's own headline.
       `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm format` (on the touched code) all
       clean.
-- [ ] **6.8** — Escalation posts to the pull request (LOOP-08). Two real gaps, not one:
-      (1) the sticky-comment/CR-open publish path (5.10/5.11) fires only on
-      `dev_committed`, so a round that escalates via `blocked`/`dispute`/`limit_exceeded`
-      without a commit — including everything 6.4–6.7 add — posts nothing a human would
-      ever see; extend the trigger to those events too, reusing the existing machinery
-      rather than building a second one. (2) Only a one-line `reason` string reaches the
-      comment today (`role-rounds.ts`'s `describeRoundOutcome`); the **full transcript**
-      has never been posted anywhere. Exposing it is a real design choice, not a mechanical
-      extension — it sits in direct tension with FORGE-06's "PR stays readable" constraint
-      the same way 5.11's own bounded-fold mechanism had to resolve once already (link to
-      an artifact vs. an excerpt within the sticky comment's `maxLength` budget). **Needs a
-      maintainer check-in when this step starts**, not a unilateral pick.
+- [x] **6.8** — Escalation posts to the pull request (LOOP-08). **Maintainer check-in taken
+      2026-09-02**, on both open questions. (1) The transcript reaches the pull request as a
+      **bounded tail plus a pointer** — the last `MAX_TRANSCRIPT_EVENTS` (40) events inline
+      in a fenced block, and the literal `adl logs <stage-attempt-id>` for the whole file.
+      "Full transcript" and FORGE-06 cannot both be literally true: a transcript is NDJSON
+      of every `tool_call`/`tool_result`/`thinking` delta, routinely megabytes, against
+      `DEFAULT_COMMENT_BODY_MAX_LENGTH`'s 60,000 characters — and the alternatives cost more
+      than they return (`ForgeAdapter` has no artifact member and a GitHub App cannot create
+      a gist; the daemon binds `127.0.0.1` by default, so a link is dead for anyone but the
+      operator). Recorded as `D-6-08-2`. (2) An escalation with **no commit posts nothing**
+      and stays in the daemon log and `adl status`: a change request is opened from a
+      *branch*, and a round-1 `blocked`/`dispute` never pushed one, so there is no pull
+      request and nothing to open one from. ADL does not manufacture an empty commit or an
+      issue to have somewhere to write.
+      **A third gap the step's own wording did not anticipate, and the one that decided the
+      design:** `send_back` also reaches `escalated`. `transition()` diverts it there when
+      the round it would hand out is past `maxRounds` (LOOP-03, step 6.2), so the **round
+      ceiling — the first limit LOOP-08 names** — closes its round as `send_back` while
+      landing the feature in `escalated`. Every condition written over `RoundOutcome` misses
+      it. The publish trigger is therefore keyed on **`applied.state === 'escalated'`**, the
+      state the feature actually reached, which is also total over the next edge added.
+      Watched failing (convention 13): swapping it for `step.outcome.kind === 'escalate'`
+      turned exactly the round-ceiling test red and left the other two green.
+      **Its own sticky comment (`key: 'escalation'`), not a role's.** `role-rounds.ts` inner-
+      joins `stage_attempts` on a role's `stage_id` — right for a role, and exactly wrong
+      here, since the budget escalation runs no stage at all and the round-ceiling one
+      belongs to the gate rather than to the developer whose comment it would land in.
+      History comes from **`feature_events`**, the one table with a row for every
+      escalation from every source (`rounds.outcome_json` has none for the budget
+      escalation, whose own docblock says "No round is touched"), with the round **derived**
+      from `started_at <= at` rather than a new column. Rendering reuses
+      `renderStickyComment` whole — budget, folds, `escapeCollapsibleTags`, omission notice.
+      **Two producers wired**, both after their write commits: the round loop beside
+      `promoteOnGreen`, and `dispatchOnce`'s budget refusal. `reapOne`'s crash-ceiling
+      escalation is the third and is **not** wired — filed as `D-6-08-1`, owner M09, because
+      a fourth hand-wired publish site is the wrong answer and 9.1's outbox is the right one.
+      **Two real defects the tests found rather than review:** the transcript tail reader's
+      "drop the partial first line when `start > 0`" rule silently discarded a *whole*
+      record when the window landed on a boundary (the lenient parse alone is correct in
+      both cases — watched red as `expected [ 4 ] to deeply equal [ 3, 4 ]`), and the
+      `adl resume` line was keyed on the excerpt existing rather than on the escalation
+      being the newest, so it vanished for exactly the budget escalation that has no
+      attempt. `LIMIT_REASONS` became a frozen array with the derived union (convention 7)
+      so the reason-to-prose map is build-checked. 29 new cases across six files.
+      `pnpm test` / `pnpm typecheck` / `pnpm lint` all clean; `pnpm format` clean on the
+      touched code (its four doc-file warnings pre-date this step on `main`).
 - [ ] **6.9** — The selected model actually reaches the agent CLI (BACK-10), developer role
       only: the tracer slice through every layer before any widening (convention 14).
       **Almost all of this already exists and does nothing.** `adl.yml`'s

@@ -22,6 +22,7 @@ import {
   type FeatureState,
   type TransitionCtx,
 } from '@adl/core/state';
+import type { ForgeAdapter, ForgeRepoRef } from '@adl/core/forge';
 import type { WorkspaceBackendId } from '@adl/workspace';
 import type { AssignMessage } from '../ipc/protocol.js';
 import { isDispatchPaused, type ControlState } from '../control/state.js';
@@ -29,6 +30,7 @@ import { openAttempt } from '../bookkeeping/attempt.js';
 import { sendBackBriefFromClosedRound } from '../loop/send-back-brief.js';
 import { transientBackoffRemainingMs } from '../loop/transient-retry.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
+import { publishOnEscalation } from '../publish/on-escalation.js';
 
 /**
  * One dispatch attempt (D-15..17): pick the oldest admissible queued
@@ -152,6 +154,21 @@ export interface DispatcherDeps {
    */
   readonly forge?: {
     readonly pushCredential: () => Promise<string>;
+    /**
+     * The adapter and repository the budget escalation posts to (LOOP-08,
+     * M06 step 6.8) — `daemon.ts` supplies both from
+     * `StartDaemonOptions.forge`.
+     *
+     * Optional *within* an already-optional `forge`, unlike the round loop's
+     * equivalent, and for a reason that is about this function rather than a
+     * relaxed standard: `pushCredential` is what a dispatch needs to do its
+     * own job, and every pre-6.8 caller supplies that alone. A dispatcher
+     * given a credential but no adapter still dispatches correctly and simply
+     * does not comment — whereas a round loop given a forge is already in the
+     * business of publishing.
+     */
+    readonly adapter?: ForgeAdapter;
+    readonly repo?: ForgeRepoRef;
   };
 }
 
@@ -660,7 +677,7 @@ async function escalateFeatureForBudget(
     return;
   }
 
-  await deps.db.transaction().execute(async (trx) => {
+  const escalated = await deps.db.transaction().execute(async (trx) => {
     const trxRepo = featuresRepository(trx);
     const applied = await trxRepo.compareAndSwapState({
       id: feature.id,
@@ -676,7 +693,7 @@ async function escalateFeatureForBudget(
         { featureId: feature.id },
         'dispatch: budget escalation lost the compareAndSwapState race — another writer moved this feature first',
       );
-      return;
+      return false;
     }
     const [effect] = outcome.effects;
     if (effect !== undefined) {
@@ -691,7 +708,50 @@ async function escalateFeatureForBudget(
         at: effect.at,
       });
     }
+    return true;
   });
+
+  // LOOP-08 (M06 step 6.8): the budget escalation is the one this milestone is
+  // most likely to surprise someone with — it costs money and it fires between
+  // rounds, with no worker running and nothing else about to write anywhere a
+  // human looks. Published only after the CAS above committed, so the comment
+  // can never describe an escalation that lost its race and did not happen.
+  //
+  // A row this candidate reached over budget has always committed at least
+  // once: only a continuation is checked (`state !== 'queued'`), and a
+  // continuation is by definition a feature whose earlier round produced a
+  // commit — so the change request this posts to exists.
+  //
+  // `deps.logger` is part of the guard rather than defaulted to a no-op:
+  // `publishOnEscalation` reports every one of its own failures by logging and
+  // returning, so running it with nowhere to report would convert "the comment
+  // did not post" into silence — the one outcome this step exists to remove.
+  // The only caller that supplies an adapter is `daemon.ts`, which always
+  // supplies a logger, so this narrows a type rather than disabling a feature.
+  if (
+    escalated &&
+    deps.logger !== undefined &&
+    deps.forge?.adapter !== undefined &&
+    deps.forge.repo !== undefined
+  ) {
+    const logger = deps.logger;
+    await publishOnEscalation(
+      {
+        db: deps.db,
+        logger,
+        forge: deps.forge.adapter,
+        forgeRepo: deps.forge.repo,
+        logsRoot: deps.logsRoot ?? join(dirname(deps.scratchRoot), 'logs'),
+      },
+      // Re-read rather than reusing the pre-escalation row: `publishOnEscalation`
+      // logs the state it found, and the row it was handed here still says
+      // whatever the feature was before the transition above moved it.
+      {
+        feature:
+          (await featuresRepository(deps.db).findById(feature.id)) ?? feature,
+      },
+    );
+  }
 }
 
 interface AssignedDispatch {

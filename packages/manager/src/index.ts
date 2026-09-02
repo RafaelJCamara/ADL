@@ -314,9 +314,16 @@ export {
 // arrive, and the manager's transcript route (04-08) reads through
 // `readTranscriptFrom`/`transcriptLength`. They must agree on what an offset
 // means, which is exactly what sharing this one implementation guarantees.
+// `readTranscriptTail` (M06 step 6.8) joins them as a third reader with a
+// different question — "the end of this file", not "everything after this
+// offset" — for the escalation comment's transcript excerpt. It lives beside
+// the other two rather than in `publish/` for the reason this whole module
+// exists: one implementation of what a transcript line is, shared by everyone
+// who reads one.
 export {
   openTranscriptWriter,
   readTranscriptFrom,
+  readTranscriptTail,
   transcriptLength,
   TranscriptOffsetError,
   type TranscriptRead,
@@ -399,6 +406,30 @@ export {
 // The branch every publish-side "which change request is this feature's?"
 // question joins on (5.10, 5.13) — one definition, two callers.
 export { changeRequestBranchFor } from './publish/branch.js';
+
+// The escalation publish path (6.8, LOOP-08) — what reaches the change request
+// when ADL stops and asks for a human. Published for the same reason
+// `publishDraftChangeRequest` is: a test drives it directly against a real
+// `ForgeAdapter`, and its two production callers (the round loop and the
+// dispatcher's budget escalation) get a stable import path.
+export {
+  publishOnEscalation,
+  type PublishOnEscalationDeps,
+  type PublishOnEscalationParams,
+} from './publish/on-escalation.js';
+export {
+  ESCALATION_COMMENT_KEY,
+  ESCALATION_COMMENT_TITLE,
+  MAX_TRANSCRIPT_EVENTS,
+  renderEscalationComment,
+  TRANSCRIPT_TAIL_BYTES,
+  type EscalationCommentInput,
+  type TranscriptExcerpt,
+} from './publish/escalation-comment.js';
+export {
+  readEscalations,
+  type Escalation,
+} from './publish/escalation-history.js';
 
 // FORGE-05's second half (5.13): promote the draft once a round comes back
 // green. Published for the same reason `publishDraftChangeRequest` is.

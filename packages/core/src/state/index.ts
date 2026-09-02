@@ -9,6 +9,7 @@ export {
   FEATURE_EVENT_KINDS,
   FEATURE_STATES,
   isTerminal,
+  LIMIT_REASONS,
   TERMINAL_STATES,
   TRANSITION_CTX_FIELDS,
   type ChangeRequestRef,
