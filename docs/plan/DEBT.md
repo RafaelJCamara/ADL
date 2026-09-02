@@ -44,9 +44,18 @@ only; the auth-failure classifier is a best-effort keyword match with no fixture
 `usage.ts`'s field names and nesting rest on an unverified assumption. Those are the three
 most likely failure points when 1.1 finally runs.
 
-> **M06 is blocked on 1.2.** Cross-backend usage reporting reliability is unverified, and
-> budget enforcement is a hard gate built on it. Best moment to close it: **during M05**,
-> when a real agent turn happens in anger for the first time.
+> **This entry used to read "M06 is blocked on 1.2."** It was not, in the end. The
+> 2026-08-27 maintainer decision unblocked it and M06 shipped code-complete on 2026-09-02
+> with 1.2 still open — the pre-implementation audit found that every budget mechanism
+> could be built and proven against the same replay doubles M01–M05 already used, and that
+> the live run adds _confidence that `cost_source: 'reported'` figures are accurate_ rather
+> than new code paths. What that leaves outstanding is real and worth stating plainly:
+> **M06's budget gates have never been checked against a number a provider actually
+> billed.** The `cost_source: 'unknown'` degradation path (6.5) is what makes an
+> unverifiable figure visible rather than silently trusted, and 6.10's boot-time warning
+> covers the adjacent case of a model with no price row at all — but neither is a
+> substitute for reconciling one real invoice. Best moment to close it is unchanged: the
+> first time a real agent turn happens in anger.
 
 ---
 

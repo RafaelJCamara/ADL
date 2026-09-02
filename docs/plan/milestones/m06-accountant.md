@@ -1,6 +1,6 @@
 # M06 — Accountant: Budgets, Stalls, Escalation
 
-**Status:** ◀ **IN PROGRESS**
+**Status:** 🟡 Code complete — every acceptance criterion ticked; step 6.1's live cost reconciliation deferred into `DEBT.md` § 1 by the 2026-08-27 maintainer decision
 **Depends on:** M05
 **Requirements:** LOOP-03…08, OBS-05, BACK-10 (8)
 

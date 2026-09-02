@@ -23,22 +23,27 @@ weekends, no deadline.
 
 ## Where we are
 
-**5 of 18 milestones delivered. Milestone 5 is code-complete — every step (5.0 through
-5.19) is done, all five acceptance criteria are proven end to end, and `pnpm test` /
-`pnpm typecheck` / `pnpm lint` / `pnpm format` are all clean on `main`. M05 carries one
-deferred check, same shape as M02 and M04: a real draft change request against a real,
-installed GitHub App has never been opened — only against the local mock GitHub server.
-M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl status`,
-OBS-05), 6.4 (the per-feature budget, LOOP-04), 6.5 (the global spend cap, LOOP-05),
-6.6 (stalemate detection over repeated finding fingerprints, LOOP-06), 6.7
-(provider-failure backoff on its own budget, LOOP-07), 6.8 (escalation posts to the
-pull request, LOOP-08), 6.9 (the selected model reaches the agent CLI, BACK-10) and
-6.10 (that model is the one for the role being dispatched, and an unpriceable one is
-warned about at boot, BACK-10) are
-done; 6.1's live cost reconciliation is deferred provisionally by maintainer decision
-(2026-08-27, see below). **6.11 is next — the last step in the milestone.** Three steps, 6.9–6.11 (per-role model
-selection, BACK-10), were added to the milestone on 2026-09-01 at the maintainer's
-request.**
+**6 of 18 milestones delivered. Milestone 6 is code-complete — every step from 6.2 to
+6.11 is done, all six acceptance criteria are ticked, and `pnpm typecheck` / `pnpm lint` /
+`pnpm format` are clean on `main`.** M06 carries one deferred check, the same shape M02,
+M04 and M05 each carry: step 6.1's live cost reconciliation — one real agent turn whose
+reported cost is checked against the provider's billed usage — needs a live
+`ANTHROPIC_API_KEY` that does not exist in this environment, so it is folded into
+`DEBT.md` § 1's end-of-project batch by the 2026-08-27 maintainer decision rather than
+blocking the milestone.
+
+What M06 delivered: the round ceiling proven through the real manager (6.2), spend visible
+per feature and per role in `adl status` (6.3, OBS-05), the per-feature budget and the
+fleet-wide spend cap, both checked **before** dispatch (6.4/6.5, LOOP-04/05), stalemate
+detection over repeated finding fingerprints (6.6, LOOP-06), provider-failure backoff on
+its own budget (6.7, LOOP-07), escalation posted to the pull request where a human will
+see it (6.8, LOOP-08), and per-role model selection end to end — the model reaching the
+CLI, the right role's model reaching it, an unpriceable one warned about at boot, and a
+repository able to request one from a daemon-declared allowlist (6.9–6.11, BACK-10).
+The last three steps were added to the milestone on 2026-09-01 at the maintainer's
+request; the record of why is in the milestone file.
+
+**M07 — Code Reviewer on the Gate Plugin Interface — is next.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -46,8 +51,9 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.10 done; 6.1 deferred; 6.11 left
-M07–M18 .............................. not started
+M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
+M07 Code Reviewer Gate .............. ◀ NEXT
+M08–M18 ............................. not started
 ```
 
 **What actually works today:** a real Claude Code agent, driven through a bounded workspace,
@@ -497,8 +503,33 @@ end-of-project verification pass. See [`DEBT.md`](./DEBT.md) § 1 — M05's own 
 
 ## What to do next
 
+**Start M07 — Code Reviewer on the Gate Plugin Interface**
+([`milestones/m07-code-reviewer-gate.md`](./milestones/m07-code-reviewer-gate.md)), nine
+steps, 7.1 through 7.9. Its goal: the reviewer is the first real plugin gate, judging
+implementation against spec and code quality from fresh context, **on exactly the interface
+a third party would use**.
+
+**7.1 is next: finalise the gate plugin interface against two real consumers** — the
+reviewer agent and a plain command gate. Some of the ground is already laid. M05's 5.17
+built `GateContext` (spec + diff + repository, and structurally no member naming the
+developer's session, transcript, prompt or send-back brief), `worker-entry/gates/` is
+already fenced by the `adl/gate-fresh-context` lint rule, and
+`worker-entry/stage-runner.ts`'s `GATE_IMPLEMENTATIONS` is the registry a new gate joins.
+M06's 6.10 left `AGENT_ROLE_PRODUCERS` with `reviewer: null` and a derived stage-id lookup
+built and unreached — wiring the reviewer is one entry there plus its producer.
+
+Two things worth reading before starting: `DEBT.md`'s **D-5-18-1** (an agent-backed gate
+must report usage through `sendUsage`, one level above the role — 5.18 recorded exactly
+where), and the cross-model-review note in M06's own acceptance-criteria record — 6.9–6.11
+made cross-model review _configurable_, and nothing yet makes it the default. That second
+one is filed against M07.
+
+---
+
+### The M06 record (code complete, 2026-09-02)
+
 **Maintainer decision, 2026-08-27 (`milestones/m06-accountant.md`'s own header carries the
-full text): M06 proceeds provisionally.** Step 6.1 — one real agent turn, reported cost
+full text): M06 proceeded provisionally.** Step 6.1 — one real agent turn, reported cost
 reconciled against the provider's billed usage — stays open, folded into
 [`DEBT.md`](./DEBT.md) § 1's existing end-of-project batch (items 1.1–1.4, the same
 precondition M04 already deferred) rather than blocking this milestone. A pre-implementation

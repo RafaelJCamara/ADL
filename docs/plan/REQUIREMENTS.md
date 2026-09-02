@@ -35,16 +35,16 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **DETECT-04** _(M10)_ Webhook and polling detecting the same feature simultaneously results in one run, not two
 - ✅ **DETECT-05** _(M05)_ A feature is claimed exclusively while in flight, reconciled against open ADL PRs so a restart never duplicates work
 
-## The Loop — M05 ✅ · M06 · M07
+## The Loop — M05 ✅ · M06 ✅ · M07
 
 - ✅ **LOOP-01** _(M05)_ developer → code review → harness gates → behaviour test → PR, without human orchestration
 - ✅ **LOOP-02** _(M05)_ A failed gate returns work to the developer carrying the failing verdict as context
-- ⬜ **LOOP-03** _(M06)_ Maximum round count per feature
-- ⬜ **LOOP-04** _(M06)_ Token/cost budget per feature, enforced **before** dispatching the next turn
-- ⬜ **LOOP-05** _(M06)_ Global spend cap above the per-feature caps
-- ⬜ **LOOP-06** _(M06)_ Stalemate detected by repeated findings, independently of round and budget limits
-- ⬜ **LOOP-07** _(M06)_ Provider outage / rate limit / auth failure consumes neither a round nor budget
-- ⬜ **LOOP-08** _(M06)_ Hitting any limit escalates to a human with full transcript and the disagreement, where they will see it
+- ✅ **LOOP-03** _(M06)_ Maximum round count per feature
+- ✅ **LOOP-04** _(M06)_ Token/cost budget per feature, enforced **before** dispatching the next turn
+- ✅ **LOOP-05** _(M06)_ Global spend cap above the per-feature caps
+- ✅ **LOOP-06** _(M06)_ Stalemate detected by repeated findings, independently of round and budget limits
+- ✅ **LOOP-07** _(M06)_ Provider outage / rate limit / auth failure consumes neither a round nor budget
+- ✅ **LOOP-08** _(M06)_ Hitting any limit escalates to a human with full transcript and the disagreement, where they will see it
 - ⬜ **LOOP-09** _(M07)_ Findings raised after round 1 become follow-ups, not new send-backs
 
 ## Agent Roles — M05 ✅ · M07 · M08
@@ -70,7 +70,7 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **HARN-05** _(M13)_ A security-checking harness ships as a working reference implementation
 - ⬜ **HARN-06** _(M13)_ Run an existing tool (semgrep, CodeRabbit, Greptile) as a gate with configuration rather than code
 
-## Model Backends — M04 🟡 · M05 ✅ · M06 · M11 · M16
+## Model Backends — M04 🟡 · M05 ✅ · M06 ✅ · M11 · M16
 
 - ✅ **BACK-01** Drive agentic CLIs through an `AgentBackend` port
 - ⬜ **BACK-02** _(M11)_ Drive raw model APIs, owning the loop, through a `ModelBackend` port
@@ -81,7 +81,7 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **BACK-07** _(M16)_ OpenAI works, via API and Codex CLI
 - ⬜ **BACK-08** _(M16)_ Gemini works, via API and CLI
 - ✅ **BACK-09** _(M05)_ Per-invocation token and cost recorded for every backend, degrading visibly where reporting is unreliable
-- ⬜ **BACK-10** _(M06)_ Each agent role runs on a model ADL selects rather than the backend's own default; a repository may request one only from a daemon-declared allowlist
+- ✅ **BACK-10** _(M06)_ Each agent role runs on a model ADL selects rather than the backend's own default; a repository may request one only from a daemon-declared allowlist
 
 ## Forge Integration — M05 🟡 · M09 · M14
 
@@ -131,13 +131,13 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 > M02's 🟡 is the _milestone's_ deferred Linux reproduction, not a per-requirement gap —
 > every implementation is merged, tested and CI-green. See [`DEBT.md`](./DEBT.md) § 1.
 
-## Observability & Control — M03 ✅ · M04 ✅ · M06 · M17 · M18
+## Observability & Control — M03 ✅ · M04 ✅ · M06 ✅ · M17 · M18
 
 - ✅ **OBS-01** See what every feature is doing right now
 - ✅ **OBS-02** Follow a running agent's transcript live
 - ✅ **OBS-03** Pause work
 - ✅ **OBS-04** Kill a single feature, one repo, or everything
-- ⬜ **OBS-05** _(M06)_ See spend per feature and per role
+- ✅ **OBS-05** _(M06)_ See spend per feature and per role
 - ⬜ **OBS-06** _(M17)_ An HTTP API exposes everything the CLI can do
 - ⬜ **OBS-07** _(M17)_ A web dashboard presents the same information over that API
 - ⬜ **OBS-08** _(M18)_ Diagnose a broken installation before running a feature through it
