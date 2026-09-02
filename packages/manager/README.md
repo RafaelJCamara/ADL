@@ -46,9 +46,12 @@ phases":
   sticky comment per role, and promote to ready only when every gate is green.
   **ADL never merges** — that is a build property, not a policy (FORGE-10).
 
+Budget enforcement joined that list during M06: the per-feature budget, the
+fleet-wide spend cap, stalemate detection and provider-failure backoff are all
+checked here, before dispatch rather than after it.
+
 What it still does **not** own: the reviewer agent (M07), the behaviour tester
-(M08), third-party harnesses (M13), webhook detection (M10), and budget
-enforcement (M06).
+(M08), third-party harnesses (M13), and webhook detection (M10).
 
 Two boundaries inside the worker are worth knowing about, because both are
 lint-enforced rather than conventional. A worker **never opens the database**
@@ -88,20 +91,21 @@ control there is whatever NTFS ACLs the containing directory already
 grants. Do not rely on `.adl/daemon.json`'s file mode for confidentiality
 on a Windows host — protect the directory itself instead.
 
-| Key                     | Meaning                                                                                                                                                                                                                       | Default                   |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `lease_ttl_ms`          | How long a worker may go without heartbeating before the reaper reclaims its lease.                                                                                                                                           | `30000`                   |
-| `heartbeat_interval_ms` | How often a worker heartbeats over IPC. Must satisfy `lease_ttl_ms >= 3 * heartbeat_interval_ms` — a tighter ratio produces spurious lease expiries that look exactly like worker crashes.                                    | `10000`                   |
-| `worker_stop_grace_ms`  | How long a worker gets to react to a `soft_stop` message before the manager escalates to `SIGKILL`.                                                                                                                           | `10000`                   |
-| `concurrency.global`    | The cap on features in flight at once, across every watched repository.                                                                                                                                                       | `1`                       |
-| `concurrency.per_repo`  | An optional additional cap per repository, so one busy repo cannot starve the others.                                                                                                                                         | unset (no per-repo limit) |
-| `api.host`              | The HTTP API's bind address. A non-loopback value is accepted and logged, never rejected — see the auth note below for why that is safe.                                                                                      | `127.0.0.1`               |
-| `api.port`              | The HTTP API's port.                                                                                                                                                                                                          | `4173`                    |
-| `api.token`             | The bearer token every non-`/health` route requires. Minted on first run if absent.                                                                                                                                           | minted                    |
-| `gc.interval_ms`        | How often the worktree/scratch-home GC backstop sweeps. Two orders of magnitude longer than `heartbeat_interval_ms` by design — the two sweeps share a scheduling mechanism, never a cadence.                                 | `1800000` (30 min)        |
-| `repos`                 | The watched repositories, declared here and reconciled into the database at every startup (a row present in the database but absent from this list is left alone, never deleted — a config edit is not a delete instruction). | `[]`                      |
-| `limits`                | A per-field **ceiling** on what a repository's own `adl.yml` may request (e.g. `max_rounds`), not a value that reaches a run directly.                                                                                        | daemon defaults           |
-| `agents`                | The daemon's own backend/model selection per role. A repository's `adl.yml` can never set these — they are recorded and discarded if it tries.                                                                                | unset                     |
+| Key                     | Meaning                                                                                                                                                                                                                                                        | Default                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `lease_ttl_ms`          | How long a worker may go without heartbeating before the reaper reclaims its lease.                                                                                                                                                                            | `30000`                   |
+| `heartbeat_interval_ms` | How often a worker heartbeats over IPC. Must satisfy `lease_ttl_ms >= 3 * heartbeat_interval_ms` — a tighter ratio produces spurious lease expiries that look exactly like worker crashes.                                                                     | `10000`                   |
+| `worker_stop_grace_ms`  | How long a worker gets to react to a `soft_stop` message before the manager escalates to `SIGKILL`.                                                                                                                                                            | `10000`                   |
+| `concurrency.global`    | The cap on features in flight at once, across every watched repository.                                                                                                                                                                                        | `1`                       |
+| `concurrency.per_repo`  | An optional additional cap per repository, so one busy repo cannot starve the others.                                                                                                                                                                          | unset (no per-repo limit) |
+| `api.host`              | The HTTP API's bind address. A non-loopback value is accepted and logged, never rejected — see the auth note below for why that is safe.                                                                                                                       | `127.0.0.1`               |
+| `api.port`              | The HTTP API's port.                                                                                                                                                                                                                                           | `4173`                    |
+| `api.token`             | The bearer token every non-`/health` route requires. Minted on first run if absent.                                                                                                                                                                            | minted                    |
+| `gc.interval_ms`        | How often the worktree/scratch-home GC backstop sweeps. Two orders of magnitude longer than `heartbeat_interval_ms` by design — the two sweeps share a scheduling mechanism, never a cadence.                                                                  | `1800000` (30 min)        |
+| `repos`                 | The watched repositories, declared here and reconciled into the database at every startup (a row present in the database but absent from this list is left alone, never deleted — a config edit is not a delete instruction).                                  | `[]`                      |
+| `limits`                | A per-field **ceiling** on what a repository's own `adl.yml` may request (e.g. `max_rounds`), not a value that reaches a run directly.                                                                                                                         | daemon defaults           |
+| `agents`                | The daemon's own backend/model selection per role. A repository's `adl.yml` can never set `backend` — a repo-supplied value is recorded and discarded (D-22, credential selection). It may request `model`, but only a value `repo_model_allowlist` names.     | unset                     |
+| `repo_model_allowlist`  | The models a watched repository may request through `agents.<role>.model`. **Absent means none** — note this is the opposite polarity to `global_budget_usd`, where absent means no cap applies. Anything else is discarded and reported as `not_allowlisted`. | unset (nothing permitted) |
 
 **The API bind and the bearer token.** The API binds `127.0.0.1` by default.
 The bearer token exists precisely so that widening the bind later (for a

@@ -54,7 +54,7 @@ silently — every limit reached ends in a human being told where they will see 
       because the whole file cannot fit a comment budget FORGE-06 also has to hold. Stated
       here rather than left implied, and recorded as `D-6-08-2`. One escalation source is
       still unwired — `reapOne`'s crash ceiling, `D-6-08-1`, owner M09.
-- [ ] A daemon operator can choose a different model per agent role, that choice reaches the
+- [x] A daemon operator can choose a different model per agent role, that choice reaches the
       agent CLI, and the ledger prices what actually ran. A repository may request a model
       only from a daemon-declared allowlist. (6.9, 6.10, 6.11)
 
@@ -491,7 +491,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       and stubbing out
       `startDaemon`'s call turned the wiring case red (`expected [] to have a length of 1`).
       12 new cases across four files.
-- [ ] **6.11** — The daemon-declared allowlist, and the D-22 amendment (BACK-10).
+- [x] **6.11** — The daemon-declared allowlist, and the D-22 amendment (BACK-10).
       `DAEMON_ONLY_FIELDS` holds both `agents.<role>.backend` and `agents.<role>.model`
       today, and `mergeConfig` discards a repo-supplied value for either. Keep `backend`
       exactly as it is; gate `model` on a new optional daemon field
@@ -512,6 +512,33 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       set these”, `adl-yml.ts`'s `backend`/`model` `.describe()` strings, `stage/agent.ts`'s
       `AgentTask.model` docblock (“D-22, daemon/config-controlled”), and `adl-yml.ts`'s own
       docblock example, which `adl-yml.test.ts` executes.
+      **Shipped as specified, with one addition the step forced rather than chose.**
+      `AgentBlockSchema`'s `backend` and `model` are now **optional** on the repo side.
+      They were both required, so a repository could not request a `model` without also
+      naming a `backend` that `mergeConfig` discards and `dispatcher.ts` logs as reaching
+      outside its trust boundary — making an adopter trigger a boundary warning in order
+      to use a permission the daemon deliberately granted. Loosening a required key to
+      optional only accepts documents that were previously rejected, so it holds under
+      `adl-yml.ts`'s own promise 1; `DaemonAgentBlockSchema` keeps both required, since an
+      operator naming a role must say what it runs on. **Found by the tests, not by
+      reading:** the first four allowlist cases failed to build their fixture at all
+      (`expected string, received undefined` for `agents.developer.backend`), which is
+      what surfaced the coupling.
+      A **fifth** document turned out to assert the old rule too and is corrected with the
+      other four: `effective-config.ts`'s own module docblock, whose rule 2 read “Backend
+      selection, model selection, and every credential-selecting field are daemon-only”.
+      It now carries a rule 3 for the allowlist, including the polarity warning — that is
+      the module where getting `global_budget_usd`'s absent-means-unlimited confused with
+      this field's absent-means-nothing would actually turn a permission check into a
+      no-op. `packages/manager/README.md`'s stale “does not own … budget enforcement
+      (M06)” line is corrected in passing, since 6.4–6.7 shipped exactly that.
+      **Watched failing** (convention 13): making the allowlist open by default — one line,
+      `has: () => true` — turned **six** cases red, including both “refuses when no
+      allowlist is configured” and the `DISCARD_REASONS` coverage case, which is the
+      closed-default property stated as an observation rather than an intention.
+      11 new cases across two files, including a real-daemon scenario in which an `adl.yml`
+      naming **only** a model — no backend — beats the daemon's own choice for that role
+      and lands on the real CLI's argv, because the allowlist named it.
 
 ## Notes
 

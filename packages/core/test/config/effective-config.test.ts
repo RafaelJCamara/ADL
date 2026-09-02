@@ -5,6 +5,7 @@ import {
   BACKEND_DEFAULT_MODEL,
   DAEMON_ONLY_FIELDS,
   DEFAULT_CONFIG,
+  DISCARD_REASONS,
   DaemonConfigSchema,
   EffectiveConfigSchema,
   mergeConfig,
@@ -110,7 +111,7 @@ describe('mergeConfig — limits clamp down, never up', () => {
   });
 });
 
-describe('mergeConfig — backend and model are daemon-only', () => {
+describe('mergeConfig — backend is daemon-only, model is allowlisted', () => {
   it('discards a repo-supplied backend, uses the daemon value, and reports the discard', () => {
     const daemon = DaemonConfigSchema.parse({
       agents: { developer: { backend: 'claude-code', model: 'default' } },
@@ -122,13 +123,18 @@ describe('mergeConfig — backend and model are daemon-only', () => {
 
     expect(config.agents.developer.backend).toBe('claude-code');
     expect(config.agents.developer.model).toBe('default');
+    // The two discards now differ in *why*, which is the whole point of
+    // M06 step 6.11's amendment: `backend` is never repo-settable, while
+    // `model` was refused only because this daemon publishes no allowlist.
     expect(report.discarded).toContainEqual({
       field: 'agents.developer.backend',
       requested: 'codex',
+      reason: 'daemon_only',
     });
     expect(report.discarded).toContainEqual({
       field: 'agents.developer.model',
       requested: 'gpt-5',
+      reason: 'not_allowlisted',
     });
   });
 
@@ -158,12 +164,150 @@ describe('mergeConfig — backend and model are daemon-only', () => {
     );
   });
 
-  it('DAEMON_ONLY_FIELDS is non-empty and includes the agent backend and model fields', () => {
+  it('DAEMON_ONLY_FIELDS holds every role’s backend and no role’s model', () => {
     expect(DAEMON_ONLY_FIELDS.length).toBeGreaterThan(0);
     for (const role of AGENT_ROLES) {
       expect(DAEMON_ONLY_FIELDS).toContain(`agents.${role}.backend`);
-      expect(DAEMON_ONLY_FIELDS).toContain(`agents.${role}.model`);
+      // Stated as a prohibition, not left as an absence. `model` left this
+      // list in M06 step 6.11 and is gated on `repo_model_allowlist` instead;
+      // putting it back would silently disable the allowlist, since
+      // `mergeConfig` would never reach the gate.
+      expect(DAEMON_ONLY_FIELDS).not.toContain(`agents.${role}.model`);
     }
+  });
+});
+
+/**
+ * The D-22 amendment (BACK-10, M06 step 6.11).
+ *
+ * The property that matters most is the **closed default**: a daemon that has
+ * never heard of `repo_model_allowlist` must behave exactly as it did before
+ * the field existed. Everything else here is the door being opened
+ * deliberately, one model at a time.
+ */
+describe('mergeConfig — repo_model_allowlist', () => {
+  it('refuses every repo-requested model when no allowlist is configured', () => {
+    const daemon = DaemonConfigSchema.parse({});
+    const repo = baseRepo({
+      agents: { developer: { model: 'claude-haiku-4-5' } },
+    });
+    const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+    expect(config.agents.developer.model).toBe(
+      DEFAULT_CONFIG.agents.developer.model,
+    );
+    expect(report.discarded).toContainEqual({
+      field: 'agents.developer.model',
+      requested: 'claude-haiku-4-5',
+      reason: 'not_allowlisted',
+    });
+  });
+
+  it('refuses a repo-requested model when the allowlist exists but omits it', () => {
+    const daemon = DaemonConfigSchema.parse({
+      repo_model_allowlist: ['claude-haiku-4-5'],
+    });
+    const repo = baseRepo({
+      agents: { developer: { model: 'claude-opus-5' } },
+    });
+    const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+    expect(config.agents.developer.model).toBe(
+      DEFAULT_CONFIG.agents.developer.model,
+    );
+    expect(report.discarded).toContainEqual({
+      field: 'agents.developer.model',
+      requested: 'claude-opus-5',
+      reason: 'not_allowlisted',
+    });
+  });
+
+  it('honours a repo-requested model the allowlist names, and reports no discard for it', () => {
+    const daemon = DaemonConfigSchema.parse({
+      agents: { developer: { backend: 'claude-code', model: 'claude-opus-5' } },
+      repo_model_allowlist: ['claude-haiku-4-5', 'claude-sonnet-5'],
+    });
+    const repo = baseRepo({
+      agents: { developer: { model: 'claude-haiku-4-5' } },
+    });
+    const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+    // The repo's choice overrides the daemon's own default for this role —
+    // that is what "requestable" means, and it is the one behaviour this
+    // field exists to enable.
+    expect(config.agents.developer.model).toBe('claude-haiku-4-5');
+    expect(
+      report.discarded.filter((d) => d.field === 'agents.developer.model'),
+    ).toEqual([]);
+  });
+
+  it('never lets an allowlist loosen backend selection', () => {
+    // An allowlist naming a *backend* id must not accidentally admit it:
+    // `backend` is not gated on this list at all, and D-22's credential
+    // argument is untouched by the amendment.
+    const daemon = DaemonConfigSchema.parse({
+      repo_model_allowlist: ['codex'],
+    });
+    const repo = baseRepo({
+      agents: { developer: { backend: 'codex', model: 'codex' } },
+    });
+    const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+    expect(config.agents.developer.backend).toBe(
+      DEFAULT_CONFIG.agents.developer.backend,
+    );
+    expect(report.discarded).toContainEqual({
+      field: 'agents.developer.backend',
+      requested: 'codex',
+      reason: 'daemon_only',
+    });
+    // …while the model of the same name IS admitted, because it is on the
+    // list. The two decisions are independent, which is exactly what a single
+    // `DAEMON_ONLY_FIELDS` membership test could not express.
+    expect(config.agents.developer.model).toBe('codex');
+  });
+
+  it('gates each role independently', () => {
+    const daemon = DaemonConfigSchema.parse({
+      repo_model_allowlist: ['claude-haiku-4-5'],
+    });
+    const repo = baseRepo({
+      agents: {
+        developer: { model: 'claude-haiku-4-5' },
+        reviewer: { model: 'claude-opus-5' },
+      },
+    });
+    const { config, report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+    expect(config.agents.developer.model).toBe('claude-haiku-4-5');
+    expect(config.agents.reviewer.model).toBe(
+      DEFAULT_CONFIG.agents.reviewer.model,
+    );
+    expect(report.discarded.map((d) => d.field)).toEqual([
+      'agents.reviewer.model',
+    ]);
+  });
+
+  it('every reason a discard can carry is in DISCARD_REASONS', () => {
+    // The frozen list's half of convention 7's pairing, checked against a
+    // real merge rather than by reading the union: a reason string invented
+    // at a call site would pass the type check only if it were already in the
+    // list, but a *list* that grew without the union following would not be
+    // caught by anything else.
+    const daemon = DaemonConfigSchema.parse({});
+    const repo = baseRepo({
+      agents: { developer: { backend: 'codex', model: 'gpt-5' } },
+    });
+    const { report } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+    expect(report.discarded.length).toBeGreaterThan(0);
+    for (const discard of report.discarded) {
+      expect(DISCARD_REASONS).toContain(discard.reason);
+    }
+    // Both reasons are reachable, so neither is a dead branch.
+    expect(new Set(report.discarded.map((d) => d.reason))).toEqual(
+      new Set(DISCARD_REASONS),
+    );
   });
 });
 

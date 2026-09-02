@@ -737,18 +737,32 @@ With 6.10's changes stashed, `main` itself failed **54 of 475** manager tests an
 step does not touch. Recorded in `DEBT.md` § 4. **Re-run a red file in isolation before
 believing it** — all four of this step's own files pass standalone (26 tests).
 
-**6.11 is next: the daemon-declared allowlist and the D-22 amendment (BACK-10).** Keep
-`agents.<role>.backend` daemon-only exactly as it is; gate `model` on a new optional
-top-level `repo_model_allowlist: string[]` beside `global_budget_usd`. **Absent means no
-repository may choose a model at all** — byte-identical to today, so the field ships closed
-and opening it is a deliberate daemon act. Note the polarity is inverted from
-`global_budget_usd`'s own "absent means the check never runs", and say so in the
-`.describe()` or a reader carries the wrong intuition across. `DiscardedField` gains
-`reason: 'daemon_only' | 'not_allowlisted'` as a frozen array plus derived union.
-**Four load-bearing documents assert the opposite today and become false** (convention 18)
-— `packages/manager/README.md`, `adl-yml.ts`'s `backend`/`model` `.describe()` strings,
-`stage/agent.ts`'s `AgentTask.model` docblock, and `adl-yml.ts`'s own docblock example,
-which `adl-yml.test.ts` executes.
+**6.11 is done (2026-09-02): the daemon-declared allowlist and the D-22 amendment
+(BACK-10).** `agents.<role>.backend` is unchanged — discarded unconditionally, because it
+selects a credential. `agents.<role>.model` left `DAEMON_ONLY_FIELDS` and is gated on a new
+optional top-level `repo_model_allowlist: string[]`. **Absent means no repository may
+choose a model at all**, byte-identical to before the field existed, so it ships closed and
+opening it is a deliberate daemon act — the opposite polarity to `global_budget_usd`, whose
+absence means no cap applies, and the `.describe()` and `effective-config.ts`'s module
+docblock both say so. `DiscardedField` gained `reason: 'daemon_only' | 'not_allowlisted'`
+(frozen array plus derived union), so a caller can tell "never permitted" from "not on this
+daemon's list"; `dispatcher.ts` already logs the report and needed no new channel.
+**One addition the step forced rather than chose:** `AgentBlockSchema`'s `backend` and
+`model` are now optional on the repo side. Both were required, so a repository could not
+request a `model` without also naming a `backend` that gets discarded and logged as
+reaching outside its trust boundary — making an adopter trigger a warning to use a
+permission the daemon deliberately granted. Found by the tests, not by reading: the first
+four allowlist cases failed to build their fixture at all.
+**Five documents asserted the old rule, not four** — `effective-config.ts`'s own module
+docblock was the one the plan missed, and it is the file where confusing the two polarities
+would actually turn the permission check into a no-op.
+**Watched failing:** making the allowlist open by default (`has: () => true`) turned six
+cases red, including the closed-default case and the `DISCARD_REASONS` coverage case.
+
+**M06 is code-complete.** All six acceptance criteria are ticked; 6.1's live cost
+reconciliation stays deferred in `DEBT.md` § 1 by the 2026-08-27 maintainer decision.
+**M07 — Code Reviewer on the Gate Plugin Interface — is next**, starting with 7.1,
+finalising the gate plugin interface against two real consumers.
 
 **Before you start, skim:**
 

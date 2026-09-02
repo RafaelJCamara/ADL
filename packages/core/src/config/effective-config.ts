@@ -29,12 +29,22 @@ import { RepoRelativePathSchema } from './path-guard.js';
  *    generic deep merge with a special case — a generic merge is exactly
  *    where a newly added limit field would arrive unclamped. A budget the
  *    watched repository can raise is not a budget.
- * 2. **Reject, never clamp, for `DAEMON_ONLY_FIELDS`.** Backend selection,
- *    model selection, and every credential-selecting field are daemon-only.
- *    A repo-supplied value for one of these is discarded outright and
- *    reported, never merged in any form. A backend the watched repository
- *    can choose is a credential-selection primitive under a trust boundary
- *    that already grants code execution on the ADL host.
+ * 2. **Reject, never clamp, for `DAEMON_ONLY_FIELDS`.** Backend selection and
+ *    every credential-selecting field are daemon-only. A repo-supplied value
+ *    for one of these is discarded outright and reported, never merged in any
+ *    form. A backend the watched repository can choose is a
+ *    credential-selection primitive under a trust boundary that already grants
+ *    code execution on the ADL host.
+ * 3. **Allowlist, for `agents.<role>.model`** (M06 step 6.11). Model selection
+ *    used to sit in rule 2 and no longer does: D-22's credential argument is
+ *    about `backend`, while a model *within* an already-chosen backend is a
+ *    cost concern, and cost has a clamp mechanism. A repo-supplied model is
+ *    honoured when {@link DaemonConfig.repo_model_allowlist} names it and
+ *    discarded (`reason: 'not_allowlisted'`) when it does not. **An absent
+ *    allowlist names nothing**, so this rule is closed until an operator opens
+ *    it — note that is the opposite polarity to `global_budget_usd`'s
+ *    absent-means-unlimited, and mixing them up would turn a permission check
+ *    into a no-op.
  *
  * ## Snapshotting
  *
@@ -394,6 +404,32 @@ export const DaemonConfigSchema = z
           'budget: once fleet-wide spend reaches it, new dispatch halts across every ' +
           'feature until it is raised or the spend is investigated.',
       ),
+    /**
+     * The models a watched repository is allowed to request per role
+     * (BACK-10, M06 step 6.11) — the daemon's half of the D-22 amendment.
+     *
+     * **Absent means no repository may choose a model at all**, which is
+     * byte-identical to this field not existing: it ships closed, and opening
+     * it is a deliberate daemon act.
+     *
+     * ⚠️ **The polarity is inverted from `global_budget_usd`'s**, which is the
+     * one thing a reader is likely to carry across wrongly. There, absent
+     * means the check never runs (permissive). Here, absent means the check
+     * always refuses (restrictive). Both are "absent means the operator did
+     * not opt in"; they differ because opting in to a *cap* and opting in to a
+     * *permission* point opposite ways.
+     */
+    repo_model_allowlist: z
+      .array(z.string().min(1))
+      .optional()
+      .describe(
+        'Model ids a watched repository may request via agents.<role>.model. ABSENT MEANS ' +
+          'NONE — no repository may choose a model unless this daemon names it here, which ' +
+          'is the opposite polarity to global_budget_usd (where absent means no cap ' +
+          'applies). A repo-supplied model that is not on this list is discarded and ' +
+          'reported with reason "not_allowlisted"; agents.<role>.backend remains ' +
+          'daemon-only unconditionally (D-22).',
+      ),
     api: ApiConfigSchema.default(ApiConfigSchema.parse({})),
     gc: GcConfigSchema.default(GcConfigSchema.parse({})),
     poll: PollConfigSchema.default(PollConfigSchema.parse({})),
@@ -482,16 +518,20 @@ const LIMITS_FIELDS = [
 ] as const satisfies readonly (keyof Limits)[];
 
 /**
- * Every field a repository's `adl.yml` may never influence at all —
- * backend selection, model selection, and (by extension) every
- * credential-selecting field. Reported, not silently absorbed, when a repo
- * supplies one (D-22).
+ * Every field a repository's `adl.yml` may never influence at all, on any
+ * daemon, under any configuration. Reported, not silently absorbed, when a
+ * repo supplies one (D-22).
+ *
+ * **`agents.<role>.model` left this list in M06 step 6.11** and is now gated
+ * on {@link DaemonConfig.repo_model_allowlist} instead. D-22's rationale — "a
+ * backend the watched repository can choose is a credential-selection
+ * primitive" — is about *credentials*, and credentials are `backend`. A model
+ * *within* an already-chosen backend is a cost concern, and cost already has a
+ * clamp mechanism. `backend` stays exactly as it was; see `DECISIONS.md` §
+ * "Model selection is repo-requestable behind a daemon allowlist".
  */
 export const DAEMON_ONLY_FIELDS: readonly string[] = Object.freeze(
-  AGENT_ROLES.flatMap((role) => [
-    `agents.${role}.backend`,
-    `agents.${role}.model`,
-  ]),
+  AGENT_ROLES.map((role) => `agents.${role}.backend`),
 );
 
 /** One `limits` field the repo tried to raise above the daemon's ceiling. */
@@ -501,10 +541,27 @@ export interface ClampedField {
   readonly ceiling: number;
 }
 
-/** One daemon-only field the repo attempted to set, and what it tried to set it to. */
+/**
+ * Why a repo-supplied value was thrown away (M06 step 6.11).
+ *
+ * `daemon_only` — the field is never repo-settable, on any daemon.
+ * `not_allowlisted` — the field *is* repo-settable in principle, but this
+ * daemon's `repo_model_allowlist` does not name the requested value (an absent
+ * allowlist names nothing).
+ *
+ * Two reasons and not one because they call for different actions: the first
+ * says "delete this from your `adl.yml`", the second says "ask your daemon
+ * operator". A caller that cannot tell them apart can only report the union,
+ * which is the less useful half of both (convention 6).
+ */
+export const DISCARD_REASONS = ['daemon_only', 'not_allowlisted'] as const;
+export type DiscardReason = (typeof DISCARD_REASONS)[number];
+
+/** One repo-supplied field that was thrown away, what it asked for, and why. */
 export interface DiscardedField {
   readonly field: string;
   readonly requested: string;
+  readonly reason: DiscardReason;
 }
 
 /** What the daemon has something to log, and the pull request has something to show. */
@@ -568,7 +625,17 @@ export function mergeConfig(
     }
   }
 
-  // --- agents: reject repo-supplied backend/model, never clamp --------
+  // --- agents: reject repo-supplied backend outright; gate model ------
+  //
+  // M06 step 6.11 (the D-22 amendment). `backend` is unchanged: discarded
+  // unconditionally, because it selects a credential. `model` is now accepted
+  // when — and only when — the daemon published an allowlist naming it. An
+  // absent allowlist is an EMPTY one, not an unlimited one, so a daemon that
+  // has never heard of this field behaves exactly as it did before the field
+  // existed. That is the whole point of the polarity: opening the door has to
+  // be something an operator did on purpose.
+  const modelAllowlist = new Set(daemon.repo_model_allowlist ?? []);
+
   const resolvedAgents = {} as Record<AgentRole, ResolvedAgentBlock>;
   for (const role of AGENT_ROLES) {
     const daemonBlock = daemon.agents[role] ?? defaults.agents[role];
@@ -578,18 +645,26 @@ export function mergeConfig(
       discarded.push({
         field: `agents.${role}.backend`,
         requested: repoBlock.backend,
+        reason: 'daemon_only',
       });
     }
+
+    let resolvedModel = daemonBlock.model;
     if (repoBlock?.model !== undefined) {
-      discarded.push({
-        field: `agents.${role}.model`,
-        requested: repoBlock.model,
-      });
+      if (modelAllowlist.has(repoBlock.model)) {
+        resolvedModel = repoBlock.model;
+      } else {
+        discarded.push({
+          field: `agents.${role}.model`,
+          requested: repoBlock.model,
+          reason: 'not_allowlisted',
+        });
+      }
     }
 
     resolvedAgents[role] = {
       backend: daemonBlock.backend,
-      model: daemonBlock.model,
+      model: resolvedModel,
       ...(repoBlock?.prompt_template !== undefined
         ? { prompt_template: repoBlock.prompt_template }
         : {}),

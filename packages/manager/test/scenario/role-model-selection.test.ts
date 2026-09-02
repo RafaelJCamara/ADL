@@ -63,6 +63,14 @@ const FAKE_CLAUDE_SUCCESS = fileURLToPath(
  */
 const SELECTED_MODEL = 'claude-haiku-4-5';
 
+/**
+ * What the repository asks for in the 6.11 case below — distinct from
+ * {@link SELECTED_MODEL}, which is what the daemon would otherwise have
+ * chosen, so "the repo's request won" and "nothing happened" cannot look
+ * alike. Also priceable, for the same reason.
+ */
+const REPO_REQUESTED_MODEL = 'claude-sonnet-5';
+
 async function waitUntil(
   predicate: () => boolean | Promise<boolean>,
   { timeoutMs = 40_000, intervalMs = 25 } = {},
@@ -218,6 +226,137 @@ describe('scenario: the model configured for a role reaches the agent CLI and pr
 
             const row = await featuresRepository(db).findById(featureId);
             expect(row).not.toBeNull();
+          } finally {
+            await handle.stop();
+          }
+        });
+      });
+    },
+  );
+
+  /**
+   * The D-22 amendment, end to end (M06 step 6.11).
+   *
+   * `packages/core/test/config/effective-config.test.ts` proves `mergeConfig`
+   * honours an allowlisted model. This proves the honoured value survives the
+   * effective-config snapshot, the fork, and the exec — which is the same
+   * chain 6.9 found broken with every individual layer green.
+   */
+  it(
+    'lets a repository request an allowlisted model, and that model reaches the CLI',
+    { timeout: 120_000 },
+    async () => {
+      await withTempDb(async ({ db, filePath }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+
+        await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+          const folder = `repo-model-${ulid()}`;
+          const featureDir = `features/${folder}`;
+          await mkdir(join(mainRepo, featureDir), { recursive: true });
+          await writeFile(
+            join(mainRepo, featureDir, 'spec.md'),
+            '# Title\n\nA feature.\n\n## Acceptance Criteria\n\n- It builds.\n',
+            'utf8',
+          );
+          await git.add(`${featureDir}/spec.md`);
+          await git.raw(['commit', '-m', 'add feature']);
+          const defaultBranch = (
+            await git.raw(['branch', '--show-current'])
+          ).trim();
+
+          const argvLog = join(scratchRoot, '..', 'claude-argv-repo.log');
+
+          // The repository asks for a model. Note it names no `backend` —
+          // which it could not have done before 6.11 made both fields
+          // optional, and which is the point: requesting a permitted thing
+          // must not require also requesting a forbidden one.
+          const adlYml: AdlYml = AdlYmlSchema.parse({
+            version: 1,
+            commands: {
+              build: { argv: ['true'] },
+              start: { argv: ['true'] },
+              test: { argv: ['true'] },
+              teardown: { argv: ['true'] },
+            },
+            pipeline: ['develop'],
+            agents: { developer: { model: REPO_REQUESTED_MODEL } },
+          });
+
+          // The daemon's own choice for this role is something else, so a
+          // pass-through that ignored the repo would produce a visibly
+          // different argv rather than an identical one.
+          const daemonConfig: DaemonConfig = DaemonConfigSchema.parse({
+            agents: {
+              developer: { backend: 'claude-code', model: SELECTED_MODEL },
+            },
+            repo_model_allowlist: [REPO_REQUESTED_MODEL],
+            repos: [
+              {
+                id: 'repo-1',
+                remote_url: 'https://example.invalid/repo.git',
+                default_branch: defaultBranch,
+                forge: 'github',
+                features_dir: 'features',
+              },
+            ],
+          });
+
+          const handle = await startDaemon({
+            dbFilePath: filePath,
+            port: 0,
+            apiToken: API_TOKEN,
+            migrationsDir: MIGRATIONS_DIR,
+            leaseTtlMs: 60_000,
+            heartbeatIntervalMs: 500,
+            daemonConfig,
+            resolveAdlYml: () => adlYml,
+            mainRepo,
+            scratchRoot,
+            workerEntryPath: TRACER_WORKER_ENTRY,
+            workerExecArgv: ['--import', 'tsx'],
+            workerEnv: {
+              ADL_TRACER_CLAUDE_BINARY_JSON: JSON.stringify([
+                process.execPath,
+                FAKE_CLAUDE_SUCCESS,
+                '--adl-argv-log',
+                argvLog,
+              ]),
+            },
+            dispatchIntervalMs: 20,
+          });
+
+          try {
+            const response = await fetch(
+              `http://127.0.0.1:${handle.port}/dev-run/${folder}`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${API_TOKEN}` },
+              },
+            );
+            expect(response.status).toBe(200);
+            const { featureId } = (await response.json()) as {
+              featureId: string;
+            };
+
+            await waitUntil(async () => {
+              const rows = await usageRepository(db).listForFeature(featureId);
+              return rows.length > 0;
+            });
+
+            const argv = (await readFile(argvLog, 'utf8'))
+              .split('\n')
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as string[])[0]!;
+
+            const modelFlag = argv.indexOf('--model');
+            expect(modelFlag).toBeGreaterThanOrEqual(0);
+            expect(argv[modelFlag + 1]).toBe(REPO_REQUESTED_MODEL);
+            // The daemon's own value lost to the repository's request, which
+            // only happens because the allowlist named it.
+            expect(argv).not.toContain(SELECTED_MODEL);
+
+            const usage = await usageRepository(db).listForFeature(featureId);
+            expect(usage[0]?.model_id).toBe(REPO_REQUESTED_MODEL);
           } finally {
             await handle.stop();
           }

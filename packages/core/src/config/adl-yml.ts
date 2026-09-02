@@ -54,6 +54,11 @@ import { parseYamlDocument } from './yaml-parse.js';
  *    repository can raise is not a budget, and a backend it can choose is a
  *    credential-selection primitive. This schema validates the repo-supplied
  *    value's own shape; the daemon-side clamp is 01-08's `EffectiveConfig`.
+ *    **Amended by M06 step 6.11 for `model` only:** `agents.<role>.model` is
+ *    now repo-*requestable* behind the daemon's `repo_model_allowlist`,
+ *    because D-22's credential argument covers `backend`, not the choice of
+ *    model within a backend already chosen. An absent allowlist names nothing,
+ *    so the amendment changes no existing installation's behaviour.
  * 4. **Commands are explicit by design and are never auto-detected**
  *    (`.planning/REQUIREMENTS.md` § Out of Scope) — auto-detection is
  *    non-deterministic exactly where it matters most, so `commands` has no
@@ -105,6 +110,11 @@ import { parseYamlDocument } from './yaml-parse.js';
  *   budget_usd: 15
  *   repeat_finding_threshold: 2
  *
+ * # `agents` is shape-valid here but not authoritative. `backend` is always
+ * # discarded from a repository's adl.yml (D-22, credential selection), and
+ * # `model` is honoured only if the daemon's `repo_model_allowlist` names it
+ * # — an absent allowlist names nothing (M06 step 6.11). Both discards are
+ * # reported, never silently absorbed.
  * agents:
  *   developer:
  *     backend: claude-code
@@ -494,25 +504,53 @@ export type Limits = z.infer<typeof LimitsSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * Per-role agent configuration. **Backend and credential selection is
- * daemon-only (D-22):** a budget the watched repo can raise is not a budget,
- * and a backend it can choose is a credential-selection primitive. This field
- * exists so a daemon-level config can use the same shape; 01-08 strips or
- * rejects a repo-supplied value against `EffectiveConfig`'s daemon side. That
- * clamp is not this schema's job — this schema validates shape only.
+ * Per-role agent configuration.
+ *
+ * **`backend` is daemon-only (D-22)** and always has been: a backend the
+ * watched repo can choose is a credential-selection primitive, so a
+ * repo-supplied value is discarded unconditionally.
+ *
+ * **`model` is daemon-*allowlisted* as of M06 step 6.11.** D-22's rationale is
+ * about credentials, and credentials are `backend`; a model within an
+ * already-chosen backend is a cost concern. So a repo-supplied `model` is
+ * honoured when the daemon's `repo_model_allowlist` names it and discarded
+ * (`reason: 'not_allowlisted'`) when it does not — and an **absent allowlist
+ * names nothing**, so a daemon that never configures one behaves exactly as it
+ * did before the field existed.
+ *
+ * Either way that decision is not this schema's job — this schema validates
+ * shape only, and `mergeConfig` in `effective-config.ts` is where the daemon
+ * side is applied.
+ *
+ * **Both fields became optional in M06 step 6.11**, and that was forced by the
+ * amendment rather than chosen alongside it: `backend` was required, so a
+ * repository could not request a `model` without also naming a `backend` that
+ * `mergeConfig` would discard and the dispatcher would log as reaching outside
+ * its trust boundary. Making an adopter trigger a boundary warning in order to
+ * use a feature the daemon deliberately opened is not a usable permission.
+ * Loosening a required key to optional only accepts documents that were
+ * previously rejected, so it is compatible under promise 1 in this module's
+ * header; the daemon-side `DaemonAgentBlockSchema` keeps both required, since
+ * an operator naming a role must say what it runs on.
  */
 const AgentBlockSchema = z.strictObject({
   backend: z
     .string()
     .min(1)
+    .optional()
     .describe(
       'The agent backend id (e.g. "claude-code"). No default. Shape-only: daemon-only ' +
-        'per D-22, and 01-08 clamps or rejects a repo-supplied value.',
+        'per D-22, and mergeConfig discards a repo-supplied value unconditionally.',
     ),
   model: z
     .string()
     .min(1)
-    .describe('The model alias to run this role with. No default.'),
+    .optional()
+    .describe(
+      'The model alias to run this role with. No default. Shape-only: honoured by ' +
+        'mergeConfig ONLY when the daemon’s repo_model_allowlist names it, and discarded ' +
+        'with reason "not_allowlisted" otherwise — an absent allowlist names nothing.',
+    ),
   prompt_template: RepoRelativePathSchema.optional().describe(
     'A repo-relative override of the default prompt template for this role. Default: none.',
   ),
@@ -586,9 +624,10 @@ export const AdlYmlSchema = z
         "see LimitsSchema for each field's individual documented ceiling.",
     ),
     agents: AgentsConfigSchema.default({}).describe(
-      'Per-role model selection, shape-only — backend and credential selection is ' +
-        'daemon-only (D-22) and a repo-supplied value here is clamped by EffectiveConfig, ' +
-        'not by this schema. Default: {} (no role overrides).',
+      'Per-role agent selection, shape-only. backend is daemon-only (D-22) and a ' +
+        'repo-supplied value is always discarded; model is honoured only when the ' +
+        'daemon’s repo_model_allowlist names it (M06 step 6.11). Either way the decision ' +
+        'is EffectiveConfig’s, not this schema’s. Default: {} (no role overrides).',
     ),
   })
   .meta({ id: 'AdlYml' });

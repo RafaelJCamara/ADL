@@ -334,10 +334,14 @@ void _everyAgentEventKindListed;
  *
  * `model` is present, not absent: `packages/core/src/config/adl-yml.ts`'s
  * `AgentsConfigSchema.developer.model` establishes that ADL — not the
- * backend — selects the model per role (D-22, daemon/config-controlled). A
- * backend that reports back a different model at `started` than the one
- * named here is a probe-worthy discrepancy for the adapter, not this
- * schema's concern.
+ * backend — selects the model per role. **Who inside ADL decides was
+ * amended by M06 step 6.11:** the daemon still decides, but it may delegate
+ * the choice to the watched repository for models it names in
+ * `repo_model_allowlist` (an absent allowlist names none). Either way the
+ * value arriving here has already been through `mergeConfig`, so a backend
+ * never has to know which side of that decision it came from. A backend that
+ * reports back a different model at `started` than the one named here is a
+ * probe-worthy discrepancy for the adapter, not this schema's concern.
  *
  * `04-CONTEXT.md`'s flagged BACK-01 edge probe row is why there is no tool
  * policy field here — see the module docblock.
@@ -350,7 +354,7 @@ export const AgentTaskSchema = z
     instructions: z.string().min(1),
     /** Workspace-relative paths to load explicitly. Empty when nothing beyond the prompt is needed. */
     contextFiles: z.array(RepoRelativePathSchema).default([]),
-    /** The model ADL selected for this role, per `adl.yml`'s `agents.<role>.model` (D-22). */
+    /** The model ADL selected for this role — daemon-chosen, or repo-requested from the daemon's allowlist (D-22 as amended by M06 step 6.11). */
     model: z.string().min(1).optional(),
     /** Opaque, backend-owned, opportunistic. Omitting it must never break correctness (leak 3). */
     sessionRef: z.string().min(1).optional(),
