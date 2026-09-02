@@ -57,7 +57,7 @@
  * to persist travels over the existing `fork()` IPC channel as `verdictJson`.
  */
 import { basename } from 'node:path';
-import type { EffectiveConfig } from '@adl/core/config';
+import { BACKEND_DEFAULT_MODEL, type EffectiveConfig } from '@adl/core/config';
 import { LoadError, type NormalizedSpec } from '@adl/core/spec';
 import {
   stageErrorPolicy,
@@ -481,9 +481,23 @@ export function createProductionStageRunner(
         systemPrompt,
         instructions,
         contextFiles: [],
-        ...(effectiveConfig.agents.developer.model !== undefined
-          ? { model: effectiveConfig.agents.developer.model }
-          : {}),
+        // BACK-10 (M06 step 6.9): the model ADL selected for this role, or
+        // **nothing at all** when the resolved value is the sentinel.
+        //
+        // The guard this replaces was dead. `ResolvedAgentBlockSchema.model`
+        // is `z.string().min(1)`, so `mergeConfig` always produces a string
+        // and `!== undefined` was always true — it read like a real check
+        // while admitting the one value that must never reach a backend.
+        //
+        // `BACKEND_DEFAULT_MODEL` means "ADL selected no model", which is not
+        // the same statement as "ADL selected a model called `default`".
+        // Omitting the field is what keeps those two apart at the port
+        // boundary rather than in each adapter's own head (rule 9): an adapter
+        // receiving `task.model` may pass it straight to its CLI, because the
+        // only values that ever arrive are ones a human actually chose.
+        ...(effectiveConfig.agents.developer.model === BACKEND_DEFAULT_MODEL
+          ? {}
+          : { model: effectiveConfig.agents.developer.model }),
         limits: { maxWallClockMs: DEFAULT_MAX_WALL_CLOCK_MS },
       };
 

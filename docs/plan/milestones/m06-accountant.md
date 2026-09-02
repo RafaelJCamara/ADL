@@ -392,33 +392,52 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       so the reason-to-prose map is build-checked. 29 new cases across six files.
       `pnpm test` / `pnpm typecheck` / `pnpm lint` all clean; `pnpm format` clean on the
       touched code (its four doc-file warnings pre-date this step on `main`).
-- [ ] **6.9** — The selected model actually reaches the agent CLI (BACK-10), developer role
+- [x] **6.9** — The selected model actually reaches the agent CLI (BACK-10), developer role
       only: the tracer slice through every layer before any widening (convention 14).
-      **Almost all of this already exists and does nothing.** `adl.yml`'s
-      `agents.<role>.{backend,model}` (`adl-yml.ts`, whose own `.describe()` calls it
-      “Shape-only”), `DaemonConfigSchema.agents.<role>`, `mergeConfig`'s resolution into
-      `EffectiveConfig.agents.<role>`, the vendor-neutral `AgentTask.model` port field, and
-      `worker-entry/stage-runner.ts`'s read of `effectiveConfig.agents.developer.model` are
-      all built and tested. The missing link is the last one:
-      `packages/agent-claude-code/src/backend.ts` builds its argv with **no `--model`**, and
-      a repo-wide grep confirms there is not one anywhere in the project. `task.model` is
-      consumed only as a fallback _label_ for the spend ledger, never to select anything.
-      Add `'--model', task.model` to that argv when `task.model` is present, and make the
-      manager **omit** `AgentTask.model` entirely when the resolved value is the `'default'`
-      sentinel — so the sentinel never crosses the port and the adapter structurally cannot
-      misinterpret it (convention 9). Export `BACKEND_DEFAULT_MODEL` from
-      `effective-config.ts` and derive `DEFAULT_AGENT_BLOCK.model` from it rather than
-      restating the literal (convention 8). Note the existing `!== undefined` guard at the
-      call site is dead: `ResolvedAgentBlockSchema.model` is `z.string().min(1)`, so it is
-      always present, and today always `'default'`. Nothing changes in `@adl/core`'s
-      vocabulary rule and nothing branches on backend identity, so this stays BACK-04-clean.
-      **Probe the pinned CLI before encoding the flag** (convention 15): `claude --help` on
-      a local **2.1.227** build shows `--model <model>`, but the project pins **2.1.237**
-      (`agent-claude-code/src/version.ts`) and the flag's interaction with `--bare` is
-      unverified. **Watched-failing guards:** argv carries `--model <id>` for a configured
-      model, and carries **no** `--model` under the sentinel — both watched red by reverting
-      the argv edit. **No migration and no new IPC field**: `AssignMessage` already carries
-      `effectiveConfigJson`, which is where the worker reads this from today.
+      **The audit was right — almost all of it existed and did nothing.** `adl.yml`'s
+      `agents.<role>.{backend,model}`, `DaemonConfigSchema`, `mergeConfig`'s resolution into
+      `EffectiveConfig.agents.<role>`, the vendor-neutral `AgentTask.model` port field and
+      `worker-entry/stage-runner.ts`'s read of it were all built and tested since M01;
+      `packages/agent-claude-code/src/backend.ts` simply built its argv with no `--model`,
+      so configuring a model selected nothing and `task.model` was consumed only as a
+      fallback _label_ for the spend ledger. **Three edits, one per layer:**
+      `BACKEND_DEFAULT_MODEL` is now exported from `effective-config.ts` with
+      `DEFAULT_AGENT_BLOCK.model` derived from it (convention 8); `stage-runner.ts` **omits**
+      `AgentTask.model` entirely when the resolved value is that sentinel, so it never
+      crosses the port and the adapter structurally cannot misread it (convention 9); and the
+      adapter appends `'--model', task.model` when the field is present, forwarding it
+      verbatim without interpreting alias-vs-full-id (BACK-04-clean). The `!== undefined`
+      guard at the call site was indeed dead — `ResolvedAgentBlockSchema.model` is
+      `z.string().min(1)`, so it was always true and admitted the one value that must never
+      reach a CLI.
+      **Probed before encoding the flag (convention 15), and the probe was decisive.** The
+      open question was `--model`'s interaction with `--bare`. Running the adapter's exact
+      argv against the installed binary: with `--model claude-haiku-4-5` the `system/init`
+      line reports `"model":"claude-haiku-4-5"`; with the flag removed it reports
+      `"claude-opus-5[1m]"`. So the flag is accepted alongside `--bare` and reaches model
+      selection rather than being ignored — only auth failed, which is downstream of both.
+      **Honest limit:** the installed CLI is **2.1.227**, one patch below the pinned
+      **2.1.237**, so the pinned build's behaviour is inferred from a patch release rather
+      than observed. The observations live in `test/argv.test.ts`'s docblock because
+      `version.ts` names a `test/fixtures/CAPTURE.md` that has never existed — filed as debt.
+      **Watched failing** (convention 13): reverting the argv edit turned the two positive
+      argv assertions red (`expected [ 'claude', '--bare', …(9) ] to include '--model'`), and
+      restoring the old dead `!== undefined` guard turned the omission assertion red
+      (`expected 'default' to be undefined`) — the second having first been observed
+      accidentally, against a stale `dist`, which is the same defect by another route.
+      9 new cases across three files, one per layer: `core/test/config/effective-config.test.ts`
+      (the sentinel survives a real merge and is displaced by a configured model),
+      `manager/test/worker-entry/stage-runner.test.ts` (the port boundary, through the real
+      runner with an injected `agentBackend`), and `agent-claude-code/test/argv.test.ts` (the
+      flag, its adjacency to its value, and the instructions staying the final positional —
+      WR-03's trailing-prompt hazard).
+      `pnpm typecheck` / `pnpm lint` / `pnpm format` clean; every non-forking suite green
+      (855 tests). **The manager suite is not reliably green on the dev machine right now** —
+      2–21 tests per run fail as `Test timed out in 5000ms`, a different set each time, all
+      passing in isolation. Measured against the committed baseline with this step's changes
+      stashed and rebuilt: `main` itself failed 21 and 14, against 14, 7 and 4 with them
+      applied. It is a margin problem in the suite, not a regression here, and it is recorded
+      in `DEBT.md` § 4 along with the `%TEMP%` fixture leak found while diagnosing it.
 - [ ] **6.10** — Every role, not just the developer (BACK-10). `stage-runner.ts` hardcodes
       `.agents.developer`, while `resolveStageRole` beside it already classifies a dispatch
       as `developer` / `command-gate` / `unsupported` — so map that to core's `AgentRole` and

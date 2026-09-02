@@ -397,6 +397,34 @@ export function claudeCodeBackend(
         task.systemPrompt,
         '--permission-mode',
         'acceptEdits',
+        // BACK-10 (M06 step 6.9): the one line that makes `agents.<role>.model`
+        // mean anything. Everything upstream of it — `adl.yml`'s schema,
+        // `DaemonConfigSchema`, `mergeConfig`'s resolution, `AgentTask.model`,
+        // and the manager's read of it — has existed and been tested since M01,
+        // while this argv carried no `--model` at all, so setting a model in
+        // configuration selected nothing and `task.model` was consumed only as
+        // a fallback *label* for the spend ledger.
+        //
+        // **Present means chosen.** The manager omits `AgentTask.model` when
+        // the resolved value is `BACKEND_DEFAULT_MODEL`, so a value arriving
+        // here is one a human actually configured and is passed through
+        // unexamined — this adapter does not know ADL's sentinel and must not
+        // learn it. Absent, no flag is emitted and the CLI picks its own
+        // default, which is the behaviour every pre-6.9 run already had.
+        //
+        // **Probed against the installed CLI before being written** (rule 15),
+        // because `--model`'s interaction with `--bare` was the open question:
+        // on 2.1.227 the exact argv below is accepted with `--bare` and the
+        // `system/init` line echoes `"model":"claude-haiku-4-5"`, against
+        // `"claude-opus-5[1m]"` for the same argv with the flag removed — so
+        // the flag reaches model selection rather than being ignored. The
+        // observed values are recorded in `test/argv.test.ts`'s own docblock,
+        // which is the only place they exist — `version.ts` points at a
+        // `test/fixtures/CAPTURE.md` that has never been created (`DEBT.md`).
+        // Note the probe ran on **2.1.227**, one patch below the pinned
+        // 2.1.237, because that is what was installed; the flag's presence on
+        // the pinned build is therefore inferred, not observed.
+        ...(task.model === undefined ? [] : ['--model', task.model]),
         task.instructions,
       ];
 

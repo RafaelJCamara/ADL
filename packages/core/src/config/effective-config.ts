@@ -53,10 +53,31 @@ export type AgentRole = (typeof AGENT_ROLES)[number];
 // Defaults
 // ---------------------------------------------------------------------------
 
+/**
+ * The `agents.<role>.model` value that means "whatever the backend would pick
+ * on its own" — ADL selecting no model rather than selecting a model named
+ * `default` (BACK-10, M06 step 6.9).
+ *
+ * It is a **sentinel, not a model id**, and the difference is load-bearing in
+ * two places. `@adl/manager`'s `worker-entry/stage-runner.ts` omits
+ * `AgentTask.model` entirely when it sees this value, so the sentinel never
+ * crosses the port and an adapter structurally cannot pass it to a CLI as
+ * though it were a real model name (rule 9). And no `model_prices` row will
+ * ever match it, which is exactly right: nothing was selected, so there is
+ * nothing to price under this name — the price belongs to whatever the backend
+ * actually ran, which `AgentEvent`'s `started.model` reports.
+ *
+ * Exported so {@link DEFAULT_AGENT_BLOCK} below and the manager's omission
+ * check are the same string by construction rather than by two people typing
+ * it (rule 8). A transcribed copy is the exact mistake that would make the
+ * omission silently stop working while every test still passed.
+ */
+export const BACKEND_DEFAULT_MODEL = 'default';
+
 /** ADL's own baked-in fallback backend and model, used when the daemon names none. */
 const DEFAULT_AGENT_BLOCK = Object.freeze({
   backend: 'claude-code',
-  model: 'default',
+  model: BACKEND_DEFAULT_MODEL,
 });
 
 /**

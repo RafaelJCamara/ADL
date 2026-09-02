@@ -31,11 +31,12 @@ installed GitHub App has never been opened — only against the local mock GitHu
 M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl status`,
 OBS-05), 6.4 (the per-feature budget, LOOP-04), 6.5 (the global spend cap, LOOP-05),
 6.6 (stalemate detection over repeated finding fingerprints, LOOP-06), 6.7
-(provider-failure backoff on its own budget, LOOP-07) and 6.8 (escalation posts to the
-pull request, LOOP-08) are done; 6.1's live cost reconciliation is deferred provisionally
-by maintainer decision (2026-08-27, see below). **6.9 is next.** Three steps, 6.9–6.11
-(per-role model selection, BACK-10), were added to the milestone on 2026-09-01 at the
-maintainer's request.**
+(provider-failure backoff on its own budget, LOOP-07), 6.8 (escalation posts to the
+pull request, LOOP-08) and 6.9 (the selected model reaches the agent CLI, BACK-10) are
+done; 6.1's live cost reconciliation is deferred provisionally by maintainer decision
+(2026-08-27, see below). **6.10 is next.** Three steps, 6.9–6.11 (per-role model
+selection, BACK-10), were added to the milestone on 2026-09-01 at the maintainer's
+request.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -43,7 +44,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.8 done; 6.1 deferred; 6.9–6.11 left
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.9 done; 6.1 deferred; 6.10–6.11 left
 M07–M18 .............................. not started
 ```
 
@@ -663,13 +664,54 @@ code (its four doc-file warnings pre-date this step on `main`). One tracer flake
 full parallel load and passed on the two runs after — the sixth sighting of `DEBT.md` § 4's
 existing entry, appended there.
 
-**6.9 is next: the selected model actually reaches the agent CLI (BACK-10), developer role
-only** — the tracer slice before any widening. Almost all of it already exists and does
-nothing: `adl.yml`'s `agents.<role>.{backend,model}`, `mergeConfig`'s resolution, the
-`AgentTask.model` port field and `stage-runner.ts`'s read of it are all built and tested;
-`packages/agent-claude-code/src/backend.ts` just never puts `--model` in its argv. **Probe
-the pinned CLI (2.1.237) before encoding the flag** (convention 15). Then 6.10 and 6.11 —
-steps run in order.
+**Done this session: 6.9, the selected model actually reaches the agent CLI (BACK-10).**
+The pre-implementation audit was right — almost the whole path existed and did nothing.
+`adl.yml`'s `agents.<role>.model`, `DaemonConfigSchema`, `mergeConfig`'s resolution, the
+vendor-neutral `AgentTask.model` port field and the manager's read of it have been built and
+tested since M01; `packages/agent-claude-code/src/backend.ts` simply built its argv with no
+`--model`, so setting a model in configuration selected nothing and `task.model` was
+consumed only as a fallback _label_ for the spend ledger. **Three edits, one per layer.**
+`BACKEND_DEFAULT_MODEL` is exported from `effective-config.ts` with `DEFAULT_AGENT_BLOCK.model`
+derived from it rather than restated (convention 8); `stage-runner.ts` **omits**
+`AgentTask.model` entirely when the resolved value is that sentinel, so "ADL selected no
+model" and "ADL selected a model called `default`" stay apart at the port boundary rather
+than in each adapter's head (convention 9); and the adapter appends `'--model', task.model`
+when the field is present, forwarding it verbatim. The old `!== undefined` guard really was
+dead: `ResolvedAgentBlockSchema.model` is `z.string().min(1)`, so it was always true and
+admitted the one value that must never reach a CLI.
+**The probe was decisive, and its limit is worth knowing.** The open question was
+`--model`'s interaction with `--bare`. Running the adapter's exact argv against the
+installed binary: with `--model claude-haiku-4-5` the `system/init` line reports
+`"model":"claude-haiku-4-5"`; with the flag removed, `"claude-opus-5[1m]"`. So the flag is
+accepted alongside `--bare` and reaches model selection — only auth failed, which is
+downstream of both. **But the installed CLI is 2.1.227, one patch below the pinned 2.1.237**,
+so the pinned build is inferred rather than observed. The observations live in
+`test/argv.test.ts`'s docblock because `version.ts` names a `test/fixtures/CAPTURE.md` that
+has never existed — now filed as debt, since the exact-pin's stated justification is a
+procedure with no artifact.
+**Watched failing** (convention 13): reverting the argv edit turned the positive argv
+assertions red; restoring the old dead guard turned the omission assertion red
+(`expected 'default' to be undefined`). 9 new cases across three files, one per layer.
+
+⚠ **The manager suite is not reliably green on this dev machine right now, and it is not
+this step.** Between 2 and 21 of its 475 tests fail per run, a different set each time,
+**every one of them `Error: Test timed out in 5000ms` rather than a failed assertion**, and
+every one passing when its file is run in isolation. Measured against the committed baseline
+rather than assumed: with 6.9's changes stashed and `pnpm build` re-run, `main` itself failed
+21 and 14; with them applied, 14, 7 and 4. CPU sat at 24% and `git status` returned in 42ms,
+so the machine is not pegged — the real-fork tests are simply close enough to vitest's
+default 5s that ordinary variance crosses it. Both this and the `%TEMP%` fixture leak found
+while diagnosing it (905 leaked `adl-*` directories, 840 from four `@adl/workspace`
+privilege fixtures) are recorded in `DEBT.md` § 4, owner M12. **Re-run a red manager file in
+isolation before believing it.** Every non-forking suite is green (855 tests), as are
+`pnpm typecheck`, `pnpm lint` and `pnpm format` on the touched code.
+
+**6.10 is next: every role, not just the developer (BACK-10).** `stage-runner.ts` hardcodes
+`.agents.developer` while `resolveStageRole` beside it already classifies a dispatch — map
+that to core's `AgentRole` and drive it off the frozen `AGENT_ROLES` with the house's
+`Exclude<T, Arr[number]> extends never` assertion, so a fourth role fails the build rather
+than silently falling back to the developer's model. Plus the accounting half this milestone
+owns: warn at boot for any configured role model with no `model_prices` row. Then 6.11.
 
 **Before you start, skim:**
 

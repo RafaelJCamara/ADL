@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AGENT_ROLES,
+  BACKEND_DEFAULT_MODEL,
   DAEMON_ONLY_FIELDS,
   DEFAULT_CONFIG,
   DaemonConfigSchema,
@@ -221,5 +222,46 @@ describe('mergeConfig — the result validates against EffectiveConfigSchema', (
     });
     const { config } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
     expect(EffectiveConfigSchema.safeParse(config).success).toBe(true);
+  });
+});
+
+/**
+ * BACK-10 (M06 step 6.9) — the sentinel that means "ADL selected no model".
+ *
+ * `DEFAULT_AGENT_BLOCK.model` and `@adl/manager`'s omission check have to be
+ * the same string, and rule 8 says derived rather than transcribed. This is
+ * the assertion that the export and the default cannot drift apart: a second
+ * literal typed into either would make the manager's omission silently stop
+ * working while every other test still passed, because the sentinel would
+ * simply flow through to the CLI as though a human had chosen a model
+ * genuinely named `default`.
+ */
+describe('BACKEND_DEFAULT_MODEL (BACK-10, M06 step 6.9)', () => {
+  it('is what every role defaults to when neither the daemon nor the repo names a model', () => {
+    for (const role of AGENT_ROLES) {
+      expect(DEFAULT_CONFIG.agents[role].model).toBe(BACKEND_DEFAULT_MODEL);
+    }
+  });
+
+  it('survives a merge in which nobody names a model', () => {
+    const daemon = DaemonConfigSchema.parse({});
+    const { config } = mergeConfig(DEFAULT_CONFIG, daemon, baseRepo({}));
+
+    // The value the manager tests for before deciding to omit `AgentTask.model`
+    // — reached through the real merge rather than read off the default
+    // object, because the merge is what actually produces it at dispatch time.
+    expect(config.agents.developer.model).toBe(BACKEND_DEFAULT_MODEL);
+  });
+
+  it('is displaced by a daemon-configured model, which is what then reaches the backend', () => {
+    const daemon = DaemonConfigSchema.parse({
+      agents: {
+        developer: { backend: 'claude-code', model: 'claude-haiku-4-5' },
+      },
+    });
+    const { config } = mergeConfig(DEFAULT_CONFIG, daemon, baseRepo({}));
+
+    expect(config.agents.developer.model).toBe('claude-haiku-4-5');
+    expect(config.agents.developer.model).not.toBe(BACKEND_DEFAULT_MODEL);
   });
 });

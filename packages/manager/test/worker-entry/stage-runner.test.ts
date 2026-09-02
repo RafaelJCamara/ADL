@@ -20,7 +20,10 @@ import { branchNameFor } from '@adl/workspace';
 import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import type { AssignMessage } from '../../src/ipc/protocol.js';
 import type { StageRunnerVerdict } from '../../src/ipc/stage-verdict.js';
-import { createProductionStageRunner } from '../../src/worker-entry/stage-runner.js';
+import {
+  createProductionStageRunner,
+  type ProductionStageRunnerDeps,
+} from '../../src/worker-entry/stage-runner.js';
 
 const FAKE_CLAUDE_SUCCESS = fileURLToPath(
   new URL('../helpers/fake-claude-success.mjs', import.meta.url),
@@ -929,4 +932,126 @@ describe('the command gate', () => {
       expect(existsSync(workspaceDirFor(scratchRoot, assign))).toBe(false);
     });
   }, 30_000);
+});
+
+/**
+ * BACK-10 (M06 step 6.9) — the middle of the tracer: what the manager puts on
+ * `AgentTask.model`, at the port boundary itself.
+ *
+ * `@adl/core`'s own suite proves the merge produces the value, and
+ * `agent-claude-code/test/argv.test.ts` proves the adapter turns a present
+ * value into `--model <id>`. This is the seam between them, and it is the one
+ * that carries a decision rather than a mapping: **ADL's "no model selected"
+ * sentinel must not cross the port.**
+ *
+ * It is asserted through the real `createProductionStageRunner` with an
+ * injected `agentBackend` (the seam `StageRunnerDeps.agentBackend` exists for)
+ * rather than by calling a helper: the value is read out of
+ * `assign.effectiveConfigJson`, which only a real run parses.
+ */
+describe('the developer AgentTask carries the configured model (BACK-10, M06 step 6.9)', () => {
+  /** A snapshot in which the daemon has named a model for the developer. */
+  function configWithDeveloperModel(model: string): string {
+    const daemon = DaemonConfigSchema.parse({
+      agents: { developer: { backend: 'claude-code', model } },
+    });
+    const repo = AdlYmlSchema.parse({
+      version: 1,
+      commands: {
+        build: { argv: ['npm', 'ci'] },
+        start: { argv: ['npm', 'run', 'dev'] },
+        test: { argv: ['npm', 'test'] },
+        teardown: { argv: ['docker', 'compose', 'down'] },
+      },
+      pipeline: ['develop', 'review', 'test'],
+    });
+    const { config } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+    return JSON.stringify(config);
+  }
+
+  /**
+   * Capture the `AgentTask` the runner builds, then end the run immediately.
+   *
+   * Reporting a `provider_error` is the cheapest honest terminal state: the
+   * task has already been constructed by the time `run` is called, which is
+   * the only thing being asserted, and nothing downstream of it is in scope.
+   */
+  function capturingBackend(): {
+    backend: NonNullable<ProductionStageRunnerDeps['agentBackend']>;
+    tasks: { model?: string }[];
+  } {
+    const tasks: { model?: string }[] = [];
+    const backend = {
+      async run(task: { model?: string }) {
+        tasks.push(task);
+        return {
+          outcome: 'error' as const,
+          error: {
+            kind: 'provider_error' as const,
+            retryable: true,
+            detail: 'captured the task and stopped',
+          },
+        };
+      },
+    };
+    return {
+      backend: backend as unknown as NonNullable<
+        ProductionStageRunnerDeps['agentBackend']
+      >,
+      tasks,
+    };
+  }
+
+  it('sets model when the daemon configured one', async () => {
+    await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+      const featureId = `feat-${ulid()}`;
+      await writeFeatureSpec(mainRepo, featureId);
+      await commitFeatureSpec(git, featureId);
+      const baseRef = (await git.revparse(['HEAD'])).trim();
+      const { backend, tasks } = capturingBackend();
+
+      await createProductionStageRunner({
+        claudeBinary: [process.execPath, FAKE_CLAUDE_SUCCESS],
+        claudeCliPath: process.env['PATH'] ?? '',
+        agentBackend: backend,
+      })(
+        buildAssign({
+          featureId,
+          mainRepo,
+          scratchRoot,
+          baseRef,
+          effectiveConfigJson: configWithDeveloperModel('claude-haiku-4-5'),
+        }),
+      );
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]?.model).toBe('claude-haiku-4-5');
+    });
+  });
+
+  it('OMITS model entirely under the default sentinel, rather than passing it through', async () => {
+    await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+      const featureId = `feat-${ulid()}`;
+      await writeFeatureSpec(mainRepo, featureId);
+      await commitFeatureSpec(git, featureId);
+      const baseRef = (await git.revparse(['HEAD'])).trim();
+      const { backend, tasks } = capturingBackend();
+
+      // The default fixture names no model, so `mergeConfig` resolves
+      // `BACKEND_DEFAULT_MODEL`. Before 6.9 this reached the adapter as the
+      // literal string `'default'` — which, once `--model` existed, would have
+      // been handed to the CLI as though someone had chosen a model by that
+      // name. Absence is the only representation of "nothing was selected"
+      // that an adapter cannot misread (rule 9).
+      await createProductionStageRunner({
+        claudeBinary: [process.execPath, FAKE_CLAUDE_SUCCESS],
+        claudeCliPath: process.env['PATH'] ?? '',
+        agentBackend: backend,
+      })(buildAssign({ featureId, mainRepo, scratchRoot, baseRef }));
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]?.model).toBeUndefined();
+      expect(Object.hasOwn(tasks[0] ?? {}, 'model')).toBe(false);
+    });
+  });
 });

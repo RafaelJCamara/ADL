@@ -47,6 +47,7 @@ export {
 export {
   AGENT_ROLES,
   ApiConfigSchema,
+  BACKEND_DEFAULT_MODEL,
   ConcurrencySchema,
   DAEMON_ONLY_FIELDS,
   DEFAULT_CONFIG,

@@ -141,3 +141,107 @@ describe('claudeCodeBackend argv — the auto-discovery-disabling flag and the e
     expect(argv[idx]).toBe(rendererOutput);
   });
 });
+
+/**
+ * BACK-10 (M06 step 6.9) — the model selection reaching the CLI.
+ *
+ * Everything upstream of this argv has existed since M01: `adl.yml`'s
+ * `agents.<role>.model`, `DaemonConfigSchema`, `mergeConfig`'s resolution, the
+ * vendor-neutral `AgentTask.model` port field, and the manager's read of it.
+ * None of it selected anything, because no `--model` was ever built here.
+ *
+ * The two halves are asserted separately because they fail separately: a
+ * configured model must **reach** the CLI, and an absent one must produce **no
+ * flag at all** rather than an empty or sentinel value the CLI would try to
+ * resolve as a model name.
+ *
+ * **Probed against the installed CLI before the flag was encoded** (rule 15).
+ * On 2.1.227, this exact argv with `--model claude-haiku-4-5` is accepted
+ * alongside `--bare` and its `system/init` line reports
+ * `"model":"claude-haiku-4-5"`; the same argv without the flag reports
+ * `"claude-opus-5[1m]"`.
+ *
+ * Those two observations are recorded here because there is nowhere else to
+ * put them: `version.ts`'s docblock names a `test/fixtures/CAPTURE.md` as the
+ * capture the pin re-runs, and that file has never existed (`DEBT.md`). The
+ * probe also ran on **2.1.227**, one patch below the pinned **2.1.237** —
+ * that is what was installed, so the flag's presence on the pinned build is
+ * inferred from a patch-level release, not observed.
+ */
+describe('claudeCodeBackend argv — model selection (BACK-10, M06 step 6.9)', () => {
+  it('carries `--model <id>` when the task names a model', async () => {
+    const { workspace, execCalls } = fakeWorkspace();
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+
+    await backend.run(baseTask({ model: 'claude-haiku-4-5' }), {
+      workspace,
+      onEvent: () => undefined,
+      signal: new AbortController().signal,
+    });
+
+    const argv = execCalls[0]?.argv ?? [];
+    expect(argv).toContain('--model');
+    // Adjacency, not mere presence: `--model` takes its value as the next
+    // argv element, so a flag separated from its id by anything else would
+    // make the CLI read the wrong token as the model name.
+    expect(argv[argv.indexOf('--model') + 1]).toBe('claude-haiku-4-5');
+  });
+
+  it('carries NO `--model` at all when the task names none', async () => {
+    const { workspace, execCalls } = fakeWorkspace();
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+
+    await backend.run(baseTask(), {
+      workspace,
+      onEvent: () => undefined,
+      signal: new AbortController().signal,
+    });
+
+    // The negative half, and the one that matters most: ADL's own
+    // "no model selected" sentinel never crosses the port (the manager omits
+    // the field), so this adapter has no sentinel to recognise and must not
+    // invent a value. No flag means the CLI picks its own default — the
+    // behaviour every pre-6.9 run already had.
+    expect(execCalls[0]?.argv).not.toContain('--model');
+  });
+
+  it('passes the configured model through verbatim, without interpreting it', async () => {
+    const { workspace, execCalls } = fakeWorkspace();
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+
+    // An alias rather than a full model id. The CLI accepts both ("Provide an
+    // alias for the latest model (e.g. 'fable', 'opus', or 'sonnet') or a
+    // model's full name"), and BACK-04 keeps ADL out of the business of
+    // knowing which is which — the adapter forwards what it was given.
+    await backend.run(baseTask({ model: 'opus' }), {
+      workspace,
+      onEvent: () => undefined,
+      signal: new AbortController().signal,
+    });
+
+    const argv = execCalls[0]?.argv ?? [];
+    expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+  });
+
+  it('keeps the instructions as the final positional argument, after the model flag', async () => {
+    const { workspace, execCalls } = fakeWorkspace();
+    const backend = claudeCodeBackend({ path: '/usr/bin' });
+
+    await backend.run(
+      baseTask({ model: 'claude-haiku-4-5', instructions: 'do the thing' }),
+      {
+        workspace,
+        onEvent: () => undefined,
+        signal: new AbortController().signal,
+      },
+    );
+
+    const argv = execCalls[0]?.argv ?? [];
+    // WR-03 (`DEBT.md`) records that the prompt is a trailing positional with
+    // no `--` terminator. Inserting a flag pair before it is safe only while
+    // it stays last; asserting that here is what keeps a future flag from
+    // being appended after it and silently becoming the prompt.
+    expect(argv[argv.length - 1]).toBe('do the thing');
+    expect(argv.indexOf('--model')).toBeLessThan(argv.length - 1);
+  });
+});
