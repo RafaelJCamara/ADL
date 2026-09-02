@@ -28,8 +28,21 @@ export const BUILT_IN_STAGE_IDS = Object.freeze([
 ] as const);
 export type BuiltInStageId = (typeof BUILT_IN_STAGE_IDS)[number];
 
-/** Where a resolved stage's implementation ultimately comes from. */
-export type HarnessSource = 'built-in' | 'npm' | 'repo-path';
+/**
+ * Where a resolved stage's implementation ultimately comes from.
+ *
+ * `built-in` / `npm` / `repo-path` are D-23's three tiers, and all three answer
+ * the same question: *where is the module?* `command` (HARN-02, M07 step 7.3)
+ * answers it differently — **there is no module**. A plain-command gate is a
+ * program named in the pipeline entry's own `with.command` block, so it needs
+ * no registry entry, no loader, and no resolution tier. That is what lets a
+ * third party add a gate today, before M13's harness loader exists: a gate that
+ * is just a program is the smallest possible extension point, and it is the one
+ * `.planning/research/ARCHITECTURE.md` §3 describes when it says a command gate
+ * "validates its output against the published JSON Schema instead of importing
+ * anything".
+ */
+export type HarnessSource = 'built-in' | 'npm' | 'repo-path' | 'command';
 
 /** One pipeline entry, resolved to a concrete implementation source. */
 export interface ResolvedStage {
@@ -102,6 +115,30 @@ function isGroupEntry(
 }
 
 /**
+ * Does this entry's `with:` block declare its own program (HARN-02, M07 step
+ * 7.3)?
+ *
+ * **Structural recognition only, never validation.** This decides which
+ * *source* an entry resolves to; whether the block is a well-formed command is
+ * the gate's own question, answered where the gate runs, with the gate's own
+ * schema, and reported as a `StageError` — because a misconfigured gate did not
+ * judge (CORE-06). Validating here instead would put every gate's private
+ * configuration schema into `@adl/core`, which is the opposite of what `with`
+ * being opaque is for.
+ *
+ * The bar is deliberately low and deliberately explicit: a `command` key whose
+ * value is an object. An entry that *meant* to name a built-in and typo'd its
+ * `with:` block still fails at the registry, where the error names the id.
+ */
+function declaresCommand(entry: PipelineEntryInput): boolean {
+  if (typeof entry === 'string' || isGroupEntry(entry)) return false;
+  const block = entry.with;
+  if (block === undefined) return false;
+  const command = block['command'];
+  return typeof command === 'object' && command !== null;
+}
+
+/**
  * Resolve one harness id against the registry, in D-23's fixed order:
  * built-in, then npm package, then repo-relative path. The path guard runs
  * first and unconditionally — a candidate that fails it is rejected before
@@ -154,7 +191,25 @@ export function resolvePipeline(
     }
 
     const id = typeof entry === 'string' ? entry : entry.harness;
-    const source = resolveHarnessId(id, registry);
+    // A command gate carries its own implementation, so it skips the registry
+    // entirely (HARN-02, M07 step 7.3) — but NOT the path guard, which
+    // `resolveHarnessId` runs first and unconditionally. The id still becomes a
+    // stage id that verdicts, `stage_attempts` and coverage rows join on, and
+    // one that could be read as a filesystem path is exactly as dangerous here
+    // as anywhere else.
+    let source: HarnessSource;
+    if (declaresCommand(entry)) {
+      if (!isRepoRelativePath(id)) {
+        throw new HarnessResolutionError(
+          `harness id "${id}" is not a valid repo-relative path candidate — it must not be ` +
+            'absolute, contain a `..` segment, or carry a drive-letter, UNC, or NUL byte.',
+          id,
+        );
+      }
+      source = 'command';
+    } else {
+      source = resolveHarnessId(id, registry);
+    }
 
     if (seenIds.has(id)) {
       throw new HarnessResolutionError(

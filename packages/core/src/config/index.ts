@@ -99,3 +99,14 @@ export {
   type PipelineEntryInput,
   type ResolvedStage,
 } from './pipeline.js';
+
+// The plain-command gate contract (HARN-02, M07 step 7.3) — a gate that is
+// just a program, declared entirely in a pipeline entry's own `with:` block.
+// The only harness tier that needs no loader, which is what makes it the
+// extension point available before M13's.
+export {
+  COMMAND_GATE_OUTPUT_MODES,
+  CommandGateWithSchema,
+  type CommandGateOutputMode,
+  type CommandGateWith,
+} from './command-gate.js';

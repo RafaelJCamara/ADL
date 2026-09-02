@@ -66,7 +66,11 @@
  * A new gate belongs in this directory so it inherits both layers on the day
  * it is created (D-27).
  */
-import { parseDuration, type CommandSpec } from '@adl/core/config';
+import {
+  parseDuration,
+  type CommandGateOutputMode,
+  type CommandSpec,
+} from '@adl/core/config';
 import type {
   AgentEvent,
   ExecResult,
@@ -75,7 +79,11 @@ import type {
 } from '@adl/core/stage';
 import { stageErrorPolicy } from '@adl/core/stage';
 import { join } from 'node:path';
-import { fingerprintFinding, type Verdict } from '@adl/core/verdict';
+import {
+  fingerprintFinding,
+  VerdictSchema,
+  type Verdict,
+} from '@adl/core/verdict';
 import type { StageRunnerVerdict } from '../../ipc/stage-verdict.js';
 
 /**
@@ -208,7 +216,26 @@ export interface CommandGateConfig {
   readonly command: CommandSpec;
   /** The child's `PATH`. Required by `ExecSpec`, and required here for the same reason. */
   readonly path: string;
+  /**
+   * What this gate's stdout means (HARN-02, M07 step 7.3). Defaults to
+   * `exit_code`, which is 5.14's behaviour exactly — see
+   * `@adl/core/config`'s `command-gate.ts` for why the mode is declared
+   * rather than sniffed.
+   */
+  readonly emits?: CommandGateOutputMode;
 }
+
+/**
+ * How much of a verdict-emitting gate's stdout is quoted back when it will not
+ * parse.
+ *
+ * Short on purpose. This lands in a `StageError.detail`, which the escalation
+ * comment renders into a **public** pull request (M06 step 6.8), and the point
+ * is to show the operator enough to recognise their own output — not to
+ * reproduce it. The whole of it is in the attempt's transcript, which is where
+ * `adl logs` points.
+ */
+const MALFORMED_VERDICT_EXCERPT_CHARS = 500;
 
 /**
  * Run the command and report what it decided.
@@ -242,6 +269,15 @@ export async function runCommandGate(
   const cwd = join(workspace.root, command.cwd ?? '.');
 
   let tail: OutputTail = { text: '', elided: 0 };
+  // Accumulated SEPARATELY from the interleaved tail above, and only in
+  // `verdict` mode (M07 step 7.3). The tail deliberately merges both streams
+  // because that is how a human reads a failing run; a verdict is a document,
+  // and interleaving a progress line from stderr into the middle of it would
+  // corrupt the very thing being parsed. Not accumulated at all in
+  // `exit_code` mode, so an ordinary test suite printing megabytes does not
+  // pay for a buffer nothing reads.
+  const emits: CommandGateOutputMode = config.emits ?? 'exit_code';
+  let stdout = '';
 
   let result: ExecResult;
   try {
@@ -261,6 +297,9 @@ export async function runCommandGate(
       },
       (chunk) => {
         tail = appendTail(tail, chunk);
+        if (emits === 'verdict' && chunk.stream === 'stdout') {
+          stdout += chunk.text;
+        }
         gate.onEvent(chunkEvent(chunk));
       },
     );
@@ -292,6 +331,18 @@ export async function runCommandGate(
       `the ${stageId} command was killed after ${String(result.durationMs)}ms without exiting` +
         `${result.signal === undefined ? '' : ` (signal ${result.signal})`}: ${renderTail(tail)}`,
     );
+  }
+
+  // HARN-02 (M07 step 7.3): a gate that promised a verdict is judged on the
+  // verdict, whatever its exit code was.
+  //
+  // The exit code is deliberately not consulted here, in EITHER direction. A
+  // linter that exits 1 to mean "I found things" and prints an accurate
+  // `send_back` is reporting correctly, and a gate that exits 0 while printing
+  // a `fail` is too. Mixing the two signals would make the contract "emit a
+  // verdict AND get the exit code right", which is two contracts.
+  if (emits === 'verdict') {
+    return verdictFromStdout(stageId, stdout, result.exitCode);
   }
 
   if (result.exitCode === 0) {
@@ -329,9 +380,69 @@ export async function runCommandGate(
   return { kind: 'verdict', verdict };
 }
 
+/**
+ * Parse a verdict-emitting gate's stdout, or say honestly that it could not be
+ * parsed (HARN-02, M07 step 7.3).
+ *
+ * **Every failure here is `unparseable`, never a verdict** — CORE-06 in its
+ * most literal form. A gate that promised a verdict and produced something
+ * else did not judge, and inventing a `send_back` from its exit code would
+ * charge the developer a round for the gate author's bug. `stageErrorPolicy`
+ * makes `unparseable` non-retryable, so the round loop escalates to a human
+ * rather than re-running a program that will misbehave identically.
+ *
+ * Validated against the same `VerdictSchema` the published JSON Schema is
+ * emitted from (`packages/core/schema/verdict.schema.json`, diffed in CI), so
+ * a gate author checking their output against the published contract and ADL
+ * checking it here are checking the same thing — not two implementations of
+ * one idea (D-25's reasoning, one layer down).
+ */
+function verdictFromStdout(
+  stageId: string,
+  stdout: string,
+  exitCode: number,
+): StageRunnerVerdict {
+  const text = stdout.trim();
+  if (text === '') {
+    return stageError(
+      'unparseable',
+      `the ${stageId} gate declares \`emits: verdict\` but printed nothing to stdout ` +
+        `(it exited ${String(exitCode)})`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return stageError(
+      'unparseable',
+      `the ${stageId} gate declares \`emits: verdict\` but its stdout is not JSON: ` +
+        `${error instanceof Error ? error.message : String(error)} — ${excerpt(text)}`,
+    );
+  }
+
+  const result = VerdictSchema.safeParse(parsed);
+  if (!result.success) {
+    return stageError(
+      'unparseable',
+      `the ${stageId} gate declares \`emits: verdict\` but its stdout is not a valid ` +
+        `verdict: ${result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')} — ${excerpt(text)}`,
+    );
+  }
+
+  return { kind: 'verdict', verdict: result.data };
+}
+
+/** A bounded, elision-stated excerpt for a `StageError.detail`. */
+function excerpt(text: string): string {
+  if (text.length <= MALFORMED_VERDICT_EXCERPT_CHARS) return text;
+  return `${text.slice(0, MALFORMED_VERDICT_EXCERPT_CHARS)}…(${String(text.length - MALFORMED_VERDICT_EXCERPT_CHARS)} more characters; the whole of it is in this attempt's transcript)`;
+}
+
 /** A `StageError` envelope with `retryable` derived from the kind, never restated (rule 8). */
 function stageError(
-  kind: 'provider_error' | 'timeout',
+  kind: 'provider_error' | 'timeout' | 'unparseable',
   detail: string,
 ): StageRunnerVerdict {
   return {

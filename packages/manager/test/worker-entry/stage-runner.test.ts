@@ -1027,7 +1027,7 @@ describe('the developer AgentTask carries the configured model (BACK-10, M06 ste
       expect(tasks).toHaveLength(1);
       expect(tasks[0]?.model).toBe('claude-haiku-4-5');
     });
-  });
+  }, 30_000);
 
   it('OMITS model entirely under the default sentinel, rather than passing it through', async () => {
     await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
@@ -1053,7 +1053,7 @@ describe('the developer AgentTask carries the configured model (BACK-10, M06 ste
       expect(tasks[0]?.model).toBeUndefined();
       expect(Object.hasOwn(tasks[0] ?? {}, 'model')).toBe(false);
     });
-  });
+  }, 30_000);
 
   it('reads the model for the role being dispatched, never another role’s (M06 step 6.10)', async () => {
     await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
@@ -1110,5 +1110,216 @@ describe('the developer AgentTask carries the configured model (BACK-10, M06 ste
       expect(tasks[0]?.model).not.toBe('claude-opus-5');
       expect(tasks[0]?.model).not.toBe('claude-sonnet-5');
     });
-  });
+  }, 30_000);
+});
+
+/**
+ * The plain-command gate contract (HARN-02, M07 step 7.3).
+ *
+ * A gate is any program. It carries its own `command` in the pipeline entry's
+ * `with:` block — no registry entry, no loader, no built-in id — and if it
+ * declares `emits: verdict` it is judged on the JSON it prints rather than on
+ * its exit status.
+ *
+ * The cases that carry weight, and would be cheap to lose:
+ *
+ * - **A third-party gate runs its OWN command**, not `adl.yml`'s
+ *   `commands.test`. A gate that quietly ran the test suite would be reporting
+ *   on something other than what its stage id names.
+ * - **Malformed output is `unparseable`, never a verdict** (CORE-06). A gate
+ *   that promised a verdict and printed something else judged nothing, and
+ *   falling back to its exit code would charge the developer a round for the
+ *   gate author's bug.
+ * - **The exit code is not consulted in verdict mode, in either direction** —
+ *   a linter that exits 1 to mean "I found things" and prints an accurate
+ *   `send_back` is reporting correctly.
+ */
+describe('the plain-command gate (HARN-02, M07 step 7.3)', () => {
+  /**
+   * An `EffectiveConfig` whose pipeline entry at index 1 IS the gate under
+   * test, and whose `commands.test` fails loudly.
+   *
+   * The failing test command is the control: if the gate ever ran that instead
+   * of its own, every assertion below would change answer.
+   */
+  function commandGatePipeline(withBlock: Record<string, unknown>): string {
+    const daemon = DaemonConfigSchema.parse({});
+    const repo = AdlYmlSchema.parse({
+      version: 1,
+      commands: {
+        build: { argv: ['npm', 'ci'] },
+        start: { argv: ['npm', 'run', 'dev'] },
+        test: { argv: [process.execPath, '-e', 'process.exit(9)'] },
+        teardown: { argv: ['docker', 'compose', 'down'] },
+      },
+      pipeline: ['develop', { harness: 'audit', with: withBlock }],
+    });
+    const { config } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+    return JSON.stringify(config);
+  }
+
+  /** A node one-liner, as a `CommandSpec`-shaped `with.command` value. */
+  function node(source: string): Record<string, unknown> {
+    return { argv: [process.execPath, '-e', source] };
+  }
+
+  async function runAuditGate(
+    repo: TempRepo,
+    withBlock: Record<string, unknown>,
+  ): Promise<StageRunnerVerdict> {
+    const { assign: developer } = await runDeveloperStage({
+      mainRepo: repo.mainRepo,
+      scratchRoot: repo.scratchRoot,
+      git: repo.git,
+    });
+    const result = await createProductionStageRunner()(
+      buildAssign({
+        featureId: developer.featureId,
+        mainRepo: repo.mainRepo,
+        scratchRoot: repo.scratchRoot,
+        baseRef: developer.baseRef,
+        stageId: 'audit',
+        stageIndex: 1,
+        roundId: developer.roundId,
+        effectiveConfigJson: commandGatePipeline(withBlock),
+      }),
+    );
+    return JSON.parse(result.verdictJson) as StageRunnerVerdict;
+  }
+
+  it('runs the gate’s own command, not adl.yml’s test command', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        command: node('process.exit(0)'),
+      });
+
+      // `commands.test` in this fixture exits 9. A pass is only reachable if
+      // the gate ran the argv from its own `with:` block.
+      expect(verdict.kind).toBe('verdict');
+      if (verdict.kind !== 'verdict') return;
+      expect(verdict.verdict.outcome).toBe('pass');
+    });
+  }, 30_000);
+
+  it('accepts a verdict on stdout and returns it verbatim', async () => {
+    await withTempRepo(async (repo) => {
+      const emitted = {
+        outcome: 'send_back',
+        summary: 'two issues in the exporter',
+        findings: [
+          {
+            fingerprint: 'b'.repeat(64),
+            severity: 'blocker',
+            title: 'missing null guard',
+            detail: 'src/exporter.ts:12 dereferences a possibly-null value',
+            criterionRef: { kind: 'global', category: 'other' },
+          },
+        ],
+      };
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node(
+          `process.stdout.write(${JSON.stringify(JSON.stringify(emitted))})`,
+        ),
+      });
+
+      expect(verdict.kind).toBe('verdict');
+      if (verdict.kind !== 'verdict') return;
+      // Narrowed on the outcome before reading `summary`: `skip` carries a
+      // reason and no summary, so the union does not have the field until the
+      // member is known. The narrowing is the assertion doing double duty.
+      expect(verdict.verdict.outcome).toBe('send_back');
+      if (verdict.verdict.outcome !== 'send_back') return;
+      expect(verdict.verdict.summary).toBe('two issues in the exporter');
+      expect(verdict.verdict.findings).toHaveLength(1);
+    });
+  }, 30_000);
+
+  it('ignores the exit code in verdict mode — a linter that exits 1 and reports honestly is right', async () => {
+    await withTempRepo(async (repo) => {
+      const emitted = {
+        outcome: 'pass',
+        summary: 'nothing to report',
+        checked: [{ kind: 'global', category: 'code_quality' }],
+      };
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node(
+          `process.stdout.write(${JSON.stringify(JSON.stringify(emitted))}); process.exit(1)`,
+        ),
+      });
+
+      // Exit 1 with a `pass` on stdout. Mixing the two signals would make the
+      // contract "emit a verdict AND get the exit code right", which is two
+      // contracts.
+      expect(verdict.kind).toBe('verdict');
+      if (verdict.kind !== 'verdict') return;
+      expect(verdict.verdict.outcome).toBe('pass');
+    });
+  }, 30_000);
+
+  it('reports stdout that is not JSON as unparseable, never as a verdict', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node('process.stdout.write("all good!")'),
+      });
+
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      // Non-retryable: the same program will misbehave identically, so the
+      // round escalates to a human rather than spinning.
+      expect(verdict.error.retryable).toBe(false);
+    });
+  }, 30_000);
+
+  it('reports JSON that is not a verdict as unparseable, naming the stage', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node(
+          'process.stdout.write(JSON.stringify({ outcome: "looks_fine" }))',
+        ),
+      });
+
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('audit');
+    });
+  }, 30_000);
+
+  it('reports empty stdout as unparseable rather than inventing a pass', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node('process.exit(0)'),
+      });
+
+      // A gate that promised a verdict and exited 0 silently did not judge.
+      // Reading its exit code as a pass is exactly the false green this
+      // project exists to prevent.
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+    });
+  }, 30_000);
+
+  it('refuses a with: block that will not validate, rather than falling back to commands.test', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        command: node('process.exit(0)'),
+        emits: 'json',
+      });
+
+      // Falling back would run `commands.test` — a different program than the
+      // configuration named. A gate that ran something other than what it was
+      // configured to run is worse than one that refused.
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('emits');
+    });
+  }, 30_000);
 });

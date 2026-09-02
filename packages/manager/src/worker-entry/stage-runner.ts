@@ -60,8 +60,12 @@ import { basename } from 'node:path';
 import {
   AGENT_ROLES,
   BACKEND_DEFAULT_MODEL,
+  CommandGateWithSchema,
   type AgentRole,
+  type CommandGateOutputMode,
+  type CommandSpec,
   type EffectiveConfig,
+  type ResolvedStage,
 } from '@adl/core/config';
 import { LoadError, type NormalizedSpec } from '@adl/core/spec';
 import {
@@ -71,6 +75,7 @@ import {
   type AgentRunner,
   type AgentTask,
   type DeveloperOutcome,
+  type GateContext,
   type StageErrorKind,
   type Workspace,
 } from '@adl/core/stage';
@@ -204,9 +209,82 @@ const NO_STAGE_CONFIG: Readonly<Record<string, unknown>> = Object.freeze({});
 function stageConfigFor(
   assign: AssignMessage,
 ): Readonly<Record<string, unknown>> {
+  return resolvedStageFor(assign)?.with ?? NO_STAGE_CONFIG;
+}
+
+/**
+ * The snapshotted pipeline entry this dispatch is running, or `undefined` when
+ * the pipeline will not resolve or does not agree with the message.
+ *
+ * Looked up by **index**, then **checked against the id**, and both halves
+ * matter. The index is the unambiguous coordinate — `dispatcher.ts` assigns it
+ * and `transition()` only ever advances within the same pipeline — so it is
+ * what a lookup must key on. But a message whose index and id disagree is a
+ * message about a pipeline this worker is not looking at, and reading a
+ * *different* stage's `with:` block would hand a gate someone else's
+ * configuration: the wrong program, or the wrong `emits` mode, with nothing
+ * anywhere reporting a mismatch.
+ *
+ * `undefined` rather than an error, because every caller already has an honest
+ * answer for "this dispatch has no resolved entry": no `with:` block, and no
+ * command source. A dispatch that genuinely needed one then fails where it
+ * needs it, naming what it could not find.
+ */
+function resolvedStageFor(assign: AssignMessage): ResolvedStage | undefined {
   const pipeline = resolveSnapshotPipeline(assign.effectiveConfigJson);
-  if (!pipeline.ok) return NO_STAGE_CONFIG;
-  return pipeline.stages[assign.stageIndex]?.with ?? NO_STAGE_CONFIG;
+  if (!pipeline.ok) return undefined;
+  const stage = pipeline.stages[assign.stageIndex];
+  return stage?.id === assign.stageId ? stage : undefined;
+}
+
+/** What {@link resolveGateCommand} answers — the program to run, or why there isn't one. */
+type GateCommandResult =
+  | {
+      readonly ok: true;
+      readonly command: CommandSpec;
+      readonly emits?: CommandGateOutputMode;
+    }
+  | { readonly ok: false; readonly detail: string };
+
+/**
+ * Decide which program a command gate runs (HARN-02, M07 step 7.3).
+ *
+ * Two sources, and the gate's own is the more specific one:
+ *
+ * 1. **The stage's `with:` block**, validated against `CommandGateWithSchema`.
+ *    A third party's gate carries its own program, and `adl.yml`'s
+ *    `commands.test` is none of its business.
+ * 2. **`commands.test`**, for the built-in `test` stage, which declares no
+ *    `with:` block. 5.14's behaviour, unchanged.
+ *
+ * A `with:` block that is present but will not validate is refused by name
+ * rather than silently falling through to `commands.test` — a gate that ran
+ * something other than what its configuration said would be worse than one
+ * that refused to run.
+ */
+function resolveGateCommand(
+  gate: GateContext,
+  effectiveConfig: EffectiveConfig,
+): GateCommandResult {
+  if (Object.keys(gate.config).length === 0) {
+    return { ok: true, command: effectiveConfig.commands.test };
+  }
+
+  const parsed = CommandGateWithSchema.safeParse(gate.config);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      detail:
+        `the ${gate.stageId} gate's \`with:\` block is not a valid command-gate ` +
+        `configuration: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+    };
+  }
+
+  return {
+    ok: true,
+    command: parsed.data.command,
+    emits: parsed.data.emits,
+  };
 }
 
 /**
@@ -249,14 +327,23 @@ export function reportingAgentRunner(
 }
 
 /**
- * The stage id whose implementation is {@link runCommandGate} (M05 step 5.14).
+ * The BUILT-IN stage ids whose implementation is {@link runCommandGate} (M05
+ * step 5.14).
  *
- * One of `BUILT_IN_STAGE_IDS`, and the only one of the three this build can
- * run as a gate: `develop` is the mutator at index 0, and `review` is the
- * reviewer agent, which is M07's.
+ * One of `BUILT_IN_STAGE_IDS`, and the only one of the three this build can run
+ * as a gate: `develop` is the mutator at index 0, and `review` is the reviewer
+ * agent, which is M07 step 7.4's.
  *
- * A `Record<stageId, role>` rather than a chain of `if`s so that adding the
- * reviewer is one entry, and so that "what can this build run?" is a value a
+ * **This list is no longer the whole answer** (HARN-02, M07 step 7.3). A
+ * pipeline entry that declares its own `with.command` resolves to
+ * `source: 'command'` and runs as a command gate whatever it is called — the
+ * point of a plain-command gate being that a third party adds one without
+ * ADL knowing its name. This map is what remains: the built-in `test` stage,
+ * whose command comes from `adl.yml`'s `commands.test` rather than from its own
+ * `with:` block.
+ *
+ * A `Record<stageId, …>` rather than a chain of `if`s so that adding a built-in
+ * is one entry, and so that "what built-ins can this build run?" is a value a
  * test can read rather than control flow it has to re-derive.
  */
 const GATE_IMPLEMENTATIONS: Readonly<Record<string, 'command'>> = Object.freeze(
@@ -368,6 +455,13 @@ function resolveStageRole(assign: AssignMessage): StageRole {
   if (assign.stageIndex === 0) return { kind: 'agent', role: 'developer' };
   const agentRole = AGENT_GATE_ROLES.get(assign.stageId);
   if (agentRole !== undefined) return { kind: 'agent', role: agentRole };
+  // HARN-02 (M07 step 7.3): an entry carrying its own program is a command
+  // gate whatever it is called. Checked before the built-in map because it is
+  // the more specific claim — this entry said what it runs, where a built-in
+  // id only says which of ADL's own implementations to look up.
+  if (resolvedStageFor(assign)?.source === 'command') {
+    return { kind: 'command-gate' };
+  }
   if (GATE_IMPLEMENTATIONS[assign.stageId] === 'command') {
     return { kind: 'command-gate' };
   }
@@ -571,9 +665,30 @@ export function createProductionStageRunner(
           await Promise.all(appendPromises);
           return stageErrorResult(built.kind, built.detail);
         }
+        // HARN-02 (M07 step 7.3): where this gate's program comes from.
+        //
+        // A stage that declared its own `with.command` runs THAT — it is a
+        // third party's gate and `adl.yml`'s `commands.test` is none of its
+        // business. The built-in `test` stage has no `with:` block and keeps
+        // 5.14's behaviour exactly.
+        //
+        // A malformed `with:` block is a `StageError`, never a verdict: a gate
+        // whose configuration would not parse never ran, so it judged nothing
+        // (CORE-06, D-12). Classified `unparseable` rather than
+        // `provider_error` because a bad block will not parse on a retry
+        // either, and `stageErrorPolicy` makes that kind non-retryable so the
+        // round escalates instead of spinning.
+        const gateCommand = resolveGateCommand(built.gate, effectiveConfig);
+        if (!gateCommand.ok) {
+          await Promise.all(appendPromises);
+          return stageErrorResult('unparseable', gateCommand.detail);
+        }
         const verdict = await runCommandGate(built.gate, {
-          command: effectiveConfig.commands.test,
+          command: gateCommand.command,
           path: process.env['PATH'] ?? '',
+          ...(gateCommand.emits !== undefined
+            ? { emits: gateCommand.emits }
+            : {}),
         });
         // BACK-09 (M05 step 5.18): this path sends NO `usage` message, and
         // that is the honest answer rather than an omission — a command gate

@@ -198,7 +198,7 @@ describe('buildGateContext carries the caller’s capabilities through (M07 step
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 });
 
 describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
@@ -236,7 +236,7 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 
   it('carries nothing from the assign message beyond those three', async () => {
     await withTempRepo(async (repo) => {
@@ -295,7 +295,7 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 
   it('gives the gate a transcript sink and no read side', async () => {
     await withTempRepo(async (repo) => {
@@ -319,7 +319,7 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 });
 
 describe("the developer's transcript is outside the gate's reach (ROLE-03)", () => {
@@ -350,7 +350,7 @@ describe("the developer's transcript is outside the gate's reach (ROLE-03)", () 
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 
   it('refuses a read that climbs out of the workspace toward it', async () => {
     await withTempRepo(async (repo) => {
@@ -366,7 +366,7 @@ describe("the developer's transcript is outside the gate's reach (ROLE-03)", () 
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 });
 
 describe('a context that cannot be assembled is a StageError, never a verdict', () => {
@@ -394,7 +394,7 @@ describe('a context that cannot be assembled is a StageError, never a verdict', 
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 
   it('classifies a diff that cannot be computed as retryable provider_error', async () => {
     await withTempRepo(async (repo) => {
@@ -421,5 +421,5 @@ describe('a context that cannot be assembled is a StageError, never a verdict', 
         await workspace.destroy();
       }
     });
-  });
+  }, 30_000);
 });

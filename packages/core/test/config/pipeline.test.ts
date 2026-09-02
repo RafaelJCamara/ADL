@@ -152,3 +152,99 @@ describe('resolvePipeline — with and on_send_back pass through', () => {
     expect(stage?.onSendBack).toBe('stop');
   });
 });
+
+/**
+ * The plain-command gate (HARN-02, M07 step 7.3).
+ *
+ * The property under test is that a gate carrying its own program needs **no
+ * registry entry at all**. D-23's three tiers each answer "where is the
+ * module?"; a command gate has no module, so it has no tier — and that is what
+ * makes it the extension point available before M13's loader exists.
+ */
+describe('resolvePipeline — a gate that carries its own command', () => {
+  it('resolves an id the registry has never heard of, because the entry names its own program', () => {
+    // An empty registry: not a built-in, not an npm package, not a repo path.
+    // This exact entry throws `unknown harness id` without the `with.command`
+    // block, which is the assertion below.
+    const [stage] = resolvePipeline(
+      [
+        {
+          harness: 'lint',
+          with: { command: { argv: ['npm', 'run', 'lint'] } },
+        },
+      ],
+      { builtIns: new Set(), npmPackages: new Set(), repoPaths: new Set() },
+    );
+
+    expect(stage?.id).toBe('lint');
+    expect(stage?.source).toBe('command');
+  });
+
+  it('still refuses the same id when it declares no command — the bypass is the command, not the id', () => {
+    expect(() =>
+      resolvePipeline([{ harness: 'lint' }], {
+        builtIns: new Set(),
+        npmPackages: new Set(),
+        repoPaths: new Set(),
+      }),
+    ).toThrow(HarnessResolutionError);
+  });
+
+  it('still runs the path guard, because the id still becomes a stage id', () => {
+    // A command gate skips the REGISTRY, never the guard. The id is what
+    // verdicts, `stage_attempts` and coverage rows join on, and one that could
+    // be read as a filesystem path is exactly as dangerous here as anywhere.
+    expect(() =>
+      resolvePipeline(
+        [
+          {
+            harness: '../escape',
+            with: { command: { argv: ['true'] } },
+          },
+        ],
+        registry(),
+      ),
+    ).toThrow(HarnessResolutionError);
+  });
+
+  it('still refuses a duplicate id', () => {
+    expect(() =>
+      resolvePipeline(
+        [
+          { harness: 'lint', with: { command: { argv: ['a'] } } },
+          { harness: 'lint', with: { command: { argv: ['b'] } } },
+        ],
+        registry(),
+      ),
+    ).toThrow(HarnessResolutionError);
+  });
+
+  it('does not treat a non-object `command` as a command declaration', () => {
+    // Structural recognition has to be narrow: a `with: { command: "lint" }`
+    // typo must fall through to the registry and be refused by name, not
+    // resolve to a command gate that then cannot find a program to run.
+    expect(() =>
+      resolvePipeline(
+        [{ harness: 'lint', with: { command: 'npm run lint' } }],
+        {
+          builtIns: new Set(),
+          npmPackages: new Set(),
+          repoPaths: new Set(),
+        },
+      ),
+    ).toThrow(HarnessResolutionError);
+  });
+
+  it('lets a built-in id keep its built-in source even if it also names a command', () => {
+    // Order matters for `costClassOf`, which prices `built-in` differently.
+    // A `with.command` on a built-in id is a maintainer overriding what the
+    // built-in runs, not a new third-party gate — so the source stays
+    // `command` and the *price* falls back to the conservative default, which
+    // is the honest answer for a program ADL did not supply.
+    const [stage] = resolvePipeline(
+      [{ harness: 'test', with: { command: { argv: ['npm', 'test'] } } }],
+      registry(),
+    );
+    expect(stage?.source).toBe('command');
+  });
+});

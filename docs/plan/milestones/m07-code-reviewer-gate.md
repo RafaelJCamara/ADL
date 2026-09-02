@@ -177,7 +177,7 @@ is that each step now says what exists, what is greenfield, and what it must pro
       event kind was added and before the sample was written — 11 cases, exactly as
       designed.
       12 new cases across three files.
-- [ ] **7.3** — **The plain-command gate contract** (HARN-02). Generalise 5.14's command
+- [x] **7.3** — **The plain-command gate contract** (HARN-02). Generalise 5.14's command
       gate, which today runs exactly `adl.yml`'s `commands.test` and maps an exit code.
       A third-party gate is _any_ program: it receives the gate context as data, and its
       **stdout is validated against the published verdict JSON Schema**
@@ -186,6 +186,51 @@ is that each step now says what exists, what is greenfield, and what it must pro
       never a gate failure that costs a round (CORE-06). The exit-code mapping stays as the
       degenerate case for a program that emits no verdict, so 5.18's existing
       `command-gate-loop.test.ts` assertions hold unchanged.
+      **Shipped, and the resolution tier turned out to be the interesting part.**
+      D-23's three tiers — built-in, npm, repo-path — all answer the same question:
+      _where is the module?_ A plain-command gate has no module, so it needs no tier.
+      `HarnessSource` gains a fourth member, `command`, and an entry whose `with:` block
+      declares a `command` object resolves to it **without consulting the registry at
+      all** — which is what makes this the extension point available today, before M13's
+      loader exists. It still runs the path guard and the duplicate-id check: the id
+      becomes a stage id that verdicts, `stage_attempts` and coverage rows join on, and one
+      that could be read as a filesystem path is exactly as dangerous here as anywhere.
+      Recognition is deliberately structural and narrow (a `command` key whose value is an
+      object) and never validation — `CommandGateWithSchema` validates where the gate runs,
+      so a `with: { command: "npm run lint" }` typo falls through to the registry and is
+      refused **by name** instead of resolving to a gate with no program.
+      **The mode is declared, never sniffed**, and that is a correctness decision rather
+      than a stylistic one. Parsing stdout as a verdict "when it happens to look like one"
+      would silently promote an `npm test` JSON blob to a verdict, and — worse — read a
+      verdict-emitting gate that crashed before printing as "not a verdict, fall back to
+      the exit code", producing a `send_back` that nothing judged. `emits: exit_code` is
+      the default, so 5.14's built-in `test` gate and every ordinary linter need no mode
+      line. In `verdict` mode the exit code is not consulted **in either direction**: a
+      linter that exits 1 to mean "I found things" and prints an accurate `send_back` is
+      reporting correctly, and mixing the signals would make the contract two contracts.
+      **A real finding, mid-write:** `resolvedStageFor` looked a stage up by index alone.
+      A message whose index and id disagree is a message about a pipeline this worker is
+      not looking at, and reading a _different_ entry's `with:` block would hand a gate
+      someone else's program or someone else's `emits` mode with nothing reporting a
+      mismatch. It now checks both and returns `undefined` when they disagree — which
+      every caller already had an honest answer for.
+      **7.2's deferred end-to-end proof landed here**, because this is the step that makes
+      a two-gate pipeline buildable at all:
+      `test/scenario/two-gate-continue.test.ts` drives a real daemon through two
+      plain-command gates, the first `on_send_back: continue`, and asserts the second gate
+      _ran_, that both ran inside **one** round (attempts at index 0, 1 and 2), that both
+      verdicts survived, and that the audit trail records `gate_deferred` and never
+      `gate_passed`. Watched failing by flipping that one policy word to `stop`: the second
+      gate's marker file never appears.
+      **A wrong assumption, caught by the test:** its first draft asserted the feature
+      closes exactly one round. It does not, and should not — a `send_back` sends the
+      developer back, so a second round opening is the loop working. The assertion moved to
+      where the property actually lives (both gates inside round **1**), and the file now
+      says outright what it deliberately does not assert.
+      **Also watched failing:** an invalid `GlobalCategory` in a hand-written verdict
+      fixture was rejected as `unparseable` before the assertion could read it — the schema
+      validation proving itself on the first run rather than on a contrived one.
+      13 new cases across four files.
 - [ ] **7.4** — **The reviewer agent gate** (ROLE-02), on 7.1's context with zero
       special-casing. One entry in `stage-runner.ts`'s `AGENT_ROLE_PRODUCERS`
       (`reviewer: 'review'`, finding 6) plus the gate module itself under

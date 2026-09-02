@@ -561,15 +561,40 @@ pipeline is unbuildable until 7.3 makes a gate out of an arbitrary program. Ever
 scenario has `test` as its last stage, where the last-stage branch short-circuits and
 behaviour is provably unchanged.
 
-**7.3 is next: the plain-command gate contract (HARN-02).** Generalise 5.14's command gate,
-which today runs exactly `adl.yml`'s `commands.test` and maps an exit code. A third-party
-gate is _any_ program: it receives its context as data, and its **stdout is validated
-against the published verdict JSON Schema** (`packages/core/schema/verdict.schema.json`,
-already emitted and diffed in CI) rather than inferred from an exit code. Malformed stdout
-is `unparseable` -- a `StageError`, never a gate failure that costs a round (CORE-06). Keep
-the exit-code mapping as the degenerate case for a program that emits no verdict, so
-5.18's existing `command-gate-loop.test.ts` assertions hold unchanged. This is also what
-finally makes a two-gate pipeline buildable, and with it 7.2's end-to-end proof.
+**7.3 is done (2026-09-03): a gate can be any program (HARN-02).** D-23's three harness
+tiers -- built-in, npm, repo-path -- all answer "where is the module?". A plain-command gate
+has no module, so `HarnessSource` gained a fourth member, `command`: an entry whose `with:`
+block declares a `command` object resolves **without consulting the registry at all**. That
+is what makes it the extension point available today, before M13's loader exists. It still
+runs the path guard and the duplicate-id check, because the id still becomes a stage id that
+verdicts and coverage rows join on.
+
+The output mode is **declared, never sniffed**. `emits: exit_code` (the default, so 5.14's
+built-in `test` gate and every ordinary linter need no mode line) judges on the exit status;
+`emits: verdict` parses stdout against the same `VerdictSchema` the published JSON Schema is
+emitted from, and anything malformed is `unparseable` -- a `StageError`, never a gate
+failure that costs a round. Sniffing would have promoted an ordinary JSON blob to a verdict,
+and read a verdict-emitting gate that crashed before printing as "fall back to the exit
+code", producing a send-back that nothing judged.
+
+**7.2's deferred end-to-end proof landed here**, because this is what makes a two-gate
+pipeline buildable at all. `test/scenario/two-gate-continue.test.ts` drives a real daemon
+through two plain-command gates, the first `on_send_back: continue`, and asserts the second
+gate ran, that both ran inside **one** round, that both verdicts survived, and that the
+audit trail records `gate_deferred` and never `gate_passed`.
+
+**A real finding:** `resolvedStageFor` looked a stage up by index alone. A message whose
+index and id disagree is about a pipeline this worker is not looking at, and reading a
+different entry's `with:` block would hand a gate someone else's program with nothing
+reporting the mismatch. It checks both now.
+
+**7.4 is next: the reviewer agent itself (ROLE-02).** Everything it plugs into now exists.
+One entry in `stage-runner.ts`'s `AGENT_ROLE_PRODUCERS` (`reviewer: 'review'`, which 6.10
+left deliberately `null` with the lookup derived from it) plus the gate module under
+`worker-entry/gates/`, so it inherits `adl/gate-fresh-context` on the day it is created. It
+judges implementation against spec and code quality, and reports spend through 7.1's
+wrapped runner -- the first invocation that proves D-5-18-1 closed end to end rather than
+by unit test.
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.
