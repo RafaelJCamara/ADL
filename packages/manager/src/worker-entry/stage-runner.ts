@@ -57,7 +57,12 @@
  * to persist travels over the existing `fork()` IPC channel as `verdictJson`.
  */
 import { basename } from 'node:path';
-import { BACKEND_DEFAULT_MODEL, type EffectiveConfig } from '@adl/core/config';
+import {
+  AGENT_ROLES,
+  BACKEND_DEFAULT_MODEL,
+  type AgentRole,
+  type EffectiveConfig,
+} from '@adl/core/config';
 import { LoadError, type NormalizedSpec } from '@adl/core/spec';
 import {
   stageErrorPolicy,
@@ -189,9 +194,80 @@ const GATE_IMPLEMENTATIONS: Readonly<Record<string, 'command'>> = Object.freeze(
   { test: 'command' },
 );
 
-/** What this runner is being asked to be for one `assign`. */
+/**
+ * The mutator slot's producer — a pipeline *position*, not a stage id (D-05).
+ * Named rather than inlined so {@link AGENT_GATE_ROLES} below can tell "this
+ * role arrives by position" apart from "this role arrives by stage id"
+ * without matching on a bare literal in two places.
+ */
+const DEVELOPER_PRODUCER = 'pipeline-index-0';
+
+/**
+ * How each agent role is produced in this build (BACK-10, M06 step 6.10).
+ *
+ * {@link DEVELOPER_PRODUCER} — the mutator slot, whatever the stage is called.
+ * A stage id — the gate stage that dispatches this role. `null` — a role this
+ * build has no producer for at all, which is the honest state of `reviewer`
+ * (M07) and `tester` (M08): the branch that reads their configured model is
+ * built and unreached, on the `forge.promoteToReady` precedent (5.9 built it,
+ * 5.13 wired it in one line) rather than given an invented consumer.
+ *
+ * Keyed by `AgentRole` and machine-checked against the frozen `AGENT_ROLES`
+ * below, so a fourth role fails the **build** rather than silently falling
+ * back to the developer's model. That fallback would be an accounting defect
+ * and not a cosmetic one: the round's spend would be attributed to a model
+ * nobody selected for that role, and `agents.<role>.model` would join
+ * `agents.<role>.backend` as a config shape that validates and does nothing.
+ */
+const AGENT_ROLE_PRODUCERS = Object.freeze({
+  developer: DEVELOPER_PRODUCER,
+  reviewer: null,
+  tester: null,
+}) satisfies Record<AgentRole, string | null>;
+
+/**
+ * Compile-time proof the map above covers `AGENT_ROLES` — the frozen list's
+ * half of convention 7's pairing. `satisfies` alone checks the *type*; this
+ * checks it against the runtime list the rest of the codebase enumerates.
+ */
+type _EveryAgentRoleProduced =
+  Exclude<
+    (typeof AGENT_ROLES)[number],
+    keyof typeof AGENT_ROLE_PRODUCERS
+  > extends never
+    ? true
+    : never;
+const _everyAgentRoleProduced: _EveryAgentRoleProduced = true;
+void _everyAgentRoleProduced;
+
+/**
+ * Stage id → the agent role that stage runs as, **derived** from
+ * {@link AGENT_ROLE_PRODUCERS} rather than restated beside it (convention 8).
+ *
+ * Empty in this build, and legibly so: the one produced role arrives by
+ * position, not by name. M07 changes `reviewer: null` to `reviewer: 'review'`
+ * in one place and this lookup, `resolveStageRole`, and the model read all
+ * follow — there is no second list to remember.
+ */
+const AGENT_GATE_ROLES: ReadonlyMap<string, AgentRole> = new Map(
+  AGENT_ROLES.flatMap((role) => {
+    const producer = AGENT_ROLE_PRODUCERS[role];
+    return producer === null || producer === DEVELOPER_PRODUCER
+      ? []
+      : [[producer, role] as const];
+  }),
+);
+
+/**
+ * What this runner is being asked to be for one `assign`.
+ *
+ * The agent variant carries the `AgentRole` itself (M06 step 6.10) rather
+ * than being a bare `'developer'` marker: it is what the model read below
+ * indexes `effectiveConfig.agents` with, so "which role is this?" is answered
+ * once, here, instead of assumed at the point of use.
+ */
 type StageRole =
-  | { readonly kind: 'developer' }
+  | { readonly kind: 'agent'; readonly role: AgentRole }
   | { readonly kind: 'command-gate' }
   | { readonly kind: 'unsupported'; readonly detail: string };
 
@@ -207,14 +283,22 @@ type StageRole =
  * `'develop'`: a pipeline that names its first entry something else still gets
  * the mutator, and the two halves of the contract cannot disagree.
  *
- * Everything else is looked up in {@link GATE_IMPLEMENTATIONS}, and an id with
- * no entry is refused **before a workspace is opened**. The classification is
- * `binary_missing`, which `stageErrorPolicy` makes non-retryable, so the round
- * loop escalates rather than looping forever on a stage that will never exist
- * in this build — and the message names the milestone that supplies it.
+ * Everything else is looked up in {@link AGENT_GATE_ROLES} and then
+ * {@link GATE_IMPLEMENTATIONS}, and an id in neither is refused **before a
+ * workspace is opened**. The classification is `binary_missing`, which
+ * `stageErrorPolicy` makes non-retryable, so the round loop escalates rather
+ * than looping forever on a stage that will never exist in this build — and
+ * the message names the milestone that supplies it.
+ *
+ * The agent lookup runs first because it is the more specific claim: a stage
+ * id that names an agent role is an agent stage, whatever else it might also
+ * appear in. Today the two lookups cannot collide — `AGENT_GATE_ROLES` is
+ * empty — but the order is the one that stays correct when M07 fills it.
  */
 function resolveStageRole(assign: AssignMessage): StageRole {
-  if (assign.stageIndex === 0) return { kind: 'developer' };
+  if (assign.stageIndex === 0) return { kind: 'agent', role: 'developer' };
+  const agentRole = AGENT_GATE_ROLES.get(assign.stageId);
+  if (agentRole !== undefined) return { kind: 'agent', role: agentRole };
   if (GATE_IMPLEMENTATIONS[assign.stageId] === 'command') {
     return { kind: 'command-gate' };
   }
@@ -481,8 +565,18 @@ export function createProductionStageRunner(
         systemPrompt,
         instructions,
         contextFiles: [],
-        // BACK-10 (M06 step 6.9): the model ADL selected for this role, or
-        // **nothing at all** when the resolved value is the sentinel.
+        // BACK-10 (M06 steps 6.9 and 6.10): the model ADL selected **for this
+        // role**, or **nothing at all** when the resolved value is the
+        // sentinel.
+        //
+        // 6.10 replaced a hardcoded `.agents.developer` here. That hardcode
+        // was the same class of defect as 6.9's dead guard one line down: a
+        // reviewer or tester dispatch would have run on the *developer's*
+        // configured model, spent against it, and priced the round under a
+        // model nobody chose for that role — while `agents.reviewer.model`
+        // sat in `adl.yml` validating and doing nothing. `role.role` comes
+        // from `resolveStageRole`, which is the only place the question is
+        // answered.
         //
         // The guard this replaces was dead. `ResolvedAgentBlockSchema.model`
         // is `z.string().min(1)`, so `mergeConfig` always produces a string
@@ -495,9 +589,9 @@ export function createProductionStageRunner(
         // boundary rather than in each adapter's own head (rule 9): an adapter
         // receiving `task.model` may pass it straight to its CLI, because the
         // only values that ever arrive are ones a human actually chose.
-        ...(effectiveConfig.agents.developer.model === BACKEND_DEFAULT_MODEL
+        ...(effectiveConfig.agents[role.role].model === BACKEND_DEFAULT_MODEL
           ? {}
-          : { model: effectiveConfig.agents.developer.model }),
+          : { model: effectiveConfig.agents[role.role].model }),
         limits: { maxWallClockMs: DEFAULT_MAX_WALL_CLOCK_MS },
       };
 

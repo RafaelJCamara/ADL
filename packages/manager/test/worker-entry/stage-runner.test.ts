@@ -1054,4 +1054,61 @@ describe('the developer AgentTask carries the configured model (BACK-10, M06 ste
       expect(Object.hasOwn(tasks[0] ?? {}, 'model')).toBe(false);
     });
   });
+
+  it('reads the model for the role being dispatched, never another role’s (M06 step 6.10)', async () => {
+    await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
+      const featureId = `feat-${ulid()}`;
+      await writeFeatureSpec(mainRepo, featureId);
+      await commitFeatureSpec(git, featureId);
+      const baseRef = (await git.revparse(['HEAD'])).trim();
+      const { backend, tasks } = capturingBackend();
+
+      // All three roles configured, all three onto DIFFERENT models. Before
+      // 6.10 the runner read `.agents.developer` by name, so this fixture
+      // could not tell "read the developer's model because it is the
+      // developer's dispatch" apart from "read the developer's model because
+      // that is the only branch there is". With three distinct values, a
+      // dispatch that picked the wrong role's model produces a wrong answer
+      // instead of the same right one.
+      const daemon = DaemonConfigSchema.parse({
+        agents: {
+          developer: { backend: 'claude-code', model: 'claude-haiku-4-5' },
+          reviewer: { backend: 'claude-code', model: 'claude-opus-5' },
+          tester: { backend: 'claude-code', model: 'claude-sonnet-5' },
+        },
+      });
+      const repo = AdlYmlSchema.parse({
+        version: 1,
+        commands: {
+          build: { argv: ['npm', 'ci'] },
+          start: { argv: ['npm', 'run', 'dev'] },
+          test: { argv: ['npm', 'test'] },
+          teardown: { argv: ['docker', 'compose', 'down'] },
+        },
+        pipeline: ['develop', 'review', 'test'],
+      });
+      const { config } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+
+      await createProductionStageRunner({
+        claudeBinary: [process.execPath, FAKE_CLAUDE_SUCCESS],
+        claudeCliPath: process.env['PATH'] ?? '',
+        agentBackend: backend,
+      })(
+        buildAssign({
+          featureId,
+          mainRepo,
+          scratchRoot,
+          baseRef,
+          effectiveConfigJson: JSON.stringify(config),
+        }),
+      );
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]?.model).toBe('claude-haiku-4-5');
+      // Stated as a prohibition too, because the defect this replaces was
+      // not "no model" but "the wrong role's model".
+      expect(tasks[0]?.model).not.toBe('claude-opus-5');
+      expect(tasks[0]?.model).not.toBe('claude-sonnet-5');
+    });
+  });
 });

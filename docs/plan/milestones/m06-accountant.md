@@ -438,7 +438,7 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       stashed and rebuilt: `main` itself failed 21 and 14, against 14, 7 and 4 with them
       applied. It is a margin problem in the suite, not a regression here, and it is recorded
       in `DEBT.md` § 4 along with the `%TEMP%` fixture leak found while diagnosing it.
-- [ ] **6.10** — Every role, not just the developer (BACK-10). `stage-runner.ts` hardcodes
+- [x] **6.10** — Every role, not just the developer (BACK-10). `stage-runner.ts` hardcodes
       `.agents.developer`, while `resolveStageRole` beside it already classifies a dispatch
       as `developer` / `command-gate` / `unsupported` — so map that to core's `AgentRole` and
       read `effectiveConfig.agents[role].model`. Drive the mapping off the exported frozen
@@ -459,6 +459,38 @@ degradation policy) lands once, in the step that actually needs it, rather than 
       `test/helpers/fake-claude-success.mjs` to record its own argv, then asserting in a real
       scenario both that the configured model reached the binary and that the resulting
       `usage_events.model_id` is priceable rather than `'unknown'`.
+      **Shipped, and the role mapping landed one shape better than the sketch.** Rather
+      than a stage-id-to-role table beside the existing one, `AGENT_ROLE_PRODUCERS` is
+      keyed by `AgentRole` and says how each role is produced — the mutator position for
+      `developer`, `null` for `reviewer` and `tester` — and `AGENT_GATE_ROLES` is
+      **derived** from it (rule 8) rather than restated. The `Exclude` assertion pairs it
+      with the frozen `AGENT_ROLES` as convention 7 asks. The practical difference: M07
+      changes `reviewer: null` to `reviewer: 'review'` in one place and the lookup,
+      `resolveStageRole`, and the model read all follow — there is no second list to keep
+      in step. `StageRole`'s `developer` variant became `{ kind: 'agent', role }`, so the
+      question "which role is this?" is answered once, where it is decided.
+      The accounting half is `boot/model-pricing-warning.ts`, called unconditionally by
+      `startDaemon` after the backend preflight gate. It checks "is there **any** row for
+      this model id, effective by now?" rather than calling `priceAt`, because `priceAt`
+      needs a speed tier and the tier is a property of the invocation, not of the
+      configuration — asking for `standard` would warn falsely about a model priced only
+      for `fast`.
+      **Two real findings, both mid-write.** The double could not be told where to log
+      its argv through an environment variable: `@adl/workspace`'s exec boundary builds a
+      zero-inherit child env, so the variable simply would not arrive. The path travels in
+      the binary prefix instead (`--adl-argv-log <path>`), which respects the boundary
+      rather than asking for a hole in it. And the new boot-wiring test timed out under
+      the full suite while passing alone — it boots a daemon all the way up, unlike its
+      neighbours in `test/boot/`, so it carries an explicit `{ timeout: 60_000 }`; that is
+      `DEBT.md` § 4's own proposed mitigation, applied to one file rather than adopted.
+      **Watched failing** (convention 13): pointing the model read at
+      `agents.reviewer.model` instead of `agents[role.role].model` turned three tests red,
+      the end-to-end scenario among them — it reported the reviewer's configured model
+      where the developer's was expected. Removing the sentinel skip turned 4 of the 5
+      pricing cases red; removing the `effective_from` filter turned the temporal case red;
+      and stubbing out
+      `startDaemon`'s call turned the wiring case red (`expected [] to have a length of 1`).
+      12 new cases across four files.
 - [ ] **6.11** — The daemon-declared allowlist, and the D-22 amendment (BACK-10).
       `DAEMON_ONLY_FIELDS` holds both `agents.<role>.backend` and `agents.<role>.model`
       today, and `mergeConfig` discards a repo-supplied value for either. Keep `backend`

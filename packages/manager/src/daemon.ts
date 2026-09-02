@@ -29,6 +29,7 @@ import {
   SUPPORTED_BACKEND_ID,
   type BackendVersionCheckResult,
 } from './boot/backend-preflight.js';
+import { warnUnpricedRoleModels } from './boot/model-pricing-warning.js';
 import {
   encodeLeaseOwner,
   killBootOrphans,
@@ -429,6 +430,21 @@ export async function startDaemon(
       throw new BackendUnavailableError(backendPreflight.refusal);
     }
   }
+
+  // BACK-10 (M06 step 6.10): the accounting half of per-role model selection.
+  // Unconditional — unlike the backend preflight gate above, this reads the
+  // database rather than the host, so there is no environment precondition to
+  // make it optional for — and a **warning, never a refusal**: a model is
+  // usable before it is priced. It runs here, beside the other boot gates and
+  // before the API binds, because the condition it reports is a property of
+  // the configuration this daemon just resolved, not of any one feature. See
+  // `./boot/model-pricing-warning.js` for why an unpriceable model quietly
+  // removes its own spend from 6.4's and 6.5's budgets.
+  await warnUnpricedRoleModels({
+    db,
+    daemonConfig: options.daemonConfig,
+    logger,
+  });
 
   // Captured once, in this scope, so the closures below (`onDeveloperCommitted`
   // and `runDispatchOnce`'s own `forge` field) both see a narrowed, defined

@@ -17,6 +17,46 @@ import { appendFileSync } from 'node:fs';
 
 const cwd = process.cwd();
 
+// M06 step 6.10. Two additions, both of which make this double a more
+// faithful stand-in rather than a more convenient one.
+//
+// 1. It records the argv it was launched with, when a test asks for it with
+//    `--adl-argv-log <path>` in the binary prefix
+//    (`ADL_TRACER_CLAUDE_BINARY_JSON`). That is the only way to observe what
+//    the manager actually put on the command line from outside the process
+//    that built it — asserting on ADL's own argv-building function proves the
+//    function, not the wiring between four packages that carries its result
+//    to a real exec.
+//
+//    The path arrives in ARGV rather than in an environment variable on
+//    purpose: `@adl/workspace`'s exec boundary builds a zero-inherit child
+//    env (`buildChildEnv`, deliberately off the barrel so no second
+//    env-assembly site can exist), so an env var set by the test simply would
+//    not arrive. Going through the binary prefix respects that boundary
+//    instead of asking for a hole in it.
+//
+// 2. It reports back whatever `--model` it received, exactly as the real CLI
+//    does: 6.9's probe against the installed binary observed `--model
+//    claude-haiku-4-5` producing `"model":"claude-haiku-4-5"` on the
+//    system/init line, and no flag producing the CLI's own default. A double
+//    that ignored the flag would let a broken selection path still price the
+//    ledger correctly, which is the exact failure this step exists to catch.
+//
+// Absent both, this double behaves byte-identically to its pre-6.10 self, so
+// every test that predates the flag is unaffected.
+const argv = process.argv.slice(2);
+
+const argvLogIndex = argv.indexOf('--adl-argv-log');
+if (argvLogIndex >= 0 && argvLogIndex + 1 < argv.length) {
+  appendFileSync(argv[argvLogIndex + 1], `${JSON.stringify(argv)}\n`);
+}
+
+const modelFlagIndex = argv.indexOf('--model');
+const reportedModel =
+  modelFlagIndex >= 0 && modelFlagIndex + 1 < argv.length
+    ? argv[modelFlagIndex + 1]
+    : 'claude-sonnet-5';
+
 // APPENDS a distinct line rather than writing a fixed one, and that is a
 // correctness requirement rather than a flourish (M05 step 5.14).
 //
@@ -39,7 +79,7 @@ const lines = [
   {
     type: 'system',
     subtype: 'init',
-    model: 'claude-sonnet-5',
+    model: reportedModel,
     session_id: 'sess_fake',
   },
   {

@@ -32,9 +32,11 @@ M06 is in progress: 6.2 (the round-ceiling proof), 6.3 (spend visible in `adl st
 OBS-05), 6.4 (the per-feature budget, LOOP-04), 6.5 (the global spend cap, LOOP-05),
 6.6 (stalemate detection over repeated finding fingerprints, LOOP-06), 6.7
 (provider-failure backoff on its own budget, LOOP-07), 6.8 (escalation posts to the
-pull request, LOOP-08) and 6.9 (the selected model reaches the agent CLI, BACK-10) are
+pull request, LOOP-08), 6.9 (the selected model reaches the agent CLI, BACK-10) and
+6.10 (that model is the one for the role being dispatched, and an unpriceable one is
+warned about at boot, BACK-10) are
 done; 6.1's live cost reconciliation is deferred provisionally by maintainer decision
-(2026-08-27, see below). **6.10 is next.** Three steps, 6.9–6.11 (per-role model
+(2026-08-27, see below). **6.11 is next — the last step in the milestone.** Three steps, 6.9–6.11 (per-role model
 selection, BACK-10), were added to the milestone on 2026-09-01 at the maintainer's
 request.**
 
@@ -44,7 +46,7 @@ M02 Workspace & Exec Boundary ....... 🟡 code complete (1 deferred check)
 M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
-M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.9 done; 6.1 deferred; 6.10–6.11 left
+M06 Accountant ....................... ◀ IN PROGRESS — 6.2–6.10 done; 6.1 deferred; 6.11 left
 M07–M18 .............................. not started
 ```
 
@@ -706,12 +708,47 @@ privilege fixtures) are recorded in `DEBT.md` § 4, owner M12. **Re-run a red ma
 isolation before believing it.** Every non-forking suite is green (855 tests), as are
 `pnpm typecheck`, `pnpm lint` and `pnpm format` on the touched code.
 
-**6.10 is next: every role, not just the developer (BACK-10).** `stage-runner.ts` hardcodes
-`.agents.developer` while `resolveStageRole` beside it already classifies a dispatch — map
-that to core's `AgentRole` and drive it off the frozen `AGENT_ROLES` with the house's
-`Exclude<T, Arr[number]> extends never` assertion, so a fourth role fails the build rather
-than silently falling back to the developer's model. Plus the accounting half this milestone
-owns: warn at boot for any configured role model with no `model_prices` row. Then 6.11.
+**6.10 is done (2026-09-02): every role, not just the developer (BACK-10).**
+`stage-runner.ts` no longer hardcodes `.agents.developer`. `StageRole`'s developer variant
+became `{ kind: 'agent', role }`, so the model read indexes `effectiveConfig.agents` with
+the role the dispatch actually is. The mapping landed one shape better than the sketch:
+`AGENT_ROLE_PRODUCERS` is keyed by `AgentRole` and records **how each role is produced** —
+the mutator position for `developer`, `null` for `reviewer` and `tester`, which have no
+producer until M07/M08 — and the stage-id lookup `AGENT_GATE_ROLES` is _derived_ from it
+rather than restated beside it (rule 8), paired with the frozen `AGENT_ROLES` by the
+house's `Exclude` assertion (convention 7). M07 changes one `null` to `'review'` and the
+lookup, `resolveStageRole` and the model read all follow.
+The accounting half is `boot/model-pricing-warning.ts`, called unconditionally by
+`startDaemon` after the backend preflight gate — a **warning, never a refusal**, since a
+model is usable before it is priced. It asks "is there any `model_prices` row for this
+model id, effective by now?" rather than calling `priceAt`, because `priceAt` needs a speed
+tier and the tier is a property of the invocation, not of the configuration.
+**Two real findings:** the argv-recording double could not be told where to log through an
+environment variable — `@adl/workspace`'s exec boundary builds a zero-inherit child env, so
+it would never arrive — so the path travels in the binary prefix (`--adl-argv-log <path>`),
+respecting the boundary instead of asking for a hole in it; and the new boot-wiring test
+timed out under the full suite while passing alone, so it carries an explicit
+`{ timeout: 60_000 }` with the reason written down (`DEBT.md` § 4's own proposed mitigation,
+applied to one file rather than adopted).
+**The flakiness measurement got worse and wider, and was baselined rather than assumed.**
+With 6.10's changes stashed, `main` itself failed **54 of 475** manager tests and **14 of
+249** `@adl/workspace` tests; with them applied, 58 of 483 and 12 of 249. Every failure is a
+5000ms timeout or a cascade from one, and the affected suites now include a package this
+step does not touch. Recorded in `DEBT.md` § 4. **Re-run a red file in isolation before
+believing it** — all four of this step's own files pass standalone (26 tests).
+
+**6.11 is next: the daemon-declared allowlist and the D-22 amendment (BACK-10).** Keep
+`agents.<role>.backend` daemon-only exactly as it is; gate `model` on a new optional
+top-level `repo_model_allowlist: string[]` beside `global_budget_usd`. **Absent means no
+repository may choose a model at all** — byte-identical to today, so the field ships closed
+and opening it is a deliberate daemon act. Note the polarity is inverted from
+`global_budget_usd`'s own "absent means the check never runs", and say so in the
+`.describe()` or a reader carries the wrong intuition across. `DiscardedField` gains
+`reason: 'daemon_only' | 'not_allowlisted'` as a frozen array plus derived union.
+**Four load-bearing documents assert the opposite today and become false** (convention 18)
+— `packages/manager/README.md`, `adl-yml.ts`'s `backend`/`model` `.describe()` strings,
+`stage/agent.ts`'s `AgentTask.model` docblock, and `adl-yml.ts`'s own docblock example,
+which `adl-yml.test.ts` executes.
 
 **Before you start, skim:**
 
