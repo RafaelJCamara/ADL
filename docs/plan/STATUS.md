@@ -537,13 +537,39 @@ covered by its own unit test rather than by a real invocation. And the published
 has **one** real consumer today, not the two the sketch asked for — M08's tester is the
 second, and `priorFindings` is the likeliest widening it will want.
 
-**7.2 is next: make `on_send_back` real.** `round-step.ts` stops on the first `send_back`
-and says in its own docblock that this is the conservative half of a policy left unbuilt
-because `Stage.costClass` had no implementations to carry it. This milestone supplies the
-second gate, which is the condition that statement was waiting on: `free`/`cheap` default
-to `continue` and merge findings into one send-back, `expensive` defaults to `stop`, and
-`ResolvedStage.onSendBack` overrides. Keep `gate_passed` honest — it is emitted only when
-the stage did not stop the pipeline, and `continue` changes what that means.
+**7.2 is done (2026-09-02): `on_send_back` is real.** `round-step.ts` used to stop on the
+first `send_back` and say in its own docblock that this was the conservative half of a
+policy left unbuilt because `Stage.costClass` had no implementations. M07 supplies the
+second gate, so the other half now exists in `@adl/core/loop`'s `send-back-policy.ts`:
+`test` -> `cheap` -> `continue`, `review` -> `expensive` -> `stop`, and **anything this
+build did not supply -> `expensive` -> `stop`**, which is byte-identical to pre-7.2
+behaviour. An explicit `adl.yml` value wins in both directions -- unlike `limits` this is
+not a ceiling, because the pipeline is already the repository's to write.
+
+**Keeping `gate_passed` honest cost a new event kind.** Under `continue`, a gate that
+raised blockers advances the pipeline -- the same lifecycle move a pass makes. Reusing
+`gate_passed` would make the audit trail and the pull request read "this gate was
+satisfied" about a gate that raised two blockers, so `gate_deferred` is its own
+`FeatureEvent` kind with `stageId` and `findingCount`. `transition()` gives it the
+identical `gating -> gating` edge: the two differ in what they mean to a reader, not in
+what they do to the state machine.
+
+**One honest gap: 7.2 has no end-to-end proof yet, and 7.3 is where it lands.** `continue`
+only changes anything when a gate that is _not last_ sends back, and this build has exactly
+one gate implementation -- `resolvePipeline` rejects a duplicate stage id, so a two-gate
+pipeline is unbuildable until 7.3 makes a gate out of an arbitrary program. Every existing
+scenario has `test` as its last stage, where the last-stage branch short-circuits and
+behaviour is provably unchanged.
+
+**7.3 is next: the plain-command gate contract (HARN-02).** Generalise 5.14's command gate,
+which today runs exactly `adl.yml`'s `commands.test` and maps an exit code. A third-party
+gate is _any_ program: it receives its context as data, and its **stdout is validated
+against the published verdict JSON Schema** (`packages/core/schema/verdict.schema.json`,
+already emitted and diffed in CI) rather than inferred from an exit code. Malformed stdout
+is `unparseable` -- a `StageError`, never a gate failure that costs a round (CORE-06). Keep
+the exit-code mapping as the degenerate case for a program that emits no verdict, so
+5.18's existing `command-gate-loop.test.ts` assertions hold unchanged. This is also what
+finally makes a two-gate pipeline buildable, and with it 7.2's end-to-end proof.
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.

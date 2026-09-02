@@ -1,3 +1,4 @@
+import type { OnSendBack } from '../config/adl-yml.js';
 import type { DeveloperOutcome } from '../stage/developer-outcome.js';
 import { stageErrorPolicy, type StageError } from '../stage/stage-error.js';
 import type { FeatureEvent } from '../state/feature-state.js';
@@ -98,6 +99,21 @@ export interface RoundStepInput {
    * {@link aggregate}.
    */
   readonly priorVerdicts: readonly Verdict[];
+  /**
+   * The finished stage's `on_send_back` policy (HARN-03, M07 step 7.2) —
+   * `@adl/core/loop`'s `onSendBackFor` applied to the resolved stage.
+   *
+   * Supplied by the caller rather than derived here for the same reason
+   * `priorVerdicts` is: this function is handed *what the pipeline said*, and
+   * never reads the pipeline itself. It knows the finished stage's index, its
+   * id, and its length — never which entries it contains — which is what keeps
+   * a stage id from influencing the lifecycle (`FeatureEvent`'s own docblock).
+   *
+   * Optional, defaulting to `stop`, so every pre-7.2 caller and fixture keeps
+   * v1's exact behaviour without being edited: absence means the conservative
+   * half, which is the half that shipped.
+   */
+  readonly onSendBack?: OnSendBack;
 }
 
 /** The pipeline continues; the stage index moves on. */
@@ -206,9 +222,22 @@ function completeWith(
   }
 }
 
-/** Whether this verdict stops the pipeline where it stands. See the module docblock. */
-function stopsPipeline(verdict: Verdict): boolean {
-  return verdict.outcome === 'fail' || verdict.outcome === 'send_back';
+/**
+ * Whether this verdict stops the pipeline where it stands (M07 step 7.2).
+ *
+ * `fail` always stops, regardless of policy — `ARCHITECTURE.md` §3 is explicit
+ * about that, and it is the difference between the two outcomes: a `send_back`
+ * says "fix this and come again", a `fail` says "this feature is not going to
+ * work", and there is nothing a later gate could add to the second.
+ *
+ * `send_back` is the one the policy governs. `inconclusive` deliberately does
+ * not stop either — see the module docblock: an inconclusive sitting alongside
+ * real findings usually resolves once the code changes, so stopping on it would
+ * hide the actionable findings a later gate would have raised.
+ */
+function stopsPipeline(verdict: Verdict, onSendBack: OnSendBack): boolean {
+  if (verdict.outcome === 'fail') return true;
+  return verdict.outcome === 'send_back' && onSendBack === 'stop';
 }
 
 /**
@@ -273,14 +302,33 @@ export function planRoundStep(input: RoundStepInput): RoundStep {
 
   const verdicts = [...input.priorVerdicts, completion.verdict];
   const isLastStage = stageIndex + 1 >= pipelineLength;
+  const onSendBack = input.onSendBack ?? 'stop';
 
-  if (isLastStage || stopsPipeline(completion.verdict)) {
+  if (isLastStage || stopsPipeline(completion.verdict, onSendBack)) {
+    // Note what happens to a `continue` gate's findings when it IS the last
+    // stage: nothing special. They reach `aggregate` alongside every earlier
+    // gate's, which produces the one merged send-back the policy exists to
+    // create. `continue` never discards a finding — it only changes *when* the
+    // round is decided.
     return completeWith(aggregate(verdicts), stageId, []);
   }
 
+  // M07 step 7.2: the same lifecycle move, under two honest names. A gate that
+  // raised blockers and let the pipeline continue did not pass, and
+  // `gate_passed` is what the audit trail and the pull request read as
+  // "satisfied".
+  const advanced: FeatureEvent =
+    completion.verdict.outcome === 'send_back'
+      ? {
+          t: 'gate_deferred',
+          stageId,
+          findingCount: completion.verdict.findings.length,
+        }
+      : { t: 'gate_passed', stageId };
+
   return {
     kind: 'advance',
-    events: [{ t: 'gate_passed', stageId }],
+    events: [advanced],
     nextStageIndex: stageIndex + 1,
   };
 }

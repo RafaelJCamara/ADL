@@ -188,9 +188,20 @@ export function transition(
     case 'gating':
       switch (event.t) {
         case 'gate_passed':
+        case 'gate_deferred':
           // EXEC-07 in one line: a gate passing moves an index, and the state
           // stays `gating`. This edge is identical for a pipeline of three
           // stages and a pipeline of thirty.
+          //
+          // `gate_deferred` shares it exactly (M07 step 7.2): a gate whose
+          // `on_send_back` is `continue` raised findings and the pipeline moved
+          // on, which is the *same* lifecycle move — one index, no round. The
+          // two are separate event kinds because they mean different things to
+          // a reader of `feature_events` and to the pull request, not because
+          // the state machine treats them differently. Deliberately NOT folded
+          // into one kind with a boolean: `gate_passed` is what an audit trail
+          // reads as "this gate was satisfied", and a flag on it would make
+          // that reading depend on remembering to check the flag.
           if (ctx.currentStageIndex + 1 > ctx.pipelineLength) {
             return invalid(
               state,

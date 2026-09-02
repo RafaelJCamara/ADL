@@ -182,6 +182,71 @@ describe('planRoundStep — gates', () => {
     });
   });
 
+  it('under on_send_back: continue, a send_back advances — and emits gate_deferred, never gate_passed (M07 step 7.2)', () => {
+    const result = step({
+      stageIndex: 1,
+      stageId: 'test',
+      onSendBack: 'continue',
+      completion: gate(SEND_BACK),
+    });
+
+    // The lifecycle move is identical to a pass — one index, no round. What
+    // differs is what the audit trail and the pull request are told, and that
+    // is the whole reason `gate_deferred` is its own event kind: `gate_passed`
+    // reads as "this gate was satisfied", and a gate that raised two blockers
+    // was not.
+    expect(result).toEqual({
+      kind: 'advance',
+      events: [{ t: 'gate_deferred', stageId: 'test', findingCount: 2 }],
+      nextStageIndex: 2,
+    });
+  });
+
+  it('under on_send_back: continue, the deferred findings still reach the round’s send-back', () => {
+    // `continue` changes WHEN the round is decided, never WHAT it decides on.
+    // A policy that let a gate's findings continue and then dropped them would
+    // pass the assertion above and lose the developer's actual work list.
+    const result = step({
+      stageIndex: 3,
+      stageId: 'test',
+      onSendBack: 'continue',
+      priorVerdicts: [PASS, SEND_BACK],
+      completion: gate(PASS),
+    });
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('unreachable');
+    expect(result.outcome.kind).toBe('send_back');
+    if (result.outcome.kind !== 'send_back') throw new Error('unreachable');
+    expect(result.outcome.brief.findings).toHaveLength(2);
+  });
+
+  it('a fail stops the pipeline even under on_send_back: continue', () => {
+    // The policy governs `send_back` only. A `fail` says the feature is not
+    // going to work, and there is nothing a later gate could add to that
+    // (ARCHITECTURE.md §3).
+    const result = step({
+      stageIndex: 1,
+      stageId: 'test',
+      onSendBack: 'continue',
+      completion: gate(FAIL),
+    });
+
+    expect(result.kind).toBe('complete');
+  });
+
+  it('defaults to stop when no policy is supplied, which is v1’s behaviour unchanged', () => {
+    // The optional field's whole purpose: every pre-7.2 caller and fixture
+    // keeps stopping on the first send_back without being edited.
+    const result = step({
+      stageIndex: 1,
+      stageId: 'review',
+      completion: gate(SEND_BACK),
+    });
+
+    expect(result.kind).toBe('complete');
+  });
+
   it('a send_back stops the pipeline where it stands and never claims gate_passed', () => {
     const result = step({
       stageIndex: 1,

@@ -136,7 +136,7 @@ is that each step now says what exists, what is greenfield, and what it must pro
       members before it was updated, which is the fresh-context guard doing exactly its job
       — a new member is a decision, not an accident.
       9 new cases across four files, plus `DECISIONS.md`.
-- [ ] **7.2** — **`on_send_back` becomes real** (HARN-03, finding 4). `round-step.ts`
+- [x] **7.2** — **`on_send_back` becomes real** (HARN-03, finding 4). `round-step.ts`
       currently stops on the first `send_back` and says in its own docblock that this is
       the conservative half of a policy left unbuilt because `Stage.costClass` had no
       implementations. This milestone supplies the second gate, so build the other half:
@@ -144,6 +144,39 @@ is that each step now says what exists, what is greenfield, and what it must pro
       send-back; `expensive` → `stop`) with `ResolvedStage.onSendBack` overriding. The
       round's `gate_passed` event must stay honest — it is emitted only when the stage did
       not stop the pipeline, and `continue` changes what that means.
+      **Shipped, and `gate_passed`'s honesty cost a new event kind.** With `continue`, a
+      gate that raised blockers advances the pipeline — the same lifecycle move a pass
+      makes. Reusing `gate_passed` for it would make the audit trail and the pull request
+      read "this gate was satisfied" about a gate that raised two blockers, so
+      **`gate_deferred`** is its own `FeatureEvent` kind, carrying `stageId` and
+      `findingCount`. `transition()` gives it the identical `gating → gating` edge and says
+      why in a comment: the two differ in what they _mean to a reader_, not in what they do
+      to the state machine. Deliberately not one kind with a boolean — a flag would make
+      the honest reading depend on remembering to check it.
+      The cost-class table lives in `@adl/core/loop`'s new `send-back-policy.ts`:
+      `test` → `cheap` → `continue`, `review` → `expensive` → `stop`, and **anything this
+      build did not supply → `expensive` → `stop`**, which is byte-identical to pre-7.2
+      behaviour. `costClassOf` keys on `source` as well as `id`, so a repo-path harness
+      that names itself `test` does not inherit the built-in command gate's price.
+      `onSendBackFor` is written as "only `expensive` stops" rather than "`cheap`
+      continues", so a fourth cost class lands on the conservative side by construction.
+      An explicit `adl.yml` value wins in **both** directions — unlike `limits`, this is
+      not a ceiling: the pipeline is already the repository's to write.
+      `RoundStepInput.onSendBack` is optional and defaults to `stop`, so every pre-7.2
+      caller and fixture keeps v1's behaviour with no edit.
+      **The end-to-end proof is deferred to 7.3, and that is a real gap rather than an
+      oversight.** `continue` only changes anything when a gate that is _not last_ sends
+      back, and this build has exactly one gate implementation — `resolvePipeline` rejects
+      a duplicate stage id, so a two-gate pipeline is unbuildable until 7.3 makes a gate
+      out of an arbitrary program. Every existing scenario has `test` as its last stage,
+      where `isLastStage` short-circuits and behaviour is provably unchanged (they pass).
+      **Watched failing** (convention 13): emitting `gate_passed` unconditionally on the
+      advance path turned the `gate_deferred` case red; flipping `DEFAULT_COST_CLASS` to
+      `cheap` turned three cases red, including the "byte-identical to pre-7.2" one. The
+      pre-existing cross-product guard in `transition.test.ts` also went red the moment the
+      event kind was added and before the sample was written — 11 cases, exactly as
+      designed.
+      12 new cases across three files.
 - [ ] **7.3** — **The plain-command gate contract** (HARN-02). Generalise 5.14's command
       gate, which today runs exactly `adl.yml`'s `commands.test` and maps an exit code.
       A third-party gate is _any_ program: it receives the gate context as data, and its

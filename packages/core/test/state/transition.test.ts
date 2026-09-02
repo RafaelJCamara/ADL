@@ -29,6 +29,11 @@ const SAMPLE_EVENTS: {
   workspace_ready: { t: 'workspace_ready' },
   dev_committed: { t: 'dev_committed', sha: 'a'.repeat(40) },
   gate_passed: { t: 'gate_passed', stageId: 'code_review' },
+  gate_deferred: {
+    t: 'gate_deferred',
+    stageId: 'code_review',
+    findingCount: 3,
+  },
   all_gates_passed: { t: 'all_gates_passed' },
   send_back: { t: 'send_back', stageId: 'code_review', findingCount: 2 },
   cr_opened: {
@@ -172,6 +177,7 @@ describe('the feature lifecycle vocabulary', () => {
       'workspace_ready',
       'dev_committed',
       'gate_passed',
+      'gate_deferred',
       'all_gates_passed',
       'send_back',
       'cr_opened',
@@ -244,7 +250,11 @@ describe('transition() is total across every state-by-event pair', () => {
     expect(outcomes).toHaveLength(
       FEATURE_STATES.length * FEATURE_EVENT_KINDS.length,
     );
-    expect(outcomes).toHaveLength(165);
+    // The literal is the vacuity control for the line above it: a
+    // `FEATURE_STATES` or `FEATURE_EVENT_KINDS` emptied by a bad merge would
+    // make the derived assertion pass over nothing. 11 states x 16 event kinds
+    // — 16 since M07 step 7.2 added `gate_deferred`, up from 15.
+    expect(outcomes).toHaveLength(176);
   });
 
   it('never throws, for any pair', () => {

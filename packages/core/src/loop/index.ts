@@ -50,3 +50,13 @@ export {
   type TransientRetryDecision,
   type TransientRetryInput,
 } from './transient-retry.js';
+
+// The `on_send_back` policy (HARN-03, M07 step 7.2) — cost-class defaults with
+// an `adl.yml` override, and pure for the same reason every other module here
+// is: it reads a `ResolvedStage` the caller already resolved, and no config
+// file, database or clock of its own.
+export {
+  DEFAULT_COST_CLASS,
+  costClassOf,
+  onSendBackFor,
+} from './send-back-policy.js';

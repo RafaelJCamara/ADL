@@ -151,6 +151,23 @@ export type FeatureEvent =
   | { readonly t: 'dev_committed'; readonly sha: string }
   /** `gating → gating`. One gate passed; the stage index advances. */
   | { readonly t: 'gate_passed'; readonly stageId: string }
+  /**
+   * `gating → gating`. One gate raised findings and the pipeline **continued
+   * anyway**, because that stage's `on_send_back` policy is `continue`
+   * (HARN-03, M07 step 7.2). The stage index advances exactly as it does for
+   * `gate_passed`; the findings are merged into one send-back when the round
+   * ends.
+   *
+   * A separate kind rather than reusing `gate_passed`, and the separation is
+   * the point: `gate_passed` is what the pull request and the audit trail read
+   * as "this gate was satisfied", and a gate that raised blockers was not. Two
+   * events with one honest meaning each, rather than one event with two.
+   */
+  | {
+      readonly t: 'gate_deferred';
+      readonly stageId: string;
+      readonly findingCount: number;
+    }
   /** `gating → publishing`. The whole pipeline is satisfied. */
   | { readonly t: 'all_gates_passed' }
   /** `gating → developing`. The only edge that consumes a round. */
@@ -183,6 +200,7 @@ export const FEATURE_EVENT_KINDS = Object.freeze([
   'workspace_ready',
   'dev_committed',
   'gate_passed',
+  'gate_deferred',
   'all_gates_passed',
   'send_back',
   'cr_opened',

@@ -14,6 +14,7 @@ import type {
   ForgeRepoRef,
 } from '@adl/core/forge';
 import {
+  onSendBackFor,
   planRoundStep,
   type CompleteStep,
   type RoundStep,
@@ -748,6 +749,24 @@ async function runStageCompleted(
                       params.roundId,
                       params.stageAttemptId,
                     ),
+                    // HARN-03 (M07 step 7.2): read off the SNAPSHOTTED
+                    // pipeline, like everything else on this line — a policy
+                    // resolved from live `adl.yml` could change what a running
+                    // feature's round means halfway through it.
+                    //
+                    // Absent when the index has no entry, which is the same
+                    // should-not-happen `dispatchOnce` already guards
+                    // (`transition()` only advances within this pipeline). The
+                    // optional field then defaults to `stop`, so the
+                    // impossible case lands on v1's conservative behaviour
+                    // rather than on the permissive one.
+                    ...(pipeline.stages[params.stageIndex] !== undefined
+                      ? {
+                          onSendBack: onSendBackFor(
+                            pipeline.stages[params.stageIndex]!,
+                          ),
+                        }
+                      : {}),
                   })
                 : // A pipeline this build cannot resolve is not something another
                   // round fixes — the configuration names a harness with no loader
