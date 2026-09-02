@@ -1,11 +1,69 @@
 # M07 — Code Reviewer on the Gate Plugin Interface
 
-**Status:** ⬜ Not started
+**Status:** ◀ **IN PROGRESS**
 **Depends on:** M06
 **Requirements:** HARN-01…04, ROLE-02, ROLE-04, LOOP-09 (7)
 
 **Goal:** the reviewer is the first real plugin gate — judging implementation against spec
 and code quality from fresh context, on exactly the interface a third party would use.
+
+> **What a pre-implementation audit found before writing a single step** (2026-09-02,
+> the same discipline M06 opened with; it contradicts the original sketch in two places,
+> corrected below).
+>
+> **1. There are two gate context types, not one, and that is the real work of 7.1.**
+> `@adl/core/stage`'s `StageContext` is the _published_ third-party contract — it is
+> already re-exported by `@adl/plugin-sdk` and is what `Stage.run` takes. But **four of its
+> nine members are forward declarations nothing supplies** (`FeatureView`, `StageConfig`,
+> `ArtifactSink`, `RoundSummary`), and **no production code implements `Stage` at all** —
+> the built-in gates are plain functions. Meanwhile `GateContext` (M05 step 5.17) is what
+> gates actually take, carries ROLE-03's fresh-context guarantee as a machine-checked
+> member list, and is **deliberately not** exported from `@adl/plugin-sdk`. HARN-04 asks
+> that the reviewer run on "the same interface third parties use", which cannot be true of
+> both. Deciding which one survives is 7.1, and it is the milestone's one genuinely
+> one-way decision.
+>
+> **2. `GateContext` has no way to call a model.** It has `workspace`, `spec`, `diff`,
+> `stageId`, `onEvent` and `signal` — and no `agents`. The command gate needs none, so
+> nothing noticed. The reviewer is the first agent-backed gate and cannot run without one.
+> `StageContext` declares `agents: AgentRunner` for exactly this, which is evidence for
+> keeping its shape even if its identity changes. This is also where `DEBT.md`'s
+> **D-5-18-1** lands: a gate-invoked agent currently has no channel to report spend
+> through, so an agent gate would burn tokens invisibly — which after M06 means silently
+> outside 6.4's per-feature budget and 6.5's global cap.
+>
+> **3. More of HARN-01/03 is already real than the sketch assumes.** `resolvePipeline` has
+> been a _production_ caller since 5.13 — `dispatcher.ts` resolves the snapshotted pipeline
+> on every dispatch, refuses an unresolvable harness id before forking, and passes
+> `stage.id` on the assign message. `ResolvedStage` already carries `with` and
+> `onSendBack`. Position in the `adl.yml` array is already the stage's position. So
+> configuration-driven positioning is not greenfield: what is missing is (a) a gate that is
+> not one of the three built-ins, and (b) anything that _reads_ `onSendBack`.
+>
+> **4. `on_send_back` is a documented, deliberate half-implementation.**
+> `loop/round-step.ts` states it outright: `ResolvedStage.onSendBack` "is read by nothing
+> here", v1 stops on the first `send_back`, and the cost-class default was left unbuilt
+> because "half a policy is worse than none" while `Stage.costClass` had no implementations
+> to carry it. This milestone creates the second gate, which is the condition that
+> statement was waiting on.
+>
+> **5. ROLE-04's mechanism exists; its _evidence_ does not.** `PassVerdictSchema.checked`
+> is already non-empty by schema, and the command gate already cites
+> `{ kind: 'global', category: 'build' }` rather than fabricating criterion coverage. What
+> 7.6 adds is a reviewer that cites **real criterion ids from the spec it was given**, and
+> the rejection of a citation naming a criterion that does not exist — which the schema
+> cannot check, because it does not have the spec.
+>
+> **6. 6.10 left the reviewer's seat wired and empty.** `stage-runner.ts`'s
+> `AGENT_ROLE_PRODUCERS` has `reviewer: null`, and `AGENT_GATE_ROLES` is derived from it,
+> so giving the reviewer a producer is one entry — the model read, the role mapping and the
+> dispatch classification all follow. That was built in M06 precisely so this milestone
+> would not have to touch them.
+>
+> **7. Two debts are owed answers by this milestone, and neither is a hole in v1 today**
+> — `D-6-09-1` (nothing makes the reviewer run on a different model from the developer;
+> cross-model review is now expressible and still not recommended anywhere) and
+> `D-5-18-1` (above). See the Notes section.
 
 ---
 
@@ -25,25 +83,81 @@ and code quality from fresh context, on exactly the interface a third party woul
 
 ---
 
-## Step sketch
+## Steps
 
-_Refine into small steps when this milestone starts._
+Refined from the sketch by the audit above (2026-09-02). Ordered so the interface decision
+lands **first** — every later step consumes it — and so the reviewer is built only after
+the thing it plugs into is real. The original sketch's numbering is preserved; what changed
+is that each step now says what exists, what is greenfield, and what it must prove.
 
-- [ ] **7.1** — Finalise the gate plugin interface against two real consumers (this
-      reviewer, and M08's tester). Publish it through `@adl/plugin-sdk`.
-- [ ] **7.2** — Configuration-driven pipeline positioning — a gate declared in `adl.yml`
-      lands anywhere in the pipeline with no lifecycle change. (M01's EXEC-07 test already
-      asserts this is _possible_; this makes it real.)
-- [ ] **7.3** — Plain-command gate contract (a gate that is just a program returning a verdict).
-- [ ] **7.4** — The reviewer agent itself, built on 7.1 with zero special-casing.
-- [ ] **7.5** — Fresh context enforced structurally — the reviewer never inherits the
-      developer's session, transcript, or reasoning.
-- [ ] **7.6** — Spec-clause citation required; a `pass` citing nothing is malformed.
-- [ ] **7.7** — The known-bad-diff fixture corpus, wired into ADL's own CI as a red-build
-      condition.
-- [ ] **7.8** — Follow-ups instead of fresh send-backs after round 1 (LOOP-09).
-- [ ] **7.9** — Removal proof: delete the reviewer from configuration, watch the pipeline
-      run without it and without a code change.
+- [ ] **7.1** — **One gate context, published.** Resolve finding 1: `StageContext` (a
+      hypothesis with four unsupplied members and no implementation) and `GateContext`
+      (what gates take, carrying ROLE-03's machine-checked member list) both claim to be
+      the gate interface, and HARN-04 cannot be true of both. **Decision to record in
+      `DECISIONS.md`:** `GateContext` survives and is published; `StageContext`'s
+      forward-declared members are folded into it or dropped, and `Stage` is retired or
+      re-declared over `GateContext`. The reasoning is the milestone's own note — an
+      interface shaped around a hypothesis rather than around use — plus the fact that
+      `GateContext` is the one carrying the fresh-context guarantee that ROLE-03 needs and
+      `StageContext` structurally cannot make while `FeatureView` is opaque. **Also in this
+      step, because the interface cannot be finalised without it (finding 2):**
+      `GateContext` gains `agents: AgentRunner` and a spend-reporting channel, closing
+      `D-5-18-1`. The command gate ignores both exactly as it already ignores `spec` and
+      `diff` — that a gate may ignore its context is the point; what it may not do is reach
+      for context it was not given. `GATE_CONTEXT_MEMBERS` and its `Exclude` assertion
+      extend to cover the new members, and `packages/core/test/stage/gate-context.test.ts`'s
+      forbidden-name check must still pass: an `AgentRunner` is a capability, not a
+      transcript.
+- [ ] **7.2** — **`on_send_back` becomes real** (HARN-03, finding 4). `round-step.ts`
+      currently stops on the first `send_back` and says in its own docblock that this is
+      the conservative half of a policy left unbuilt because `Stage.costClass` had no
+      implementations. This milestone supplies the second gate, so build the other half:
+      cost-class defaults (`free`/`cheap` → `continue` and merge findings into one
+      send-back; `expensive` → `stop`) with `ResolvedStage.onSendBack` overriding. The
+      round's `gate_passed` event must stay honest — it is emitted only when the stage did
+      not stop the pipeline, and `continue` changes what that means.
+- [ ] **7.3** — **The plain-command gate contract** (HARN-02). Generalise 5.14's command
+      gate, which today runs exactly `adl.yml`'s `commands.test` and maps an exit code.
+      A third-party gate is _any_ program: it receives the gate context as data, and its
+      **stdout is validated against the published verdict JSON Schema**
+      (`packages/core/schema/verdict.schema.json`, already emitted and diffed in CI) rather
+      than inferred from an exit code. Malformed stdout is `unparseable` — a `StageError`,
+      never a gate failure that costs a round (CORE-06). The exit-code mapping stays as the
+      degenerate case for a program that emits no verdict, so 5.18's existing
+      `command-gate-loop.test.ts` assertions hold unchanged.
+- [ ] **7.4** — **The reviewer agent gate** (ROLE-02), on 7.1's context with zero
+      special-casing. One entry in `stage-runner.ts`'s `AGENT_ROLE_PRODUCERS`
+      (`reviewer: 'review'`, finding 6) plus the gate module itself under
+      `worker-entry/gates/`, so it inherits `adl/gate-fresh-context` on the day it is
+      created. It judges implementation against spec and code quality, and reports spend
+      through 7.1's channel — the first invocation that proves `D-5-18-1` closed.
+- [ ] **7.5** — **Fresh context, proven for the reviewer specifically** (ROLE-03). The
+      structural guarantee already exists as a type and a lint rule; what does not exist is
+      a run in which a real reviewer had a real developer transcript sitting on disk beside
+      it and demonstrably could not name it. A real-daemon scenario, on
+      `detect-restart-reconciliation.test.ts`'s precedent.
+- [ ] **7.6** — **Spec-clause citation, checked against the spec** (ROLE-04, finding 5).
+      `PassVerdictSchema.checked` is already non-empty by schema, so the missing half is
+      semantic: a reviewer `pass` citing a criterion id **that the spec does not contain**
+      is `unparseable`, not an approval. That check needs the spec, which the schema does
+      not have and this gate does. A `pass` citing only `{ kind: 'global' }` from an
+      _agent_ gate is likewise refused — that is the command gate's honest answer, and
+      borrowing it would let the reviewer approve without claiming coverage of anything.
+- [ ] **7.7** — **The known-bad-diff fixture corpus, red-build in ADL's own CI.** Diffs
+      that a competent reviewer must send back — a criterion silently unimplemented, a test
+      weakened to pass, a protected path touched. The build goes red if the reviewer
+      approves one. This is the milestone's only _continuous_ measurement, and criterion 4
+      exists because an approving reviewer is worse than no reviewer.
+- [ ] **7.8** — **Follow-ups instead of fresh send-backs after round 1** (LOOP-09). A
+      finding first raised in round 2+ becomes a PR follow-up rather than a new send-back,
+      so the goalposts cannot move mid-feature. `fingerprintFinding` and
+      `verdictsRepository().fingerprintCountsForFeature()` already exist (CORE-04, 6.6) and
+      are what "first raised in" is decided by — this is a policy over data that is already
+      recorded, not new bookkeeping.
+- [ ] **7.9** — **Removal proof.** Delete the reviewer from `adl.yml`'s pipeline, watch the
+      feature run to a PR without it, with **no code change** — the negative half of
+      HARN-04, and the one assertion that would catch a reviewer that had quietly become
+      special-cased.
 
 ## Notes
 
