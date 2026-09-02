@@ -129,6 +129,38 @@ describe('@adl/plugin-sdk re-exports @adl/core by reference', () => {
     },
   );
 
+  it('re-exports the gate contract’s member lists by reference (M07 step 7.1)', () => {
+    // `GateContext` replaced `StageContext` as the published gate contract, and
+    // its two member lists are the only *runtime* values in it — everything
+    // else on the type erases. They are worth publishing rather than keeping
+    // internal: a third-party harness can assert on the contract it was handed
+    // instead of trusting a docblock, and ROLE-03's guarantee stops being
+    // something a harness author has to take on faith.
+    expect(PluginSdk.GATE_CONTEXT_MEMBERS).toBe(CoreStage.GATE_CONTEXT_MEMBERS);
+    expect(PluginSdk.GATE_DIFF_MEMBERS).toBe(CoreStage.GATE_DIFF_MEMBERS);
+  });
+
+  it('no longer publishes StageContext or its forward declarations (M07 step 7.1)', async () => {
+    // Stated as a prohibition rather than left as an absence. `StageContext`
+    // and its four never-supplied placeholders — `FeatureView`, `StageConfig`,
+    // `ArtifactSink`, `RoundSummary` — were exported from this package for six
+    // milestones, and re-adding one would republish a hypothesis into the
+    // third-party surface alongside the type that replaced it. They erase at
+    // runtime, so the source text is what can be read.
+    const source = await readFile(SDK_SOURCE, 'utf8');
+    for (const retired of [
+      'StageContext',
+      'FeatureView',
+      'ArtifactSink',
+      'RoundSummary',
+    ]) {
+      expect(
+        source.includes(`type ${retired},`),
+        `@adl/plugin-sdk re-exports ${retired}, which M07 step 7.1 retired.`,
+      ).toBe(false);
+    }
+  });
+
   it('re-exports NETWORK_POLICIES by reference, not as a copy of the tuple', () => {
     // The one runtime value in the workspace surface. A `toEqual` here would
     // pass against `Object.freeze(['full', 'none', 'allowlist'])` written out a

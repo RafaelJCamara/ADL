@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ulid } from 'ulid';
-import type { AgentEvent, Workspace } from '@adl/core/stage';
+import type { AgentEvent, AgentRunner, Workspace } from '@adl/core/stage';
 import { isWithinRoot, workspaceRegistry } from '@adl/workspace';
 import {
   withTempRepo,
@@ -154,6 +154,53 @@ async function prepare(
   return { workspace, assign, baseSha, headSha: headSha.trim() };
 }
 
+/**
+ * The two members M07 step 7.1 added, as the smallest thing that satisfies the
+ * type. Neither is exercised by the assertions in this file — it tests the
+ * narrowing, and these are the caller's to supply — but a fixture that omitted
+ * them would stop compiling rather than stop asserting, which is why they are
+ * here rather than casts at each call site.
+ */
+const NO_CONFIG: Readonly<Record<string, unknown>> = Object.freeze({});
+const UNUSED_AGENTS: AgentRunner = {
+  run: () => {
+    throw new Error('the assembly tests never call a model');
+  },
+  probe: () => {
+    throw new Error('the assembly tests never probe a backend');
+  },
+};
+
+describe('buildGateContext carries the caller’s capabilities through (M07 step 7.1)', () => {
+  it('hands the gate the exact `with:` block and agent runner it was given', async () => {
+    await withTempRepo(async (repo) => {
+      const { workspace, assign } = await prepare(repo);
+      try {
+        const config = Object.freeze({ severity: 'strict', maxFiles: 40 });
+        const built = await buildGateContext({
+          workspace,
+          assign,
+          config,
+          agents: UNUSED_AGENTS,
+          onEvent: () => {},
+        });
+
+        expect(built.ok).toBe(true);
+        if (!built.ok) return;
+
+        // Reference identity, not structural equality. A `toEqual` would pass
+        // against a defensive copy, and a copy is exactly what would break the
+        // `agents` member: a gate must call the runner the caller wrapped for
+        // spend reporting (D-5-18-1), not a lookalike.
+        expect(built.gate.config).toBe(config);
+        expect(built.gate.agents).toBe(UNUSED_AGENTS);
+      } finally {
+        await workspace.destroy();
+      }
+    });
+  });
+});
+
 describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
   it('populates all three permitted sources from the repository', async () => {
     await withTempRepo(async (repo) => {
@@ -162,6 +209,8 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         const built = await buildGateContext({
           workspace,
           assign,
+          config: NO_CONFIG,
+          agents: UNUSED_AGENTS,
           onEvent: () => {},
         });
 
@@ -196,6 +245,8 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         const built = await buildGateContext({
           workspace,
           assign,
+          config: NO_CONFIG,
+          agents: UNUSED_AGENTS,
           onEvent: () => {},
         });
         expect(built.ok).toBe(true);
@@ -208,6 +259,13 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         // object is assignable to a narrower interface everywhere except at a
         // fresh object literal.
         expect(Object.keys(built.gate).sort()).toEqual([
+          // `agents` and `config` joined the list in M07 step 7.1 and come
+          // from the CALLER, not from the message — which is why they are
+          // listed here rather than treated as leaks. The assertion below is
+          // what still holds the line: no value from `assign` reaches the gate
+          // except the three fields this builder reads by name.
+          'agents',
+          'config',
           'diff',
           'onEvent',
           'spec',
@@ -219,6 +277,7 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
           ...built.gate,
           workspace: undefined,
           onEvent: undefined,
+          agents: undefined,
         });
         for (const leak of [
           assign.logsRoot,
@@ -246,6 +305,8 @@ describe('buildGateContext assembles spec, diff and repository (AC3)', () => {
         const built = await buildGateContext({
           workspace,
           assign,
+          config: NO_CONFIG,
+          agents: UNUSED_AGENTS,
           onEvent: (event) => seen.push(event),
         });
         expect(built.ok).toBe(true);
@@ -317,6 +378,8 @@ describe('a context that cannot be assembled is a StageError, never a verdict', 
         const built = await buildGateContext({
           workspace,
           assign,
+          config: NO_CONFIG,
+          agents: UNUSED_AGENTS,
           onEvent: () => {},
         });
 
@@ -342,6 +405,8 @@ describe('a context that cannot be assembled is a StageError, never a verdict', 
         const built = await buildGateContext({
           workspace,
           assign,
+          config: NO_CONFIG,
+          agents: UNUSED_AGENTS,
           onEvent: () => {},
         });
 

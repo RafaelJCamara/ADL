@@ -71,7 +71,7 @@ export {
 // The AgentRunner port — the only way a stage calls a model (BACK-01). Real
 // interfaces and schemas live in `./agent.ts`; declared here (not in
 // `./stage.ts`) for the same reason `Workspace` is, and re-exported through
-// `./stage.ts` so `StageContext.agents` needs no edit. Published through
+// `./stage.ts` so `GateContext.agents` needs no edit. Published through
 // `@adl/plugin-sdk` alongside the rest of the gate surface a harness author
 // depends on.
 export {
@@ -129,20 +129,16 @@ export type {
   CostClass,
   LogChunk,
   Workspace,
-  FeatureView,
-  StageConfig,
   AgentRunner,
-  ArtifactSink,
-  RoundSummary,
-  StageContext,
   Stage,
 } from './stage.js';
 
-// What a GATE is given, and ROLE-03's guarantee that the list ends there (M05
-// step 5.17). Deliberately NOT re-exported through `@adl/plugin-sdk`: that
-// surface is the published third-party contract, and `StageContext` is its
-// context type. See `./gate-context.ts`'s own docblock for why the two are not
-// the same thing yet.
+// What a gate is given, and ROLE-03's guarantee that the list ends there (M05
+// step 5.17, finalised by M07 step 7.1). This IS the published third-party
+// contract now — `@adl/plugin-sdk` re-exports it and `Stage.run` takes it. The
+// `StageContext` that used to hold that role, and the four forward declarations
+// it was assembled from, are gone; `./stage.ts` and `./gate-context.ts` both
+// carry the reasoning, and `DECISIONS.md` records the decision.
 export {
   GATE_CONTEXT_MEMBERS,
   type GateContextMember,

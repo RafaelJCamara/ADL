@@ -33,7 +33,12 @@
  * round (CORE-06, D-12). That is the same discipline `command-gate.ts` applies
  * to a command ADL had to kill.
  */
-import type { AgentEvent, GateContext, Workspace } from '@adl/core/stage';
+import type {
+  AgentEvent,
+  AgentRunner,
+  GateContext,
+  Workspace,
+} from '@adl/core/stage';
 import type { StageErrorKind } from '@adl/core/stage';
 import { managerGitClient } from '@adl/workspace';
 import type { AssignMessage } from '../ipc/protocol.js';
@@ -55,6 +60,27 @@ export interface BuildGateContextInput {
   readonly assign: AssignMessage;
   /** The transcript sink the caller already opened for this attempt. */
   readonly onEvent: (event: AgentEvent) => void;
+  /**
+   * This stage's own `with:` block, already resolved from the snapshotted
+   * pipeline by the caller (M07 step 7.1, HARN-01).
+   *
+   * Resolved by the caller rather than here because the caller has already
+   * parsed `effectiveConfigJson` for its own reasons, and resolving the
+   * pipeline twice per dispatch would be two chances to disagree about what the
+   * pipeline is — the exact hazard `resolveSnapshotPipeline`'s "exactly one
+   * caller" note exists to prevent.
+   */
+  readonly config: Readonly<Record<string, unknown>>;
+  /**
+   * The agent runner this gate may call a model through — **already reporting
+   * its own spend** (M07 step 7.1, closing `DEBT.md`'s D-5-18-1).
+   *
+   * The obligation lives on the runner, not on the gate, so there is no call a
+   * gate can forget to make (rule 9). This function does not construct one: it
+   * has no business deciding what a model invocation costs or where that cost
+   * is reported, and the caller is the module that already owns both.
+   */
+  readonly agents: AgentRunner;
   readonly signal?: AbortSignal;
 }
 
@@ -129,6 +155,8 @@ export async function buildGateContext(
       workspace,
       spec,
       diff: { base: assign.baseRef, head, changedPaths },
+      config: input.config,
+      agents: input.agents,
       onEvent,
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
     },

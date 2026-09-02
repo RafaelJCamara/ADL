@@ -509,20 +509,44 @@ steps, 7.1 through 7.9. Its goal: the reviewer is the first real plugin gate, ju
 implementation against spec and code quality from fresh context, **on exactly the interface
 a third party would use**.
 
-**7.1 is next: finalise the gate plugin interface against two real consumers** — the
-reviewer agent and a plain command gate. Some of the ground is already laid. M05's 5.17
-built `GateContext` (spec + diff + repository, and structurally no member naming the
-developer's session, transcript, prompt or send-back brief), `worker-entry/gates/` is
-already fenced by the `adl/gate-fresh-context` lint rule, and
-`worker-entry/stage-runner.ts`'s `GATE_IMPLEMENTATIONS` is the registry a new gate joins.
-M06's 6.10 left `AGENT_ROLE_PRODUCERS` with `reviewer: null` and a derived stage-id lookup
-built and unreached — wiring the reviewer is one entry there plus its producer.
+**7.1 is done (2026-09-02): one gate context, published.** The audit's first finding was
+that there were **two** candidate gate interfaces and HARN-04 could not be true of both.
+`StageContext` was the published one — re-exported by `@adl/plugin-sdk`, taken by
+`Stage.run` — but four of its nine members were forward declarations nothing ever supplied,
+and no production code implemented `Stage` at all. `GateContext` was what gates actually
+took, and the only one carrying ROLE-03's fresh-context guarantee as a machine-checked
+member list. `GateContext` won, and `DECISIONS.md` records why.
 
-Two things worth reading before starting: `DEBT.md`'s **D-5-18-1** (an agent-backed gate
-must report usage through `sendUsage`, one level above the role — 5.18 recorded exactly
-where), and the cross-model-review note in M06's own acceptance-criteria record — 6.9–6.11
-made cross-model review _configurable_, and nothing yet makes it the default. That second
-one is filed against M07.
+`StageContext`, `FeatureView`, `ArtifactSink` and `RoundSummary` are gone from `@adl/core`
+and from the published SDK. `StageConfig` survives as `GateContext.config` — this gate's own
+`with:` block (HARN-01) — resolved by the caller from the same snapshotted pipeline
+`dispatcher.ts` named the stage from. `GateContext` also gained `agents: AgentRunner`,
+without which a reviewer simply cannot run.
+
+**D-5-18-1 is closed, in a better shape than the debt proposed.** It suggested watching for
+a terminal `result` event on the gate's transcript stream. That makes reporting a
+consequence of a gate choosing to emit events — a gate that ran a model without piping
+events through `onEvent` would still spend silently, which after M06 means outside 6.4's
+budget and 6.5's cap. What shipped puts the obligation on the runner instead:
+`reportingAgentRunner` wraps the backend, and the wrapped instance is the only thing a gate
+ever receives. There is no call a gate can forget (rule 9), and `GateContext` deliberately
+has **no** `reportUsage` member.
+
+Two honest limits on what 7.1 proved. No gate calls a model until 7.4, so the wrapper is
+covered by its own unit test rather than by a real invocation. And the published contract
+has **one** real consumer today, not the two the sketch asked for — M08's tester is the
+second, and `priorFindings` is the likeliest widening it will want.
+
+**7.2 is next: make `on_send_back` real.** `round-step.ts` stops on the first `send_back`
+and says in its own docblock that this is the conservative half of a policy left unbuilt
+because `Stage.costClass` had no implementations to carry it. This milestone supplies the
+second gate, which is the condition that statement was waiting on: `free`/`cheap` default
+to `continue` and merge findings into one send-back, `expensive` defaults to `stop`, and
+`ResolvedStage.onSendBack` overrides. Keep `gate_passed` honest — it is emitted only when
+the stage did not stop the pipeline, and `continue` changes what that means.
+
+Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
+cross-model review _configurable_, and nothing yet makes it the recommended default.
 
 ---
 

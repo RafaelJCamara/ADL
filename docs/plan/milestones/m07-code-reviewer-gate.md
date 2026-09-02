@@ -90,7 +90,7 @@ lands **first** — every later step consumes it — and so the reviewer is buil
 the thing it plugs into is real. The original sketch's numbering is preserved; what changed
 is that each step now says what exists, what is greenfield, and what it must prove.
 
-- [ ] **7.1** — **One gate context, published.** Resolve finding 1: `StageContext` (a
+- [x] **7.1** — **One gate context, published.** Resolve finding 1: `StageContext` (a
       hypothesis with four unsupplied members and no implementation) and `GateContext`
       (what gates take, carrying ROLE-03's machine-checked member list) both claim to be
       the gate interface, and HARN-04 cannot be true of both. **Decision to record in
@@ -108,6 +108,34 @@ is that each step now says what exists, what is greenfield, and what it must pro
       extend to cover the new members, and `packages/core/test/stage/gate-context.test.ts`'s
       forbidden-name check must still pass: an `AgentRunner` is a capability, not a
       transcript.
+      **Shipped as decided, and the spend channel landed in a better shape than the debt
+      proposed.** D-5-18-1 suggested observing a terminal `result` event on the gate's
+      transcript stream and calling `sendUsage` from there. That works, but it makes
+      reporting a _consequence of a gate choosing to emit events_ — a gate that ran a model
+      without piping its events through `onEvent` would still spend silently. What shipped
+      instead puts the obligation on the runner: `stage-runner.ts`'s `reportingAgentRunner`
+      wraps the backend, and the wrapped instance is the only thing a gate ever receives.
+      There is no call any gate can forget to make, which is rule 9 rather than a stricter
+      convention. `GateContext` therefore has **no** `reportUsage` member, and its absence
+      is the design.
+      `StageContext`, `FeatureView`, `ArtifactSink` and `RoundSummary` are gone from
+      `@adl/core` and from `@adl/plugin-sdk`. `StageConfig` survives as
+      `GateContext.config`, resolved by the caller from the same snapshotted pipeline
+      `dispatcher.ts` named the stage from — resolving it twice per dispatch would be two
+      chances to disagree about what the pipeline is, which is what
+      `resolveSnapshotPipeline`'s "exactly one caller" note exists to prevent.
+      **Two things worth knowing about what this step does _not_ prove.** No gate calls a
+      model until 7.4, so `reportingAgentRunner` is proven by its own unit test rather than
+      by a real invocation — the mechanism, not the end-to-end path, and `DEBT.md`'s entry
+      says so rather than claiming more. And the published `GateContext` has exactly **one**
+      real consumer today, not the two the sketch asked for; M08's tester is the second, and
+      the interface may still need widening for it (`priorFindings` is the likeliest).
+      **Watched failing** (convention 13): deleting the `sendUsage` call inside
+      `reportingAgentRunner` turned two of its four cases red; the pre-existing
+      `Object.keys(built.gate)` assertion in `gate-context.test.ts` went red on the two new
+      members before it was updated, which is the fresh-context guard doing exactly its job
+      — a new member is a decision, not an accident.
+      9 new cases across four files, plus `DECISIONS.md`.
 - [ ] **7.2** — **`on_send_back` becomes real** (HARN-03, finding 4). `round-step.ts`
       currently stops on the first `send_back` and says in its own docblock that this is
       the conservative half of a policy left unbuilt because `Stage.costClass` had no

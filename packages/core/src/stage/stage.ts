@@ -16,23 +16,21 @@
  *    external gate.
  * 2. The verdict union has six outcomes, not the four sketched there
  *    (`.planning/research/SUMMARY.md` § Reconciled Decisions §1).
+ *
+ * A third difference arrived in M07 step 7.1: `run` takes a
+ * {@link GateContext}, not the `StageContext` this file used to declare. See
+ * the note where the forward declarations used to be.
  */
-import type { Finding } from '../verdict/finding.js';
-import type { AgentRunner } from './agent.js';
+import type { GateContext } from './gate-context.js';
 import type { StageOutcome } from './stage-error.js';
-import type { Workspace } from './workspace.js';
 
 /**
  * Re-exported so `@adl/core/stage` remains the single import path for the whole
- * stage surface, and so `StageContext.workspace` below needs no edit now that
- * the forward declaration has been replaced by the real interface.
+ * stage surface. Both were forward declarations in this file once; Phases 2 and
+ * 4 replaced them with real interfaces, and M07 step 7.1 moved the place a gate
+ * receives them to {@link GateContext}.
  */
 export type { Workspace } from './workspace.js';
-
-/**
- * Re-exported for the same reason `Workspace` is above. Phase 4 replaced the
- * forward declaration below with the real interface in `./agent.js`.
- */
 export type { AgentRunner } from './agent.js';
 
 /**
@@ -63,70 +61,26 @@ export interface LogChunk {
 }
 
 /* -------------------------------------------------------------------------
- * Forward declarations
+ * The forward declarations are gone (M07 step 7.1)
  *
- * `@adl/core` is pure: no filesystem, no child processes, no environment. It
- * therefore cannot depend on a workspace implementation, an agent backend, or an
- * artifact store — and it does not need to, because a *type* is all this
- * interface requires. Declaring them here is precisely what lets `Stage` be
- * published in Phase 1, before any of the things it collaborates with exist.
+ * `FeatureView`, `StageConfig`, `ArtifactSink` and `RoundSummary` used to be
+ * declared here as opaque placeholders, each naming the phase that would supply
+ * it, and `StageContext` was assembled from them. None was ever supplied, and
+ * `Stage` was never implemented by any production code — the built-in gates are
+ * plain functions taking a {@link GateContext}.
  *
- * Each declaration below names the phase that replaces it with the real thing.
- * They are deliberately opaque rather than `{}`: an empty interface is satisfied
- * by every non-nullish value, so `workspace: {}` would happily accept a number.
+ * M07 could not leave both types standing. HARN-04 asks that the reviewer run
+ * on "the same interface third parties use", and with two candidate interfaces
+ * that is not a statement that can be true. `GateContext` won, because it is the
+ * one two real consumers take and the one carrying ROLE-03's machine-checked
+ * member list — see its own module docblock, and `DECISIONS.md`, for the full
+ * argument and for what each dropped declaration was replaced by (or
+ * deliberately not).
  *
- * `Workspace` used to be one of them. Phase 2 replaced it with the real
- * interface in `./workspace.js`, which is imported and re-exported above.
- * `AgentRunner` used to be another. Phase 4 replaced it with the real
- * interface in `./agent.js`, imported and re-exported above the same way —
- * the declarations below are what remains.
+ * `Workspace` and `AgentRunner` were forward declarations here once too; Phases
+ * 2 and 4 replaced them with real interfaces, which are imported and re-exported
+ * above and now reach a gate through `GateContext`.
  * ---------------------------------------------------------------------- */
-
-/** **Forward declaration.** Phase 3 supplies the feature view: normalized spec, branch, round, headSha. */
-export interface FeatureView {
-  /** Structural placeholder only; never read. */
-  readonly __adlForwardDeclaration?: never;
-}
-
-/** **Forward declaration.** Plan 01-07 supplies this stage's resolved `adl.yml` config block. */
-export interface StageConfig {
-  /** Structural placeholder only; never read. */
-  readonly __adlForwardDeclaration?: never;
-}
-
-/** **Forward declaration.** Phase 3 supplies the artifact sink that `StageError.rawRef` points into. */
-export interface ArtifactSink {
-  /** Structural placeholder only; never read. */
-  readonly __adlForwardDeclaration?: never;
-}
-
-/** **Forward declaration.** Phase 5 supplies the compressed prior-round summary. */
-export interface RoundSummary {
-  /** Structural placeholder only; never read. */
-  readonly __adlForwardDeclaration?: never;
-}
-
-/** Everything a stage is given when it runs. */
-export interface StageContext {
-  /** Exec / read / write / snapshot. The real interface lives in `./workspace.ts`. */
-  readonly workspace: Workspace;
-  /** The normalized spec, branch, round and head sha for this feature. */
-  readonly feature: FeatureView;
-  /** This stage's own config block from `adl.yml`. */
-  readonly config: StageConfig;
-  /** Findings raised by *earlier* stages in this same round. */
-  readonly priorFindings: readonly Finding[];
-  /** Compressed summaries of prior rounds. */
-  readonly history: readonly RoundSummary[];
-  /** The only way to call a model. Meters cost, so budget enforcement is not optional. */
-  readonly agents: AgentRunner;
-  /** Where evidence blobs go — including the capped raw output behind `StageError.rawRef`. */
-  readonly artifacts: ArtifactSink;
-  /** Streams output to the manager as the stage runs. */
-  readonly log: (chunk: LogChunk) => void;
-  /** Fires on budget interrupt, pause, or shutdown. A stage that ignores it will be killed. */
-  readonly signal: AbortSignal;
-}
 
 /** A gate in the pipeline. */
 export interface Stage {
@@ -150,5 +104,5 @@ export interface Stage {
    * ran out, or the model produced something that is not a verdict. It costs the
    * developer no round.
    */
-  run(ctx: StageContext): Promise<StageOutcome>;
+  run(ctx: GateContext): Promise<StageOutcome>;
 }

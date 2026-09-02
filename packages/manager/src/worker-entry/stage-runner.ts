@@ -68,6 +68,7 @@ import {
   stageErrorPolicy,
   type AgentErrorEvent,
   type AgentEvent,
+  type AgentRunner,
   type AgentTask,
   type DeveloperOutcome,
   type StageErrorKind,
@@ -85,6 +86,7 @@ import {
   type ClaudeCodeAgentRunner,
 } from '@adl/agent-claude-code';
 import { composeBranchFeatureId } from '../branch-identity.js';
+import { resolveSnapshotPipeline } from '../pipeline.js';
 import { parseSendBackBriefJson } from '../loop/send-back-brief.js';
 import { buildGateContext } from './gate-context.js';
 import { runCommandGate } from './gates/command-gate.js';
@@ -177,6 +179,73 @@ function sendUsage(leaseToken: string, record: AgentUsageRecord): void {
     costCategory: record.costCategory,
   };
   process.send(message);
+}
+
+/** An empty `with:` block, shared rather than reallocated per dispatch. */
+const NO_STAGE_CONFIG: Readonly<Record<string, unknown>> = Object.freeze({});
+
+/**
+ * This stage's own `with:` block from the snapshotted pipeline (HARN-01, M07
+ * step 7.1).
+ *
+ * **Empty, never absent**, for the two reasons `GateContext.config` records: a
+ * gate reads `ctx.config.foo` without first asking whether `ctx.config` exists,
+ * and "this entry declared no configuration" and "the pipeline could not be
+ * resolved" must not be told apart by a gate — they are the caller's problem,
+ * and by the time this runs the dispatcher has already refused an unresolvable
+ * pipeline before forking (`resolveSnapshotPipeline`'s one production caller).
+ * So an unresolvable pipeline here is a should-not-happen that degrades to "no
+ * configuration" rather than a second refusal path with nothing to refuse.
+ *
+ * Read by index rather than by stage id because a pipeline may legitimately run
+ * the same harness twice with different `with:` blocks; the index is what
+ * `dispatcher.ts` assigned and the id is not unique to it.
+ */
+function stageConfigFor(
+  assign: AssignMessage,
+): Readonly<Record<string, unknown>> {
+  const pipeline = resolveSnapshotPipeline(assign.effectiveConfigJson);
+  if (!pipeline.ok) return NO_STAGE_CONFIG;
+  return pipeline.stages[assign.stageIndex]?.with ?? NO_STAGE_CONFIG;
+}
+
+/**
+ * Wrap an agent runner so every invocation through it reports its own spend
+ * (M07 step 7.1, closing `DEBT.md`'s D-5-18-1).
+ *
+ * **This is why `GateContext` has no `reportUsage` member.** The debt asked for
+ * a channel a gate-invoked agent could report usage through; a channel on the
+ * *gate* is a call a gate can forget to make, and after M06 a forgotten call is
+ * spend that never reaches 6.4's per-feature budget or 6.5's global cap — an
+ * agent gate would burn tokens invisibly and the gates would keep running as
+ * though it had not. Wrapping the runner makes the obligation unforgettable:
+ * the only way a gate can call a model is through this, and this reports (rule
+ * 9, structural impossibility over a runtime check).
+ *
+ * `usageRecord` absent means the agent process was never started, so nothing
+ * was invoked and nothing was billed — the same guard, for the same reason, as
+ * the developer path's own `sendUsage` call below.
+ *
+ * **Exported for its own test, and that is the honest state of this step.** No
+ * gate calls a model until M07 step 7.4's reviewer exists, so there is no
+ * end-to-end path through which this could be observed yet; testing the
+ * mechanism directly is better than asserting nothing about it and calling the
+ * debt closed. 7.4 is where a real invocation runs through it.
+ */
+export function reportingAgentRunner(
+  inner: ClaudeCodeAgentRunner,
+  leaseToken: string,
+): AgentRunner {
+  return {
+    async run(task, ctx) {
+      const result = await inner.run(task, ctx);
+      if (result.usageRecord !== undefined) {
+        sendUsage(leaseToken, result.usageRecord);
+      }
+      return result;
+    },
+    probe: () => inner.probe(),
+  };
 }
 
 /**
@@ -446,10 +515,31 @@ export function createProductionStageRunner(
         );
       }
 
+      // Built here rather than inside the developer branch (M07 step 7.1): a
+      // gate needs one too, now that `GateContext` carries `agents`. One
+      // construction site for both paths, so a gate and the developer cannot
+      // end up running against differently-configured backends.
+      const credential =
+        deps.credentialEnvValue ?? process.env['ANTHROPIC_API_KEY'];
+      const backendEnv: Record<string, string> = { ...commitIdentityEnv() };
+      if (credential !== undefined) {
+        backendEnv['ANTHROPIC_API_KEY'] = credential;
+      }
+
+      const agentBackend =
+        deps.agentBackend ??
+        claudeCodeBackend({
+          ...(deps.claudeBinary !== undefined
+            ? { binary: deps.claudeBinary }
+            : {}),
+          path: deps.claudeCliPath ?? process.env['PATH'] ?? '',
+          env: backendEnv,
+        });
+
       if (role.kind === 'command-gate') {
         // M05 step 5.17. **This is the only place a gate is constructed, and
         // `assign` does not cross the line.** `buildGateContext` narrows the
-        // message down to spec + diff + repository — ROLE-03's three permitted
+        // message down to spec + diff + repository — ROLE-03's permitted
         // sources — and a gate then sees nothing but that context and its own
         // `adl.yml` block. There is no parameter through which the developer's
         // session, transcript, rendered prompt, or send-back brief could
@@ -463,6 +553,16 @@ export function createProductionStageRunner(
           onEvent: (event: AgentEvent) => {
             appendPromises.push(appendRecord(event));
           },
+          // HARN-01 (M07 step 7.1): this stage's own `with:` block. Resolved
+          // from the same snapshotted pipeline `dispatcher.ts` named this stage
+          // from, so the gate reads the configuration the dispatch was made
+          // under and not whatever `adl.yml` says now.
+          config: stageConfigFor(assign),
+          // D-5-18-1 closed by construction: a gate that calls a model does so
+          // through a runner that already reports the spend. See
+          // `reportingAgentRunner` above for why the obligation is on the
+          // runner rather than on a `GateContext` member.
+          agents: reportingAgentRunner(agentBackend, assign.leaseToken),
         });
         if (!built.ok) {
           // Context assembly failed, so the gate never ran, so nothing was
@@ -539,23 +639,6 @@ export function createProductionStageRunner(
           `could not write the rendered prompt artifact: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-
-      const credential =
-        deps.credentialEnvValue ?? process.env['ANTHROPIC_API_KEY'];
-      const backendEnv: Record<string, string> = { ...commitIdentityEnv() };
-      if (credential !== undefined) {
-        backendEnv['ANTHROPIC_API_KEY'] = credential;
-      }
-
-      const agentBackend =
-        deps.agentBackend ??
-        claudeCodeBackend({
-          ...(deps.claudeBinary !== undefined
-            ? { binary: deps.claudeBinary }
-            : {}),
-          path: deps.claudeCliPath ?? process.env['PATH'] ?? '',
-          env: backendEnv,
-        });
 
       const controller = new AbortController();
       let firstError: AgentErrorEvent | undefined;

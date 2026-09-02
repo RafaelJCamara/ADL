@@ -93,6 +93,24 @@ raw APIs return one assistant turn. One interface over both means either a
 lowest-common-denominator adapter or rebuilding Claude Code. **Conflating them would cost
 the project.**
 
+**`GateContext` is the published gate contract; `StageContext` is retired.**
+There were two candidate gate interfaces, and HARN-04 — _"reviewer and tester are implemented
+on the same interface third parties use"_ — cannot be true of both. `StageContext` was the
+published one, re-exported by `@adl/plugin-sdk` and taken by `Stage.run`, but four of its nine
+members were forward declarations nothing ever supplied and **no production code implemented
+`Stage` at all**. `GateContext` was what gates actually took, and the only one carrying
+ROLE-03's fresh-context guarantee as a machine-checked member list — a guarantee
+`StageContext` structurally could not make while `FeatureView` was opaque, because an
+`Exclude<>` assertion over placeholder members proves nothing. So `GateContext` won: it
+absorbed the one forward declaration with a real consumer (`StageConfig` → `config`, the
+gate's own `with:` block), gained the one capability a published contract cannot do without
+(`agents`), and the rest were dropped rather than carried as vocabulary nothing supplies.
+**Spend reporting is on the runner, not on the context**: a `reportUsage` member would be a
+call a gate could forget, and after M06 a forgotten call is spend that never reaches the
+per-feature budget or the global cap — so the manager hands a gate a runner that already
+reports, and there is nothing to forget (`DEBT.md`'s D-5-18-1, closed by construction).
+(M07 step 7.1, HARN-01/04.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.

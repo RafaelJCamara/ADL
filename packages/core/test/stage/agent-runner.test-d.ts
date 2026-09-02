@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from 'vitest';
 
-import type { AgentRunner, StageContext } from '../../src/stage/index.js';
+import type { AgentRunner, GateContext } from '../../src/stage/index.js';
 
 /**
  * The compile-time half of `AgentRunner`'s "real interface, not a forward
@@ -18,6 +18,12 @@ import type { AgentRunner, StageContext } from '../../src/stage/index.js';
  * `AgentRunner` ever regresses to a structural placeholder, the assignment
  * below stops erroring, the suppression comment becomes unused, and
  * TypeScript reports *that* as a build failure.
+ *
+ * The second case used to read `StageContext['agents']`. M07 step 7.1 retired
+ * `StageContext` in favour of `GateContext` — the type two real consumers take
+ * — and the assertion moved with the member rather than being dropped: "the
+ * place a gate receives a runner accepts a real runner" is the property, and it
+ * is now `GateContext` that holds that place.
  */
 describe('AgentRunner is a real, callable interface (BACK-01)', () => {
   it('does not accept a number where an AgentRunner is required', () => {
@@ -28,7 +34,7 @@ describe('AgentRunner is a real, callable interface (BACK-01)', () => {
     expectTypeOf<number>().not.toExtend<AgentRunner>();
   });
 
-  it('accepts a real implementation, and StageContext.agents accepts it too', () => {
+  it('accepts a real implementation, and GateContext.agents accepts it too', () => {
     const runner: AgentRunner = {
       run: () =>
         Promise.resolve({
@@ -50,6 +56,6 @@ describe('AgentRunner is a real, callable interface (BACK-01)', () => {
     };
 
     expectTypeOf(runner).toExtend<AgentRunner>();
-    expectTypeOf<AgentRunner>().toExtend<StageContext['agents']>();
+    expectTypeOf<AgentRunner>().toExtend<GateContext['agents']>();
   });
 });

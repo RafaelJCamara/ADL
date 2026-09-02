@@ -142,7 +142,7 @@ describe('GateContext cannot name the developer’s session or transcript (ROLE-
     // `Exclude<keyof T, never>` is only non-empty, not *complete*, and the
     // `satisfies` clause permits a SHORT list. The counts are checked here
     // instead, from the outside.
-    expect(GATE_CONTEXT_MEMBERS.length).toBeGreaterThanOrEqual(6);
+    expect(GATE_CONTEXT_MEMBERS.length).toBeGreaterThanOrEqual(8);
     expect(GATE_DIFF_MEMBERS.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -155,5 +155,20 @@ describe('GateContext cannot name the developer’s session or transcript (ROLE-
     expect([...GATE_CONTEXT_MEMBERS]).toEqual(
       expect.arrayContaining(['spec', 'diff', 'workspace']),
     );
+  });
+
+  it('declares the two members M07 step 7.1 added, and the forbidden-name guard still passes over them', () => {
+    // `config` is this gate's own `with:` block (HARN-01) and `agents` is the
+    // only way it calls a model — the two things that made `GateContext` a
+    // publishable gate contract rather than a command gate's parameter list.
+    //
+    // This case exists because both were added AFTER the guard above was
+    // written, and a member list can grow without anyone re-reading what the
+    // guard covers. Naming them here means the guard is asserted to run over
+    // them specifically, not merely over whatever the list happens to contain.
+    expect([...GATE_CONTEXT_MEMBERS]).toEqual(
+      expect.arrayContaining(['config', 'agents']),
+    );
+    expect(['config', 'agents'].filter(isForbiddenContext)).toEqual([]);
   });
 });

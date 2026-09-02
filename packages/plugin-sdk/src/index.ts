@@ -84,9 +84,9 @@ export {
   isTransientStageErrorKind,
 
   // The gate interface itself — what the built-in reviewer and behaviour tester
-  // are also implemented against, with no special-casing (HARN-04).
+  // are also implemented against, with no special-casing (HARN-04). `Stage.run`
+  // takes a `GateContext`, exported below.
   type Stage,
-  type StageContext,
   type StageKind,
   type CostClass,
   type LogChunk,
@@ -108,14 +108,22 @@ export {
   NETWORK_POLICIES,
   type ResourceLimits,
 
-  // The rest of `StageContext`, still forward declarations in `@adl/core` until
-  // the phase that owns each one lands it: the feature view and the artifact
-  // sink in Phase 3, the round summary in Phase 5. A harness can name these
-  // types today; their members arrive with the phase.
-  type FeatureView,
-  type StageConfig,
-  type ArtifactSink,
-  type RoundSummary,
+  // What a gate is actually given (M07 step 7.1). This replaced `StageContext`,
+  // whose four forward declarations — `FeatureView`, `StageConfig`,
+  // `ArtifactSink`, `RoundSummary` — were exported from here for six milestones
+  // and never supplied by anything. `GateContext` is the type two real
+  // consumers take, and the one carrying ROLE-03's fresh-context guarantee as a
+  // machine-checked member list: `GATE_CONTEXT_MEMBERS` is a runtime value, so a
+  // third-party harness can assert on the contract it was handed rather than
+  // trusting a docblock. `@adl/core/stage`'s `gate-context.ts` and
+  // `DECISIONS.md` carry the reasoning, including what each dropped declaration
+  // was replaced by and what was deliberately not carried over.
+  type GateContext,
+  type GateDiff,
+  GATE_CONTEXT_MEMBERS,
+  type GateContextMember,
+  GATE_DIFF_MEMBERS,
+  type GateDiffMember,
 
   // The AgentRunner port — the only way a stage calls a model (BACK-01,
   // Phase 4). `StageContext.agents` is one of these; a harness receives it

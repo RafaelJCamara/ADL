@@ -17,13 +17,15 @@
  * reasoning about *why* a test is wrong is a reviewer being handed the argument
  * for agreeing with it.
  *
- * ## The three permitted sources, and what each one is
+ * ## The permitted sources, and what each one is
  *
  * | Member | Source | Why it is safe |
  * |---|---|---|
  * | {@link GateContext.spec} | the repository | the maintainer's own file, protected by ROLE-11 |
  * | {@link GateContext.diff} | the repository | what the branch *wrote*, never what it said about writing it |
  * | {@link GateContext.workspace} | the repository | the worktree, contained to its own root (D-02) |
+ * | {@link GateContext.config} | `adl.yml` | this gate's own `with:` block — the maintainer's configuration of *this gate*, not the developer's output |
+ * | {@link GateContext.agents} | ADL | a capability, not information: a way to *call* a model, carrying nothing back about the developer's call |
  *
  * The workspace is the interesting one, because it is a live filesystem handle
  * and looks like the widest member here. It is not: `Workspace.read` and
@@ -49,28 +51,61 @@
  * same shape `adl/no-forge-merge` exists for (FORGE-10's port guard cannot stop
  * an adapter reaching past the port through the client it already holds).
  *
- * ## This is not a second `StageContext`
+ * ## This *was* a second context type. It is now the only one (M07 step 7.1)
  *
- * {@link StageContext} is the **published third-party** gate contract — what
- * `@adl/plugin-sdk` will republish, and what `Stage.run` takes. Four of its nine
- * members are still forward declarations that nothing supplies (`FeatureView`,
- * `StageConfig`, `ArtifactSink`, `RoundSummary`), and no production code
- * implements `Stage` at all: the built-in gates are plain functions. So
- * `StageContext` cannot carry this guarantee today — an `Exclude<>` assertion
- * over an interface whose members are opaque placeholders proves nothing.
+ * Until M07 there were two, and HARN-04 — *"reviewer and tester are implemented
+ * on the same interface third parties use"* — could not be true of both.
+ * `StageContext` was the published third-party contract, re-exported by
+ * `@adl/plugin-sdk` and taken by `Stage.run`; but four of its nine members were
+ * forward declarations nothing supplied (`FeatureView`, `StageConfig`,
+ * `ArtifactSink`, `RoundSummary`), and **no production code implemented `Stage`
+ * at all** — the built-in gates were plain functions. `GateContext` was what
+ * gates actually took.
  *
- * `GateContext` is what the **built-in** gates take now, and it is deliberately
- * **not** exported from `@adl/plugin-sdk`: publishing a second context type into
- * the third-party surface before M13 has a real harness to shape it against is
- * the one move here that would be one-way (D-01). When `StageContext`'s forward
- * declarations are filled, {@link GATE_CONTEXT_MEMBERS} is the list its own
- * fresh-context guarantee has to be re-derived over — and `FeatureView`'s
- * declared shape (spec, branch, round, headSha) is why it could not simply be
- * filled here: the round *number* is not on the worker's wire at all, only the
- * round id.
+ * 7.1 resolved it in this direction, and `DECISIONS.md` records why: an
+ * interface shaped around a hypothesis is exactly what M07's own notes warn
+ * against, and `StageContext` structurally could not carry ROLE-03's guarantee
+ * while `FeatureView` was opaque — an `Exclude<>` assertion over placeholder
+ * members proves nothing. So `GateContext` absorbed the one forward declaration
+ * that had a real consumer ({@link GateContext.config}, `StageConfig`'s job),
+ * gained the one capability a published gate contract cannot do without
+ * ({@link GateContext.agents}), and the rest were dropped rather than carried
+ * as vocabulary nothing supplies.
+ *
+ * What was **not** absorbed, and why each was a choice rather than an omission:
+ *
+ * - `FeatureView`'s **round number** — not on the worker's wire at all, only
+ *   the round id, and LOOP-09's "was this finding raised before?" is decided by
+ *   the manager over recorded fingerprints rather than by a gate counting.
+ * - `RoundSummary` — compressed prior rounds is the developer's history, and
+ *   handing it to a gate is ROLE-03 violated with a summariser in between.
+ * - `priorFindings` — findings from earlier stages *in this round*. A real
+ *   need for M07 step 7.2's `continue` policy, and deliberately the manager's
+ *   to merge: a gate that can see another gate's findings is a gate that can
+ *   defer to them.
+ * - `ArtifactSink` — `StageError.rawRef`'s destination. No gate writes one
+ *   today; `command-gate.ts` puts a bounded tail on the finding and streams
+ *   the rest through {@link GateContext.onEvent}.
+ *
+ * ## Why `agents` is a capability and not a leak
+ *
+ * {@link GateContext.agents} is the largest thing added here, and it is the
+ * member most worth being suspicious of, because ROLE-03 is about what a gate
+ * can *learn*. An {@link AgentRunner} carries nothing: `run` takes a task this
+ * gate composed and returns that invocation's own result. There is no member
+ * on it naming a prior session, and `AgentTask.sessionRef` is something a
+ * caller *supplies* — a gate has no way to obtain the developer's.
+ *
+ * **Spend reporting is the runner's job, not a member of this type**, and that
+ * is rule 9 rather than an oversight. `DEBT.md`'s D-5-18-1 asked for a channel
+ * through which a gate-invoked agent reports usage; giving one to the *gate*
+ * would be a call a gate could forget to make, and a gate that forgets burns
+ * tokens outside M06's per-feature budget and global cap. So the manager hands
+ * a gate an `AgentRunner` that **already** reports, and there is nothing here
+ * to forget.
  */
 import type { NormalizedSpec } from '../spec/types.js';
-import type { AgentEvent } from './agent.js';
+import type { AgentEvent, AgentRunner } from './agent.js';
 import type { Workspace } from './workspace.js';
 
 /**
@@ -131,6 +166,30 @@ export interface GateContext {
   /** What this feature's branch wrote. */
   readonly diff: GateDiff;
   /**
+   * This gate's own `with:` block from `adl.yml`, passed through opaquely
+   * (HARN-01) — `StageConfig`'s job, now that a real gate needs it.
+   *
+   * `Record<string, unknown>` and not a schema, deliberately: ADL does not know
+   * what a third-party gate's configuration looks like and must not pretend to.
+   * A gate validates its own block, with its own schema, and reports a bad one
+   * as a `StageError` — the same answer it gives for a missing binary, because
+   * a misconfigured gate did not judge.
+   *
+   * Empty (not absent) when the pipeline entry declared no `with:`, so a gate
+   * reads `ctx.config.foo` without first asking whether `ctx.config` exists.
+   */
+  readonly config: Readonly<Record<string, unknown>>;
+  /**
+   * The only way a gate calls a model (BACK-01).
+   *
+   * **The instance a gate receives already reports its own spend**, so this is
+   * a capability with an accounting obligation attached to it rather than to
+   * the gate — see the module docblock on D-5-18-1. A gate composes an
+   * `AgentTask` and runs it; it does not, and cannot, decide whether the
+   * resulting tokens are counted.
+   */
+  readonly agents: AgentRunner;
+  /**
    * Every transcript event, as it happens — appended by the caller, never
    * buffered until the run ends, so `adl logs -f` is live on a gate for the
    * same reason it is live on the developer.
@@ -166,6 +225,8 @@ export const GATE_CONTEXT_MEMBERS = Object.freeze([
   'workspace',
   'spec',
   'diff',
+  'config',
+  'agents',
   'onEvent',
   'signal',
 ] as const) satisfies readonly (keyof GateContext)[];
