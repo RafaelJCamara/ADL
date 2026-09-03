@@ -47,12 +47,12 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ✅ **LOOP-08** _(M06)_ Hitting any limit escalates to a human with full transcript and the disagreement, where they will see it
 - ✅ **LOOP-09** _(M07)_ Findings raised after round 1 become follow-ups, not new send-backs
 
-## Agent Roles — M05 ✅ · M07 · M08
+## Agent Roles — M05 ✅ · M07 ✅ · M08
 
 - ✅ **ROLE-01** _(M05)_ Developer agent implements a feature from its spec and commits
-- ⬜ **ROLE-02** _(M07)_ Code reviewer judges implementation against spec and code quality
+- ✅ **ROLE-02** _(M07)_ Code reviewer judges implementation against spec and code quality
 - ✅ **ROLE-03** _(M05)_ Reviewer works from fresh context — never inherits the developer's session or transcript
-- ⬜ **ROLE-04** _(M07)_ Reviewer cites the spec clauses it checked; an approval citing none is malformed
+- ✅ **ROLE-04** _(M07)_ Reviewer cites the spec clauses it checked; an approval citing none is malformed
 - ⬜ **ROLE-05** _(M08)_ Behaviour tester designs and runs tests, judging behaviour only
 - ⬜ **ROLE-06** _(M08)_ Tester structurally cannot read implementation source — enforced by workspace composition, not instruction
 - ⬜ **ROLE-07** _(M08)_ ADL starts, probes and tears down the app itself, allocating a port and reaping the process group
@@ -61,12 +61,12 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **ROLE-10** _(M08)_ Committed tests meet an assertion floor, link a spec clause, pass stability runs, and fail against the pre-feature commit
 - ✅ **ROLE-11** _(M05)_ The developer cannot modify specs, gate config, or the tests that judge it — enforced by diffing, not by asking
 
-## Harness Extensibility — M07 · M13
+## Harness Extensibility — M07 🟡 · M13
 
-- ⬜ **HARN-01** _(M07)_ Add a gate stage returning a verdict, without modifying ADL's lifecycle
-- ⬜ **HARN-02** _(M07)_ A gate may be an AI agent or a plain command — the loop consumes only the verdict
-- ⬜ **HARN-03** _(M07)_ Position a gate anywhere in the pipeline
-- ⬜ **HARN-04** _(M07)_ Reviewer and tester are implemented on the same interface third parties use
+- ✅ **HARN-01** _(M07)_ Add a gate stage returning a verdict, without modifying ADL's lifecycle
+- ✅ **HARN-02** _(M07)_ A gate may be an AI agent or a plain command — the loop consumes only the verdict
+- ✅ **HARN-03** _(M07)_ Position a gate anywhere in the pipeline
+- 🟡 **HARN-04** _(M07 · M08)_ Reviewer and tester are implemented on the same interface third parties use — the **reviewer** half is proven (M07 step 7.9: deleting it from `adl.yml` removes it from the pipeline, with no code change); the tester is M08's, and is the second consumer the interface still has to survive
 - ⬜ **HARN-05** _(M13)_ A security-checking harness ships as a working reference implementation
 - ⬜ **HARN-06** _(M13)_ Run an existing tool (semgrep, CodeRabbit, Greptile) as a gate with configuration rather than code
 

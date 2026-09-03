@@ -69,12 +69,12 @@ and code quality from fresh context, on exactly the interface a third party woul
 
 ## Done when
 
-- [ ] A gate stage — an AI agent or a plain command — can be added and positioned anywhere
+- [x] A gate stage — an AI agent or a plain command — can be added and positioned anywhere
       in the pipeline **through configuration**, with no change to ADL's lifecycle and no
       code written.
-- [ ] The reviewer runs on that same interface with **no special-casing**: removing it from
+- [x] The reviewer runs on that same interface with **no special-casing**: removing it from
       configuration removes it from the pipeline exactly like a third-party gate would be.
-- [ ] The reviewer's verdicts cite the specific spec clauses checked, and a `pass` citing
+- [x] The reviewer's verdicts cite the specific spec clauses checked, and a `pass` citing
       none is rejected as _malformed_ rather than accepted as an approval.
 - [ ] A known-bad-diff fixture set runs in ADL's own CI and turns the build red if the
       reviewer approves it — so rubber-stamping is **measured**, not assumed.
@@ -440,10 +440,39 @@ is that each step now says what exists, what is greenfield, and what it must pro
       and observes `@adl/manager` must rebuild in between or it is observing the old code.
       22 new cases across three files, plus two new modules and one new repository method.
 
-- [ ] **7.9** — **Removal proof.** Delete the reviewer from `adl.yml`'s pipeline, watch the
+- [x] **7.9** — **Removal proof.** Delete the reviewer from `adl.yml`'s pipeline, watch the
       feature run to a PR without it, with **no code change** — the negative half of
       HARN-04, and the one assertion that would catch a reviewer that had quietly become
       special-cased.
+      **Shipped as two runs in one file, sharing one builder.** Everything is identical —
+      the same daemon options, the same `claude` double, the same spec, the same four
+      lifecycle commands — except the argument naming the pipeline:
+      `['develop', 'review', 'test']` against `['develop', 'test']`. The diff between the
+      two runs is one array element in the test's source and nothing else, which is the
+      literal content of "with no code written".
+      **The reviewer's absence is observed from outside ADL, not asked of it.** The double
+      writes its report file only when it is launched as the reviewer, so the file's
+      existence is a direct observation of whether ADL ever started one — no assertion has
+      to trust ADL's own bookkeeping. It is there in the control and absent in the removal
+      run, and the removal run still reaches `publishing`.
+      **A real finding, caught by the control failing on its first run.** The control's
+      first draft put `review` last, and its "an event named the reviewer" assertion went
+      red — correctly. `completeWith` emits `all_gates_passed`, which carries no stage id,
+      so a green **last** gate leaves no stage-named event behind at all. That would have
+      made the removal run's "no `review` event" assertion true of a build that ran the
+      reviewer perfectly. The control now puts `review` at index 1, which is also the more
+      faithful removal: a repository deletes one entry from a pipeline that has others.
+      **Why `test` stays in both pipelines:** a `['develop']` pipeline reaches
+      `aggregate([])`, which escalates — "the pipeline ran zero gates, so nothing was
+      verified" — so a removal run with no gate at all would prove the reviewer's absence by
+      breaking the feature.
+      **Watched failing** (convention 13), two injections, each restored: (1) special-casing
+      the reviewer into every gate slot — `AGENT_GATE_ROLES.get(id) ?? 'reviewer'`, which is
+      exactly the shape a quietly-privileged reviewer would take — turned the removal case
+      red on `reviewerRan`; (2) making the double write its report regardless of role turned
+      **both** cases red, which is the proof the evidence is role-specific rather than
+      "a process ran".
+      2 new cases.
 
 ## Notes
 

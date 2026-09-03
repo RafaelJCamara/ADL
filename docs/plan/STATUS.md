@@ -732,9 +732,30 @@ and never reaches `publishing`, which is the goalpost-moving failure itself.
 `dist`, so a core-only edit is invisible to a manager test until `tsc -b` runs. One injection
 passed green for exactly that reason before being re-run against a rebuilt `dist`.
 
-**7.9 is next: the removal proof.** Delete the reviewer from `adl.yml`'s pipeline and watch
-a feature run to a pull request without it, with no code change — the negative half of
-HARN-04.
+**7.9 is done (2026-09-03): the removal proof (HARN-04's negative half).** Every other test
+in this milestone proves the reviewer _works_. A reviewer that had quietly become
+special-cased — a branch keyed on `stageId === 'review'`, an unconditional dispatch — would
+pass all of them and fail only this one.
+
+Two runs in one file, sharing one builder. Everything is identical except the argument naming
+the pipeline: `['develop', 'review', 'test']` against `['develop', 'test']`. The diff between
+the two runs is one array element and nothing else, which is the literal content of "with no
+code written". The reviewer's absence is observed **from outside ADL**: the double writes its
+report file only when launched as the reviewer, so the file's existence answers "did ADL ever
+start one" without trusting ADL's own bookkeeping. The removal run still reaches
+`publishing`.
+
+**A real finding, caught by the control failing on its first run.** The first draft put
+`review` last, and the "an event named the reviewer" assertion went red — correctly.
+`completeWith` emits `all_gates_passed`, which carries no stage id, so a green **last** gate
+leaves no stage-named event behind at all; the removal run's "no `review` event" assertion
+would then have been true of a build that ran the reviewer perfectly.
+
+**Watched failing twice:** special-casing the reviewer into every gate slot
+(`AGENT_GATE_ROLES.get(id) ?? 'reviewer'` — exactly the shape a quietly-privileged reviewer
+would take) turned the removal case red; making the double write its report regardless of
+role turned **both** cases red, which is the proof the evidence is role-specific rather than
+"a process ran".
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.
