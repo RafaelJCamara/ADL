@@ -219,6 +219,99 @@ describe('runReviewerGate', () => {
     expect(rendered).toContain(verdictPathFor('review'));
   });
 
+  it('refuses an approval that cites only a global category (ROLE-04)', async () => {
+    // `PassVerdictSchema.checked` is non-empty by schema, and this satisfies
+    // it — so the schema accepts it and the reviewer must not. A pass citing
+    // only `{ kind: 'global' }` is the COMMAND gate's honest answer: a build
+    // that went green genuinely checked no criterion. From a gate whose job is
+    // to judge implementation against the spec, it is an approval that claims
+    // coverage of nothing at all, which is exactly what ROLE-04 refuses.
+    const { gate } = harness({
+      files: {
+        [verdictPathFor('review')]: JSON.stringify({
+          outcome: 'pass',
+          summary: 'looks fine to me',
+          checked: [{ kind: 'global', category: 'code_quality' }],
+        }),
+      },
+    });
+
+    const result = await runReviewerGate(gate);
+
+    expect(result.kind).toBe('stage_error');
+    if (result.kind !== 'stage_error') return;
+    expect(result.error.kind).toBe('unparseable');
+    // Non-retryable: a reviewer that approved without checking anything will
+    // not check anything on a retry either, so the round escalates to a human.
+    expect(result.error.retryable).toBe(false);
+    expect(result.error.detail).toContain('acceptance');
+  });
+
+  it('accepts an approval that cites a criterion alongside a global', async () => {
+    // The negative control for the case above: the rule is "cite at least one
+    // criterion", not "cite nothing but criteria". A reviewer that verified
+    // AC-1 and also has a code-quality note it is content with must not be
+    // refused for saying both.
+    const { gate } = harness({
+      files: {
+        [verdictPathFor('review')]: JSON.stringify({
+          outcome: 'pass',
+          summary: 'checked it',
+          checked: [
+            { kind: 'global', category: 'code_quality' },
+            { kind: 'criterion', id: 'AC-1' },
+          ],
+        }),
+      },
+    });
+
+    const result = await runReviewerGate(gate);
+
+    expect(result.kind).toBe('verdict');
+  });
+
+  it('does not apply the citation rule to a send_back', async () => {
+    // The rule is about APPROVAL. A send-back whose findings are all
+    // code-quality notes is an ordinary, honest send-back, and refusing it
+    // would make "I found problems, none of them tied to a criterion"
+    // unsayable.
+    const { gate } = harness({
+      files: {
+        [verdictPathFor('review')]: JSON.stringify({
+          outcome: 'send_back',
+          summary: 'quality problems',
+          findings: [
+            {
+              fingerprint: 'd'.repeat(64),
+              severity: 'major',
+              title: 'no error handling',
+              detail: 'the write is unguarded',
+              criterionRef: { kind: 'global', category: 'code_quality' },
+            },
+          ],
+        }),
+      },
+    });
+
+    const result = await runReviewerGate(gate);
+
+    expect(result.kind).toBe('verdict');
+  });
+
+  it('tells the reviewer the rule it will be judged by', async () => {
+    // A gate that refuses an output it never asked for is a gate that fails
+    // for a reason the model could not have known. The instructions carry the
+    // rule this file's first case enforces.
+    const { gate, tasks } = harness({
+      files: { [verdictPathFor('review')]: VALID_PASS },
+    });
+
+    await runReviewerGate(gate);
+
+    expect(tasks[0]!.instructions).toContain('A pass must');
+    expect(tasks[0]!.instructions).toContain('cite at least one of them');
+  });
+
   it('names the verdict file after the stage, so two agent gates cannot overwrite each other', async () => {
     // Reachable now that a pipeline may carry more than one agent gate (7.3
     // made a multi-gate pipeline buildable, M08 adds the second agent).

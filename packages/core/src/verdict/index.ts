@@ -65,4 +65,10 @@ export {
   type RoundOutcome,
 } from './round-outcome.js';
 
+export {
+  citedCriterionIds,
+  unknownCitedCriteria,
+  type CitedCriteriaInput,
+} from './citations.js';
+
 export { aggregate } from './aggregate.js';

@@ -646,8 +646,37 @@ comment can be posted twice. Reproduced on `main` with no local changes, and rec
 `DEBT.md` § 3 rather than folded into § 4's flake row: it is an assertion about product
 state, not a timeout.
 
-**7.6 is next: spec-clause citation checked against the spec (ROLE-04).** A reviewer `pass`
-citing a criterion id the spec does not contain must be `unparseable`, not an approval.
+**7.6 is done (2026-09-03): spec-clause citation, checked against the spec (ROLE-04).**
+`PassVerdictSchema.checked` has been non-empty by schema since M01, so "an approval citing
+nothing is malformed" was already enforced. What a schema structurally cannot check is
+whether the thing cited _exists_ — `{ kind: 'criterion', id: 'AC-99' }` is a perfectly valid
+`CriterionRef` against a spec with one criterion, because the schema has no spec.
+
+**It shipped as two rules at two levels, and the split is the step's finding.** The sketch
+put both inside the reviewer, because the reviewer is what holds the spec. Writing it turned
+up the reason the first belongs one level out: **any** gate may cite a criterion. A
+plain-command gate in `emits: verdict` mode can print `AC-99` exactly as easily as a model
+can, and the `verdict_checked_criteria` row it would write — what the pull request's
+coverage section is drawn from — is exactly as false.
+
+- **"A cited criterion must exist"** is enforced once in `stage-runner.ts`, for every gate
+  of every kind, over every citation a verdict can carry — a `pass`'s `checked`, a
+  `send_back`/`warn` finding's `criterionRef`, and a `skip`'s waiver target. Stricter than
+  the sketch _and_ less special-casing, which is what HARN-04 asks for.
+- **"An approval must cite at least one criterion"** lives in the reviewer, and is
+  deliberately not universal: a `pass` citing only `{ kind: 'global', category: 'build' }`
+  is the command gate's honest answer. A gate being stricter about its own output is the
+  opposite of being special-cased.
+
+The pure half is `@adl/core/verdict`'s new `citations.ts`. Rule 2 is _derived_ from
+`citedCriterionIds` rather than restated (convention 8) — the two would be one edit apart
+from disagreeing, and the disagreement would resolve in favour of the approval. Both
+failures are `unparseable` and non-retryable: a gate citing a criterion that does not exist
+did not judge _this_ spec, so the round escalates rather than costing a round (CORE-06).
+
+**7.7 is next: the known-bad-diff fixture corpus.** It carries a judgement call — measuring
+rubber-stamping against a fake reviewer measures the fake — raised there rather than decided
+here.
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.

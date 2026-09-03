@@ -99,6 +99,7 @@ import { runReviewerGate } from './gates/reviewer-gate.js';
 import { loadSpecFromWorktree } from './spec-from-worktree.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
+import { unknownCitedCriteria } from '@adl/core/verdict';
 import { writePromptArtifact } from '../prompt/artifact.js';
 import { buildDeveloperPrompt } from '../prompt/build.js';
 import { openTranscriptWriter } from '../store/ndjson-log-store.js';
@@ -785,6 +786,48 @@ export function createProductionStageRunner(
               ? { emits: gateCommand.emits }
               : {}),
           });
+        }
+        // ROLE-04 (M07 step 7.6): a citation naming a criterion the spec does
+        // not contain is `unparseable`, never a verdict.
+        //
+        // **Applied to every gate, of every kind, and that is deliberately
+        // wider than the step sketch asked for.** The sketch put this inside
+        // the reviewer, on the grounds that the reviewer is what holds the
+        // spec. But a plain-command gate in `emits: verdict` mode (7.3) can
+        // print `{"kind":"criterion","id":"AC-99"}` exactly as easily as an
+        // agent can, and the `verdict_checked_criteria` row it would write —
+        // the table the pull request's coverage section is drawn from — is
+        // exactly as false. One check for all gates is both stricter and
+        // *less* special-casing than one check for the reviewer, which is what
+        // HARN-04 asks for. `citations.ts` carries the full argument.
+        //
+        // `unparseable` and not a gate failure, for CORE-06's reason and the
+        // one that matters more: a gate whose verdict cites a criterion that
+        // does not exist did not judge this spec, and reading it as approval
+        // is the exact failure ROLE-04 exists to prevent. Non-retryable, so
+        // the round escalates to a human rather than spinning.
+        //
+        // Only a `kind: 'verdict'` envelope cites anything: a `stage_error`
+        // carries a `StageError` and is already the answer this check would
+        // produce.
+        const criterionIds = built.gate.spec.acceptanceCriteria.map(
+          (criterion) => criterion.id,
+        );
+        const unknown =
+          verdict.kind === 'verdict'
+            ? unknownCitedCriteria({
+                verdict: verdict.verdict,
+                knownCriterionIds: criterionIds,
+              })
+            : [];
+        if (unknown.length > 0) {
+          await Promise.all(appendPromises);
+          return stageErrorResult(
+            'unparseable',
+            `the ${assign.stageId} gate's verdict cites ${unknown.length === 1 ? 'a criterion' : 'criteria'} ` +
+              `the spec does not contain: ${unknown.join(', ')}. The spec defines ` +
+              `${criterionIds.length === 0 ? 'none' : criterionIds.join(', ')}.`,
+          );
         }
         // BACK-09 (M05 step 5.18): this path sends NO `usage` message, and
         // that is the honest answer rather than an omission — a command gate

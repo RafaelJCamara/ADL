@@ -1327,4 +1327,106 @@ describe('the plain-command gate (HARN-02, M07 step 7.3)', () => {
       expect(verdict.error.detail).toContain('emits');
     });
   }, 30_000);
+
+  /**
+   * ROLE-04's semantic half, on a PLAIN COMMAND gate (M07 step 7.6).
+   *
+   * The step sketch put the "does this criterion exist" check inside the
+   * reviewer, because the reviewer is what holds the spec. These cases are
+   * here, on a gate that is not the reviewer and is not an agent at all,
+   * because that is the point of enforcing it at the stage-runner boundary
+   * instead: a third party's program can print `AC-99` exactly as easily as a
+   * model can, and the `verdict_checked_criteria` row it would write — the
+   * table the pull request's coverage section is drawn from — is exactly as
+   * false. One check for every gate is stricter *and* less special-casing than
+   * one check for the reviewer, which is what HARN-04 asks for.
+   *
+   * `SPEC_MARKDOWN` defines exactly one criterion, so `AC-1` exists and `AC-2`
+   * does not.
+   */
+  it('refuses a verdict citing a criterion the spec does not contain, naming both sides', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node(
+          `process.stdout.write(${JSON.stringify(
+            JSON.stringify({
+              outcome: 'pass',
+              summary: 'everything checks out',
+              checked: [{ kind: 'criterion', id: 'AC-2' }],
+            }),
+          )})`,
+        ),
+      });
+
+      // A `StageError` and not a gate failure: a gate whose verdict cites a
+      // criterion that does not exist did not judge THIS spec, and reading it
+      // as approval is the exact failure ROLE-04 exists to prevent (CORE-06).
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.retryable).toBe(false);
+      // Both sides, because "AC-2 is unknown" is unactionable without knowing
+      // what the spec does define.
+      expect(verdict.error.detail).toContain('AC-2');
+      expect(verdict.error.detail).toContain('AC-1');
+    });
+  }, 30_000);
+
+  it('refuses a send_back citing a criterion that does not exist, not only a pass', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node(
+          `process.stdout.write(${JSON.stringify(
+            JSON.stringify({
+              outcome: 'send_back',
+              summary: 'one problem',
+              findings: [
+                {
+                  fingerprint: 'e'.repeat(64),
+                  severity: 'blocker',
+                  title: 'unimplemented',
+                  detail: 'nothing does this',
+                  criterionRef: { kind: 'criterion', id: 'AC-7' },
+                },
+              ],
+            }),
+          )})`,
+        ),
+      });
+
+      // A finding pointing at a criterion that is not there renders in the PR
+      // against nothing, and `fingerprintFinding` would make it stable across
+      // every round that follows — so the check is about citations, not about
+      // approvals.
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('AC-7');
+    });
+  }, 30_000);
+
+  it('accepts a verdict citing a criterion the spec really defines', async () => {
+    // The negative control. Without it, the two cases above would also pass
+    // against a build that rejected every criterion citation outright.
+    await withTempRepo(async (repo) => {
+      const verdict = await runAuditGate(repo, {
+        emits: 'verdict',
+        command: node(
+          `process.stdout.write(${JSON.stringify(
+            JSON.stringify({
+              outcome: 'pass',
+              summary: 'the export button is there',
+              checked: [{ kind: 'criterion', id: 'AC-1' }],
+            }),
+          )})`,
+        ),
+      });
+
+      expect(verdict.kind).toBe('verdict');
+      if (verdict.kind !== 'verdict') return;
+      expect(verdict.verdict.outcome).toBe('pass');
+    });
+  }, 30_000);
 });

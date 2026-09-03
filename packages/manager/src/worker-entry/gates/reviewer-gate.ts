@@ -36,10 +36,14 @@
  *
  * ## What this module does NOT do
  *
- * - **It does not check that the citations name real criteria.** That is M07
- *   step 7.6 (ROLE-04), and it is deliberately a separate step: the schema can
- *   check that a `pass` cites *something*, and only something holding the spec
- *   can check that what it cites *exists*.
+ * - **It does not check that the citations name real criteria.** That check
+ *   exists as of M07 step 7.6, but it lives one level out in
+ *   `stage-runner.ts`, applied to every gate's verdict rather than to this
+ *   one's — a plain-command gate can cite `AC-99` exactly as easily, and the
+ *   false `verdict_checked_criteria` row is exactly as false. What this module
+ *   *does* enforce is the half that is genuinely about the reviewer's job: an
+ *   approval from here must cite at least one criterion (see
+ *   {@link runReviewerGate}).
  * - **It does not decide whether the round ends.** `on_send_back` is the
  *   pipeline's policy (7.2), read by the manager from the resolved stage.
  * - **It does not report its own spend.** The `AgentRunner` it is handed
@@ -47,7 +51,7 @@
  */
 import type { AgentEvent, GateContext } from '@adl/core/stage';
 import { stageErrorPolicy } from '@adl/core/stage';
-import { VerdictSchema } from '@adl/core/verdict';
+import { citedCriterionIds, VerdictSchema } from '@adl/core/verdict';
 import type { StageRunnerVerdict } from '../../ipc/stage-verdict.js';
 
 /**
@@ -134,7 +138,10 @@ function renderInstructions(gate: GateContext, verdictPath: string): string {
     'nothing else anywhere. The verdict must match ADL’s published verdict schema:',
     '',
     '- `{"outcome":"pass","summary":"…","checked":[{"kind":"criterion","id":"AC-1"}, …]}`',
-    '  — every criterion you actually verified. An approval that cites nothing is rejected.',
+    '  — every criterion you actually verified, by the exact ids listed above. A pass must',
+    '  cite at least one of them: an approval that cites only',
+    '  `{"kind":"global","category":"…"}`, or that cites an id this spec does not define, is',
+    '  rejected as malformed rather than accepted as an approval.',
     '- `{"outcome":"send_back","summary":"…","findings":[{"fingerprint":"…","severity":"blocker",',
     '  "title":"…","detail":"…","criterionRef":{"kind":"criterion","id":"AC-2"}}]}`',
     '  — `criterionRef` may instead be `{"kind":"global","category":"code_quality"}` for a',
@@ -221,6 +228,39 @@ export async function runReviewerGate(
         result.error.issues
           .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
           .join('; '),
+    );
+  }
+
+  // ROLE-04 (M07 step 7.6), the half the schema cannot reach and the manager
+  // must not: **an approval from THIS gate has to claim criterion coverage.**
+  //
+  // `PassVerdictSchema.checked` is non-empty by schema, and a `pass` citing
+  // only `{ kind: 'global', category: 'build' }` satisfies it. That is the
+  // command gate's honest answer — a build that went green genuinely checked
+  // no criterion — and borrowing it here would let the reviewer approve a
+  // feature while claiming coverage of nothing at all, which is precisely the
+  // approval ROLE-04 exists to refuse.
+  //
+  // Derived from `citedCriterionIds` rather than restated as "every entry is
+  // global" (convention 8): the two would be one edit apart from disagreeing,
+  // and the disagreement would resolve in favour of the approval.
+  //
+  // Not applied by `stage-runner.ts` beside the unknown-citation check, and
+  // that is the point of the split: "a cited criterion must exist" is true of
+  // every gate and is enforced once for all of them, while "an approval must
+  // cite a criterion" is a claim about what THIS gate's job is. A gate being
+  // stricter about its own output is the opposite of being special-cased — it
+  // is what any third party's gate is equally free to do.
+  if (
+    result.data.outcome === 'pass' &&
+    citedCriterionIds(result.data).length === 0
+  ) {
+    return stageError(
+      'unparseable',
+      `the ${gate.stageId} reviewer approved without citing a single acceptance ` +
+        'criterion — every entry in `checked` is a global category. A reviewer ' +
+        'that checked no criterion has not reviewed against the spec, and this is ' +
+        'a malformed verdict rather than an approval (ROLE-04).',
     );
   }
 

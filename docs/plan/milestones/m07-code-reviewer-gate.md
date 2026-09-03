@@ -282,13 +282,59 @@ is that each step now says what exists, what is greenfield, and what it must pro
       `DEBT.md` § 3 with an owner rather than folded into § 4's flake row, because it is an
       assertion about product state and not a timeout.
       1 new case, 1 new double.
-- [ ] **7.6** — **Spec-clause citation, checked against the spec** (ROLE-04, finding 5).
+- [x] **7.6** — **Spec-clause citation, checked against the spec** (ROLE-04, finding 5).
       `PassVerdictSchema.checked` is already non-empty by schema, so the missing half is
       semantic: a reviewer `pass` citing a criterion id **that the spec does not contain**
       is `unparseable`, not an approval. That check needs the spec, which the schema does
       not have and this gate does. A `pass` citing only `{ kind: 'global' }` from an
       _agent_ gate is likewise refused — that is the command gate's honest answer, and
       borrowing it would let the reviewer approve without claiming coverage of anything.
+      **Shipped as two rules at two levels, and the split is the finding.** The sketch
+      above puts both inside the reviewer, on the sound-looking grounds that the reviewer
+      is what holds the spec. Writing it turned up the reason the first rule belongs one
+      level out: **any gate may cite a criterion.** A plain-command gate in
+      `emits: verdict` mode (7.3) can print `{"kind":"criterion","id":"AC-99"}` exactly as
+      easily as a model can, and the `verdict_checked_criteria` row it would write — the
+      table the pull request's coverage section is drawn from — is exactly as false. So:
+      **Rule 1, "a cited criterion must exist", is enforced once in `stage-runner.ts` for
+      every gate of every kind.** That is both stricter than the sketch and _less_
+      special-casing, which is what HARN-04 asks for. It covers every citation a verdict
+      can carry, not only a `pass`'s: a `send_back` finding pointing at `AC-99` renders in
+      the PR against a criterion that is not there and `fingerprintFinding` would make it
+      stable across every round that follows, and a `skip`'s waiver target is checked
+      because a waiver is a **human's** recorded decision — a gate emitting one that names
+      a non-existent criterion is fabricating a human's answer, not miscounting.
+      **Rule 2, "an approval must cite at least one criterion", lives in the reviewer.**
+      This is the one genuinely about what this gate's job is, and it is deliberately not
+      applied to every gate: a `pass` citing only `{ kind: 'global', category: 'build' }`
+      is the command gate's _honest_ answer, because a build that went green really did
+      check no criterion. A gate being stricter about its own output is the opposite of
+      being special-cased — it is what any third party's gate is equally free to do. The
+      reviewer's instructions were updated in the same commit, because a gate that refuses
+      an output it never asked for fails for a reason the model could not have known.
+      The pure half is `@adl/core/verdict`'s new `citations.ts` —
+      `citedCriterionIds(verdict)` and `unknownCitedCriteria({verdict, knownCriterionIds})`,
+      order- and duplicate-preserving on `violatedProtectedPaths`' precedent, with a `never`
+      arm so a seventh outcome would fail the build rather than silently read as "cites
+      nothing". Rule 2 is **derived** from `citedCriterionIds` rather than restated as
+      "every entry is global" (convention 8): the two would be one edit apart from
+      disagreeing, and that disagreement would resolve in favour of the approval.
+      Both failures are `unparseable` and non-retryable: a gate whose verdict cites a
+      criterion that does not exist did not judge _this_ spec, so the round escalates to a
+      human rather than costing the developer one (CORE-06, D-12).
+      **Watched failing** (convention 13), three injections, each restored: neutering the
+      stage-runner check turned both plain-command-gate cases red — each reporting a verdict where a stage error was expected — while the negative control stayed green; short-circuiting the
+      reviewer's rule turned the global-only approval red and left the other ten cases
+      untouched; and making `criterionIdsOf` treat a global's `category` as a criterion id
+      turned three core cases red, including the one asserting a global is never flagged.
+      **Proven end to end without a new scenario:** 7.5's
+      `reviewer-fresh-context.test.ts` already drives a real daemon whose reviewer emits
+      `checked: [{ criterion, AC-1 }]`, and that verdict now passes through both rules on a
+      real dispatch. The negative paths are proven at the stage-runner level against a
+      **real** worktree and a **real** child process, which is where a wrong verdict is
+      actually produced.
+      19 new cases across three files, plus one new module.
+
 - [ ] **7.7** — **The known-bad-diff fixture corpus, red-build in ADL's own CI.** Diffs
       that a competent reviewer must send back — a criterion silently unimplemented, a test
       weakened to pass, a protected path touched. The build goes red if the reviewer
