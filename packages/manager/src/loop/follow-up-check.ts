@@ -69,7 +69,9 @@ export interface CheckFollowUpsParams {
    * the previous round's number (`bookkeeping/attempt.ts`) while
    * `features.round` is moved by `transition()`, so the two are two answers to
    * one question and an ordinal read from the wrong one would exclude the wrong
-   * round. The id is the round's identity and this module already has it.
+   * round. That is not a hypothetical — `docs/plan/DEBT.md`'s **D-5-13-2**
+   * records the two as *"silently one apart"*, and it is still open. The id is
+   * the round's identity and this module already has it.
    */
   readonly roundId: string;
   /** The verdict the gate returned, before any policy is applied to it. */

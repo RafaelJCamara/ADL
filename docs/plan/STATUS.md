@@ -23,14 +23,43 @@ weekends, no deadline.
 
 ## Where we are
 
-**6 of 18 milestones delivered. Milestone 6 is code-complete — every step from 6.2 to
-6.11 is done, all six acceptance criteria are ticked, and `pnpm typecheck` / `pnpm lint` /
-`pnpm format` are clean on `main`.** M06 carries one deferred check, the same shape M02,
-M04 and M05 each carry: step 6.1's live cost reconciliation — one real agent turn whose
-reported cost is checked against the provider's billed usage — needs a live
-`ANTHROPIC_API_KEY` that does not exist in this environment, so it is folded into
-`DEBT.md` § 1's end-of-project batch by the 2026-08-27 maintainer decision rather than
-blocking the milestone.
+**7 of 18 milestones delivered. Milestone 7 is code-complete — steps 7.1–7.6, 7.8 and 7.9
+are done, four of five acceptance criteria are ticked, and `pnpm typecheck` / `pnpm lint` /
+`pnpm format` are clean on `main`.** M07 carries one deferred check, the same shape M02,
+M04, M05 and M06 each carry: step 7.7's known-bad-diff corpus measures whether a **real**
+reviewer rubber-stamps, and run against the replay double every gate test in this build
+correctly uses, it would measure the double. It is folded into `DEBT.md` § 1's
+end-of-project batch as item 1.8 by the 2026-09-03 maintainer decision rather than being
+faked; acceptance criterion 4 stays unticked and says so.
+
+What M07 delivered: one published gate contract — `GateContext` survived and `StageContext`
+is gone (7.1, HARN-01/04); `on_send_back` made real with cost-class defaults and a
+`gate_deferred` event so `gate_passed` stays honest (7.2, HARN-03); a gate that can be **any
+program**, judged on the verdict it prints rather than on an exit code (7.3, HARN-02); the
+reviewer agent itself, on that same interface with no privileged path (7.4, ROLE-02); fresh
+context observed rather than declared, with a real developer transcript on disk beside a
+real reviewer that could not name it (7.5, ROLE-03); citations checked against the spec they
+claim to be about, enforced for **every** gate rather than for the reviewer alone (7.6,
+ROLE-04); findings raised after a gate's own first look demoted to follow-ups so the
+goalposts cannot move mid-feature (7.8, LOOP-09); and the removal proof — deleting the
+reviewer from `adl.yml` removes it from the pipeline, with no code change (7.9, HARN-04's
+negative half).
+
+**One test is red on `main` at this close-out, and it is not M07's.**
+`test/tracer/draft-cr-wiring.test.ts` fails under the full manager suite — two sticky
+comments where it expects one — and passes alone in 3.3 s. It was reproduced on a clean
+tree, with this milestone's work stashed, before being believed: `upsertComment` is
+check-then-act, so two concurrent publishes both find no prior comment and both create one.
+It is `DEBT.md` § 3's **D-7-05-1**, owner M09. Every other suite is green:
+`@adl/core` 648, `@adl/db` 101, `@adl/workspace` 243, `@adl/cli` 42,
+`@adl/agent-claude-code` 68, `@adl/forge-github` 24, `@adl/plugin-sdk` 30, root 85.
+
+Two decisions the milestone owed answers to are answered, both recorded in `DEBT.md`:
+**D-5-18-1** closed in 7.1 in a better shape than the debt proposed — the spend-reporting
+obligation went on the runner, so there is no call a gate can forget — and **D-6-09-1** at
+the close-out: ADL now warns at boot when the reviewer would run on the developer's model,
+**including the backend default**, because that is where an untouched install sits and its
+remedy is one line of configuration.
 
 What M06 delivered: the round ceiling proven through the real manager (6.2), spend visible
 per feature and per role in `adl status` (6.3, OBS-05), the per-feature budget and the
@@ -43,7 +72,10 @@ repository able to request one from a daemon-declared allowlist (6.9–6.11, BAC
 The last three steps were added to the milestone on 2026-09-01 at the maintainer's
 request; the record of why is in the milestone file.
 
-**M07 — Code Reviewer on the Gate Plugin Interface — is next.**
+**M08 — Behaviour Tester & Committed Regression Tests — is next.** Its steps still ship as
+a sketch; refine them into real steps as their own docs commit, after a pre-implementation
+audit, the way M06 and M07 were opened. M07's audit found seven things, two of which changed
+what the steps were.
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -52,8 +84,9 @@ M03 Manager Skeleton ................ ✅ done
 M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
-M07 Code Reviewer Gate .............. ◀ NEXT
-M08–M18 ............................. not started
+M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
+M08 Behaviour Tester ................ ◀ NEXT
+M09–M18 ............................. not started
 ```
 
 **What actually works today:** a real Claude Code agent, driven through a bounded workspace,
@@ -1028,8 +1061,8 @@ cases red, including the closed-default case and the `DISCARD_REASONS` coverage 
 
 **M06 is code-complete.** All six acceptance criteria are ticked; 6.1's live cost
 reconciliation stays deferred in `DEBT.md` § 1 by the 2026-08-27 maintainer decision.
-**M07 — Code Reviewer on the Gate Plugin Interface — is next**, starting with 7.1,
-finalising the gate plugin interface against two real consumers.
+_(M07 followed and is itself code-complete as of 2026-09-03 — see "Where we are" at the top
+of this file. M08 is next.)_
 
 **Before you start, skim:**
 

@@ -1,6 +1,6 @@
 # M07 — Code Reviewer on the Gate Plugin Interface
 
-**Status:** ◀ **IN PROGRESS** — step 7.7's known-bad-diff corpus deferred into `DEBT.md` § 1 (item 1.8) by the 2026-09-03 maintainer decision; acceptance criterion 4 stays unticked until it runs
+**Status:** 🟡 **Code complete** — steps 7.1–7.6, 7.8 and 7.9 shipped; four of five acceptance criteria ticked. Step 7.7's known-bad-diff corpus is deferred into `DEBT.md` § 1 (item 1.8) by the 2026-09-03 maintainer decision, so criterion 4 stays unticked until it runs — the same shape M02, M04, M05 and M06 each carry
 **Depends on:** M06
 **Requirements:** HARN-01…04, ROLE-02, ROLE-04, LOOP-09 (7)
 
@@ -483,6 +483,24 @@ is that each step now says what exists, what is greenfield, and what it must pro
   findings, one send-back); expensive agent gates default to `stop`.
 - The rubber-stamp fixture set is the point of criterion 4 — an approving reviewer is
   worse than no reviewer, and the only way to know is to measure it continuously.
+- **Cross-model review: ANSWERED (maintainer decision, 2026-09-03).** ADL warns, once, at
+  boot, when the reviewer would run on the developer's model —
+  `manager/src/boot/reviewer-model-warning.ts` — and **including the backend-default case**,
+  which is where an untouched install sits and therefore where the risk actually bites. It is
+  deliberately unlike its sibling `boot/model-pricing-warning.ts`, which skips the
+  `BACKEND_DEFAULT_MODEL` sentinel: the two differ in whether the default case is
+  _actionable_. For pricing it is not — the price belongs to whatever the backend picked and
+  arrives on the `started` event — so warning there would only train the operator to ignore
+  the line. Here the default case is the dangerous one and its remedy is one line of
+  configuration, so a warning that fired only on a deliberate same-model collision would be
+  silent for every operator actually at risk. **A warning, never a refusal:** ADL does not
+  pick models on an operator's behalf. One narrowing stays open and is recorded in `DEBT.md`
+  rather than guessed at — the warning cannot see whether any pipeline actually contains a
+  `review` stage, because a pipeline is a property of each repository's own `adl.yml` and is
+  read per feature at admission. **Watched failing:** re-adding the sentinel skip — the most
+  likely "make it consistent with its sibling" refactor — turns both default-case assertions
+  red.
+  The original note is kept below, because it is the argument the decision answers.
 - **Cross-model review is now expressible, and still not required — decide which here.**
   M06 steps 6.9–6.11 (BACK-10) made per-role model selection actually work; before them
   `agents.<role>.model` validated and did nothing. This milestone is the first moment a

@@ -30,6 +30,7 @@ import {
   type BackendVersionCheckResult,
 } from './boot/backend-preflight.js';
 import { warnUnpricedRoleModels } from './boot/model-pricing-warning.js';
+import { warnSharedReviewerModel } from './boot/reviewer-model-warning.js';
 import {
   encodeLeaseOwner,
   killBootOrphans,
@@ -445,6 +446,14 @@ export async function startDaemon(
     daemonConfig: options.daemonConfig,
     logger,
   });
+
+  // D-6-09-1, answered by the M07 close-out (maintainer decision, 2026-09-03).
+  // Beside the pricing warning because it is the same kind of thing — a
+  // property of the configuration this daemon just resolved, reported once,
+  // never a refusal — and deliberately UNLIKE it in warning for the backend
+  // default: see `./boot/reviewer-model-warning.js` for why "actionable"
+  // rather than "explicit" is the line that decides.
+  warnSharedReviewerModel({ daemonConfig: options.daemonConfig, logger });
 
   // Captured once, in this scope, so the closures below (`onDeveloperCommitted`
   // and `runDispatchOnce`'s own `forge` field) both see a narrowed, defined
