@@ -114,6 +114,22 @@ export interface RoundStepInput {
    * half, which is the half that shipped.
    */
   readonly onSendBack?: OnSendBack;
+  /**
+   * How many of this stage's findings ADL classified as follow-ups rather than
+   * blockers (LOOP-09, M07 step 7.8) — `applyFollowUpPolicy`'s answer, applied
+   * by the caller before the verdict ever reaches here.
+   *
+   * Supplied rather than derived for `onSendBack`'s reason and one more: the
+   * classification needs this feature's round history, which is a database
+   * read, and by the time a demoted verdict arrives here its outcome is
+   * `warn` and nothing on it records that it used to be a `send_back`. Without
+   * this field the audit trail could not tell a demotion from a gate that
+   * chose to warn.
+   *
+   * Optional and defaulting to none, so every pre-7.8 caller and fixture keeps
+   * v1's exact events without being edited.
+   */
+  readonly followUpCount?: number;
 }
 
 /** The pipeline continues; the stage index moves on. */
@@ -304,19 +320,41 @@ export function planRoundStep(input: RoundStepInput): RoundStep {
   const isLastStage = stageIndex + 1 >= pipelineLength;
   const onSendBack = input.onSendBack ?? 'stop';
 
+  // LOOP-09 (M07 step 7.8). Recorded on both the advance and the complete path
+  // — a reviewer that is the LAST stage is exactly the pipeline where its
+  // follow-ups would otherwise leave no trace at all, because `completeWith`
+  // emits only the round's own outcome event.
+  const followUps: readonly FeatureEvent[] =
+    (input.followUpCount ?? 0) > 0
+      ? [
+          {
+            t: 'gate_follow_ups',
+            stageId,
+            findingCount: input.followUpCount!,
+          },
+        ]
+      : [];
+
   if (isLastStage || stopsPipeline(completion.verdict, onSendBack)) {
     // Note what happens to a `continue` gate's findings when it IS the last
     // stage: nothing special. They reach `aggregate` alongside every earlier
     // gate's, which produces the one merged send-back the policy exists to
     // create. `continue` never discards a finding — it only changes *when* the
     // round is decided.
-    return completeWith(aggregate(verdicts), stageId, []);
+    return completeWith(aggregate(verdicts), stageId, followUps);
   }
 
   // M07 step 7.2: the same lifecycle move, under two honest names. A gate that
   // raised blockers and let the pipeline continue did not pass, and
   // `gate_passed` is what the audit trail and the pull request read as
   // "satisfied".
+  //
+  // M07 step 7.8 adds the third name. A gate whose findings were ALL raised for
+  // the first time after its own first look advanced without blocking and
+  // without being satisfied, and `gate_follow_ups` is the only one of the three
+  // that says so. It is emitted INSTEAD of `gate_passed` — a demoted verdict is
+  // a `warn` by the time it reaches here, and `gate_passed` is what the pull
+  // request reads as "satisfied".
   const advanced: FeatureEvent =
     completion.verdict.outcome === 'send_back'
       ? {
@@ -324,7 +362,9 @@ export function planRoundStep(input: RoundStepInput): RoundStep {
           stageId,
           findingCount: completion.verdict.findings.length,
         }
-      : { t: 'gate_passed', stageId };
+      : followUps[0] !== undefined
+        ? followUps[0]
+        : { t: 'gate_passed', stageId };
 
   return {
     kind: 'advance',

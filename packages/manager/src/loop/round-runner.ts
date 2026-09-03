@@ -39,6 +39,7 @@ import {
   checkProtectedPaths,
   type ProtectedPathCheckResult,
 } from './protected-paths-check.js';
+import { checkFollowUps, type FollowUpCheckResult } from './follow-up-check.js';
 import {
   checkStalemate,
   type StalemateCheckResult,
@@ -641,23 +642,64 @@ async function runStageCompleted(
     return;
   }
 
-  const completion = classify(params.verdictJson);
+  // `let`, because LOOP-09 (M07 step 7.8) may replace the gate's verdict with
+  // the one ADL actually acted on before anything downstream reads it — see
+  // the `checkFollowUps` call below. Nothing else reassigns it.
+  let completion = classify(params.verdictJson);
 
   // Evidence first, state second. A CAS that loses its race must not also
   // lose the judgement that a pull request is rendered from.
   let protectedPathResult: ProtectedPathCheckResult | undefined;
   let stalemateResult: StalemateCheckResult | undefined;
+  let followUpResult: FollowUpCheckResult | undefined;
   let transientResult: TransientRetryCheckResult | undefined;
   let committedSha: string | undefined;
+  let followUpCount = 0;
   if (completion.kind === 'gate') {
-    await recordGateVerdict(
-      deps,
-      params.stageAttemptId,
-      completion.verdict,
-      at,
+    // LOOP-09 (M07 step 7.8) runs FIRST, and it is the one read in this
+    // function that must happen before the write beside it. It asks "what did
+    // this gate say BEFORE this round?", so a history that already contained
+    // this round's own findings would report every one of them as part of the
+    // contract — the policy never firing at all. `checkStalemate` below asks
+    // the opposite question and therefore wants the write to have happened;
+    // the two orderings are not in tension because they are two different
+    // reads. See `follow-up-check.ts`'s own docblock.
+    const resolvedForFollowUps = resolveSnapshotPipeline(
+      feature.effective_config_json,
     );
+    const judgedStage = resolvedForFollowUps.ok
+      ? resolvedForFollowUps.stages[params.stageIndex]
+      : undefined;
+    if (judgedStage !== undefined && judgedStage.id === params.stageId) {
+      followUpResult = await checkFollowUps(
+        { db: deps.db },
+        {
+          featureId: feature.id,
+          stageId: params.stageId,
+          stage: judgedStage,
+          roundId: params.roundId,
+          verdict: completion.verdict,
+        },
+      );
+    }
 
-    if (completion.verdict.outcome === 'send_back') {
+    // The verdict ADL actually acted on is the one that gets persisted, so
+    // `verdicts.outcome` and the audit trail cannot disagree about what
+    // happened. A demoted `send_back` is stored as the `warn` it became,
+    // carrying every one of its findings — nothing is discarded.
+    const effectiveVerdict =
+      followUpResult?.kind === 'decided'
+        ? followUpResult.decision.verdict
+        : completion.verdict;
+    followUpCount =
+      followUpResult?.kind === 'decided'
+        ? followUpResult.decision.followUps.length
+        : 0;
+    completion = { kind: 'gate', verdict: effectiveVerdict };
+
+    await recordGateVerdict(deps, params.stageAttemptId, effectiveVerdict, at);
+
+    if (effectiveVerdict.outcome === 'send_back') {
       // LOOP-06 (M06 step 6.6): unconditional on every send_back, before
       // `planRoundStep` ever runs — see `stalemate-check.ts`'s own docblock
       // for why this is not, and must not be, a pipeline entry `adl.yml` has
@@ -668,7 +710,7 @@ async function runStageCompleted(
         { db: deps.db },
         {
           featureId: feature.id,
-          currentFindings: completion.verdict.findings,
+          currentFindings: effectiveVerdict.findings,
           threshold: repeatFindingThresholdOf(feature),
         },
       );
@@ -734,52 +776,65 @@ async function runStageCompleted(
         ? protectedPathViolationStep(committedSha, protectedPathResult.paths)
         : protectedPathResult?.kind === 'error'
           ? { kind: 'retry', reason: protectedPathResult.detail }
-          : stalemateResult?.kind === 'stalled'
-            ? stalemateStep(stalemateResult.findings)
-            : stalemateResult?.kind === 'error'
-              ? { kind: 'retry', reason: stalemateResult.detail }
-              : pipeline.ok
-                ? planRoundStep({
-                    stageIndex: params.stageIndex,
-                    pipelineLength: pipeline.stages.length,
-                    stageId: params.stageId,
-                    completion,
-                    priorVerdicts: await readRoundVerdicts(
-                      deps.db,
-                      params.roundId,
-                      params.stageAttemptId,
-                    ),
-                    // HARN-03 (M07 step 7.2): read off the SNAPSHOTTED
-                    // pipeline, like everything else on this line — a policy
-                    // resolved from live `adl.yml` could change what a running
-                    // feature's round means halfway through it.
-                    //
-                    // Absent when the index has no entry, which is the same
-                    // should-not-happen `dispatchOnce` already guards
-                    // (`transition()` only advances within this pipeline). The
-                    // optional field then defaults to `stop`, so the
-                    // impossible case lands on v1's conservative behaviour
-                    // rather than on the permissive one.
-                    ...(pipeline.stages[params.stageIndex] !== undefined
-                      ? {
-                          onSendBack: onSendBackFor(
-                            pipeline.stages[params.stageIndex]!,
-                          ),
-                        }
-                      : {}),
-                  })
-                : // A pipeline this build cannot resolve is not something another
-                  // round fixes — the configuration names a harness with no loader
-                  // (M13), and the feature would fail identically every time.
-                  planRoundStep({
-                    stageIndex: params.stageIndex,
-                    pipelineLength: 0,
-                    stageId: params.stageId,
-                    completion: unparseable(
-                      `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
-                    ),
-                    priorVerdicts: [],
-                  });
+          : followUpResult?.kind === 'error'
+            ? // The policy could not run, so ADL cannot say whether this
+              // send-back is a moved goalpost. Retrying is the honest answer:
+              // deciding either way would either spend a round on a decision
+              // nothing made, or withhold one (CORE-06).
+              { kind: 'retry' as const, reason: followUpResult.detail }
+            : stalemateResult?.kind === 'stalled'
+              ? stalemateStep(stalemateResult.findings)
+              : stalemateResult?.kind === 'error'
+                ? { kind: 'retry', reason: stalemateResult.detail }
+                : pipeline.ok
+                  ? planRoundStep({
+                      stageIndex: params.stageIndex,
+                      pipelineLength: pipeline.stages.length,
+                      stageId: params.stageId,
+                      completion,
+                      priorVerdicts: await readRoundVerdicts(
+                        deps.db,
+                        params.roundId,
+                        params.stageAttemptId,
+                      ),
+                      // HARN-03 (M07 step 7.2): read off the SNAPSHOTTED
+                      // pipeline, like everything else on this line — a policy
+                      // resolved from live `adl.yml` could change what a running
+                      // feature's round means halfway through it.
+                      //
+                      // Absent when the index has no entry, which is the same
+                      // should-not-happen `dispatchOnce` already guards
+                      // (`transition()` only advances within this pipeline). The
+                      // optional field then defaults to `stop`, so the
+                      // impossible case lands on v1's conservative behaviour
+                      // rather than on the permissive one.
+                      ...(pipeline.stages[params.stageIndex] !== undefined
+                        ? {
+                            onSendBack: onSendBackFor(
+                              pipeline.stages[params.stageIndex]!,
+                            ),
+                          }
+                        : {}),
+                      // LOOP-09 (M07 step 7.8): supplied, never derived, for the
+                      // reason `onSendBack` is — and one more. By the time a
+                      // demoted verdict reaches `planRoundStep` its outcome is
+                      // `warn`, and nothing on it records that it used to be a
+                      // `send_back`; without this the audit trail could not tell
+                      // a demotion from a gate that chose to warn.
+                      ...(followUpCount > 0 ? { followUpCount } : {}),
+                    })
+                  : // A pipeline this build cannot resolve is not something another
+                    // round fixes — the configuration names a harness with no loader
+                    // (M13), and the feature would fail identically every time.
+                    planRoundStep({
+                      stageIndex: params.stageIndex,
+                      pipelineLength: 0,
+                      stageId: params.stageId,
+                      completion: unparseable(
+                        `the snapshotted pipeline could not be resolved: ${pipeline.reason}`,
+                      ),
+                      priorVerdicts: [],
+                    });
 
   if (step.kind === 'retry') {
     const reaperDeps = {

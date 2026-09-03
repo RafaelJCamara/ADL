@@ -25,6 +25,7 @@ export {
   type VerdictsRepository,
   type CoverageRow,
   type RecentStageAttempt,
+  type StageJudgementRow,
   type NewStageAttempt,
   type NewVerdict,
   type NewCheckedCriterion,

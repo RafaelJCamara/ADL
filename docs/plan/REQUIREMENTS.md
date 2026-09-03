@@ -45,7 +45,7 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ✅ **LOOP-06** _(M06)_ Stalemate detected by repeated findings, independently of round and budget limits
 - ✅ **LOOP-07** _(M06)_ Provider outage / rate limit / auth failure consumes neither a round nor budget
 - ✅ **LOOP-08** _(M06)_ Hitting any limit escalates to a human with full transcript and the disagreement, where they will see it
-- ⬜ **LOOP-09** _(M07)_ Findings raised after round 1 become follow-ups, not new send-backs
+- ✅ **LOOP-09** _(M07)_ Findings raised after round 1 become follow-ups, not new send-backs
 
 ## Agent Roles — M05 ✅ · M07 · M08
 

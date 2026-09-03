@@ -692,7 +692,49 @@ model — a criterion silently unimplemented, and a test weakened to pass.
 **Acceptance criterion 4 therefore stays unticked**, and M07 will close as
 code-complete-with-one-deferred-check — the same status M02, M04, M05 and M06 each carry.
 
-**7.8 is next: follow-ups instead of fresh send-backs after round 1 (LOOP-09).**
+**7.8 is done (2026-09-03): findings raised after a gate's own first look are follow-ups
+(LOOP-09).** A reviewer given a fresh look each round has no memory of having been satisfied;
+left unbounded it produces a new opinion every round, each one spending one of
+`limits.max_rounds`, and the human eventually gets an escalation about a feature that was
+finished two rounds ago.
+
+**The step sketch was wrong in one place that mattered.** "A finding first raised in round
+2+" cannot be the rule. `review` defaults to `on_send_back: stop`, so in a
+`['develop', 'test', 'review']` pipeline whose tests fail in round 1 the reviewer never runs
+until round 2 — a literal "after round 1" rule would make its very first opinion
+non-blocking. The contract is therefore **per stage**: the findings a gate raised the first
+time _it_ judged this feature. M07's own "Done when" already said "after the first _review_
+round", which is the careful wording.
+
+**And it must not apply to every gate.** The command gate's finding title carries the exit
+code, so `exit 1` in round 1 and `exit 2` in round 2 are two fingerprints — demoting the
+second would turn a broken build into a green round. `judgementKindOf` answers
+`deterministic` or `opinion`, keyed on `(id, source)` exactly as `costClassOf` is, defaulting
+to `deterministic` so every npm-, repo-path- and command-sourced gate keeps pre-7.8
+behaviour. An unknown gate can never let a broken build through.
+
+**A demoted `send_back` becomes a `warn`, which needed no new concept.** `aggregate` — CORE-02's
+single enforcement point, proven over 3,002 multisets — already knows a `warn` never produces
+a `send_back` and that its findings still ride along into the brief when another gate sent
+the developer back. Nothing is discarded; what changes is that a finding no longer costs a
+round. The verdict that is **persisted** is the one ADL acted on, so `verdicts.outcome` and
+the round it produced cannot disagree.
+
+**`gate_passed`'s honesty cost a third event kind**, exactly as 7.2's did:
+**`gate_follow_ups`** on the identical `gating → gating` edge, because such a gate advanced
+without blocking _and_ without being satisfied.
+
+**Watched failing six ways**, including the decisive one: reclassifying `review` as
+`deterministic` makes the end-to-end scenario time out — the feature loops to `max_rounds`
+and never reaches `publishing`, which is the goalpost-moving failure itself.
+
+**A trap worth carrying forward:** `@adl/manager` resolves `@adl/core` through its built
+`dist`, so a core-only edit is invisible to a manager test until `tsc -b` runs. One injection
+passed green for exactly that reason before being re-run against a rebuilt `dist`.
+
+**7.9 is next: the removal proof.** Delete the reviewer from `adl.yml`'s pipeline and watch
+a feature run to a pull request without it, with no code change — the negative half of
+HARN-04.
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.

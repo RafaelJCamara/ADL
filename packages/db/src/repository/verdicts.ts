@@ -52,6 +52,26 @@ export interface RecentStageAttempt {
   ended_at: string | null;
 }
 
+/**
+ * One finding one stage raised in one round, as LOOP-09's follow-up policy
+ * reads it (M07 step 7.8).
+ *
+ * A LEFT JOIN, so a verdict that raised **no** findings still produces a row
+ * with `fingerprint: null`. That is not a curiosity — it is the row that says
+ * "this stage judged in this round", which is how "has this gate looked at
+ * this feature before?" is answered for a gate whose first look was a `pass`.
+ * A plain INNER JOIN would report such a gate as never having judged, and its
+ * first send-back three rounds later would be treated as a later look.
+ */
+export interface StageJudgementRow {
+  /** `rounds.id`, so a caller can exclude the round it is currently deciding without knowing its ordinal. */
+  round_id: string;
+  /** `rounds.number` — 1 for the first round of a feature. Used to order rounds, never to identify one. */
+  round_number: number;
+  /** The fingerprint raised, or null when that verdict raised none. */
+  fingerprint: string | null;
+}
+
 export interface VerdictsRepository {
   insertStageAttempt(attempt: NewStageAttempt): Promise<void>;
   /**
@@ -99,6 +119,24 @@ export interface VerdictsRepository {
     featureId: string,
     limit: number,
   ): Promise<RecentStageAttempt[]>;
+  /**
+   * Every verdict one **stage** produced for one feature, with the findings it
+   * raised and the round it raised them in (LOOP-09, M07 step 7.8).
+   *
+   * Scoped to a stage id rather than to the whole feature because the contract
+   * LOOP-09 freezes is per gate: `review` defaults to `on_send_back: stop`, so
+   * in a pipeline whose tests fail first the reviewer may not run until round 2
+   * — and its first opinion must not be treated as a late one.
+   *
+   * Returns rows rather than a computed answer for `recentStageAttemptsForFeature`'s
+   * reason: deciding what the rows *mean* is `@adl/core/loop`'s
+   * `applyFollowUpPolicy`, and this package depends on `@adl/core` for types
+   * only.
+   */
+  stageJudgementHistory(
+    featureId: string,
+    stageId: string,
+  ): Promise<StageJudgementRow[]>;
   /** The cited coverage of every passing verdict in a round. */
   coverage(roundId: string): Promise<CoverageRow[]>;
   insertWaiver(waiver: NewWaiver): Promise<void>;
@@ -160,6 +198,30 @@ export function verdictsRepository(db: Kysely<Database>): VerdictsRepository {
         .orderBy('findings.fingerprint')
         .execute();
       return rows.map((r) => r.fingerprint);
+    },
+
+    async stageJudgementHistory(featureId, stageId) {
+      const rows = await db
+        .selectFrom('verdicts')
+        .innerJoin(
+          'stage_attempts',
+          'stage_attempts.id',
+          'verdicts.stage_attempt_id',
+        )
+        .innerJoin('rounds', 'rounds.id', 'stage_attempts.round_id')
+        // LEFT, so a verdict that raised no findings still reports its round.
+        // See `StageJudgementRow` for why that row is load-bearing.
+        .leftJoin('findings', 'findings.verdict_id', 'verdicts.id')
+        .select([
+          'rounds.id as round_id',
+          'rounds.number as round_number',
+          'findings.fingerprint',
+        ])
+        .where('rounds.feature_id', '=', featureId)
+        .where('stage_attempts.stage_id', '=', stageId)
+        .orderBy('rounds.number')
+        .execute();
+      return rows;
     },
 
     async fingerprintCountsForFeature(featureId) {

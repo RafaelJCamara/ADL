@@ -81,7 +81,7 @@ and code quality from fresh context, on exactly the interface a third party woul
       **Unticked, and deferred by the 2026-09-03 maintainer decision** — `DEBT.md` § 1
       item 1.8. Measuring rubber-stamping against a replay double measures the double.
       See step 7.7.
-- [ ] Findings raised after the first review round arrive as PR follow-ups rather than
+- [x] Findings raised after the first review round arrive as PR follow-ups rather than
       fresh send-backs, so the goalposts cannot move mid-feature (LOOP-09).
 
 ---
@@ -364,12 +364,82 @@ is that each step now says what exists, what is greenfield, and what it must pro
   code-complete-with-one-deferred-check rather than as fully proven — the same status
   M02, M04, M05 and M06 each carry.
 
-- [ ] **7.8** — **Follow-ups instead of fresh send-backs after round 1** (LOOP-09). A
+- [x] **7.8** — **Follow-ups instead of fresh send-backs after round 1** (LOOP-09). A
       finding first raised in round 2+ becomes a PR follow-up rather than a new send-back,
       so the goalposts cannot move mid-feature. `fingerprintFinding` and
       `verdictsRepository().fingerprintCountsForFeature()` already exist (CORE-04, 6.6) and
       are what "first raised in" is decided by — this is a policy over data that is already
       recorded, not new bookkeeping.
+      **Shipped, and the step's sketch was wrong in one place that mattered.** "A finding
+      first raised in round 2+" cannot be the rule, for two reasons the writing turned up.
+      **First, the round number is the wrong clock.** `review` defaults to
+      `on_send_back: stop` (7.2's cost-class table), so in a `['develop', 'test', 'review']`
+      pipeline whose tests fail in round 1 the reviewer never runs until round 2 — and a
+      literal "after round 1" rule would make its very first opinion non-blocking, i.e.
+      decorative. The contract is therefore **per stage**: the findings a gate raised the
+      first time _it_ judged this feature. M07's own "Done when" says "after the first
+      **review** round", which is the careful wording; the step sketch's "round 2+" is not.
+      **Second, the rule must not apply to every gate.** The built-in command gate's finding
+      title carries the exit code (`command-gate.ts` puts it there so the fingerprint is
+      stable across runs), so `exit 1` in round 1 and `exit 2` in round 2 are two different
+      fingerprints. Demoting the second would turn **a broken build into a green round** —
+      reachable, not theoretical. `.planning/research/PITFALLS.md`'s original rule anticipates
+      this and answers it with "a regression introduced by the fix, _marked as such_", which
+      would mean a new `Finding` field, a migration and a schema republish. What shipped
+      instead is a classification of the **gate**, not of the finding: `judgementKindOf`
+      answers `deterministic` or `opinion`, keyed on `(id, source)` exactly as `costClassOf`
+      is, with `DEFAULT_JUDGEMENT_KIND = 'deterministic'` so every npm-, repo-path- and
+      command-sourced gate keeps pre-7.8 behaviour and an unknown gate can never let a broken
+      build through. That is `onSendBackFor`'s "conservative side by construction" again.
+      Deliberately **not** configurable from `adl.yml`: `on_send_back` is a pipeline-shape
+      decision a maintainer owns, while this is a claim about whether a program is
+      reproducible, which a maintainer declaring `judgement: opinion` on their own test suite
+      could only get wrong.
+      **A demoted `send_back` becomes a `warn`, which required no new concept and no change
+      to `aggregate`.** `WarnVerdictSchema` already means "non-blocking observations", and
+      CORE-02's single enforcement point — proven exhaustively over 3,002 multisets — already
+      knows that a `warn` never produces a `send_back` and that its findings still ride along
+      into the brief when some _other_ gate sent the developer back. So the policy changes one
+      field of one verdict. **Nothing is discarded**: the findings stay on the verdict, are
+      persisted with it, and reach the pull request. What changes is that they no longer cost
+      a round.
+      **The verdict that is persisted is the one ADL acted on**, not the one the gate
+      returned. Storing round 2's as a `send_back` would leave `verdicts.outcome` disagreeing
+      with the round it produced, and the pull request is rendered from those rows.
+      **`gate_passed`'s honesty cost a third event kind, exactly as 7.2's did.** A gate whose
+      findings were all raised after its own first look advanced without blocking _and_
+      without being satisfied. `gate_passed` reads as "satisfied" and `gate_deferred` reads as
+      "still blocking, later"; neither is true, so **`gate_follow_ups`** is its own kind on the
+      identical `gating → gating` edge. Three kinds, one edge — they differ in what they mean
+      to a reader, never in what they do to the state machine.
+      **The one inverted ordering in `round-runner.ts`, and why.** Every other check there is
+      "evidence first, state second" — `checkStalemate` asks "how many rounds has this
+      recurred in, including now?" and wants the write to have happened. `checkFollowUps` asks
+      the opposite question, "what did this gate say _before_ this round?", so a history that
+      already contained this round's findings would report every one of them as part of the
+      contract: the policy never firing at all. The round is identified **by id** rather than
+      by ordinal, because `rounds.number` is derived from the previous round's number while
+      `features.round` is moved by `transition()` — two answers to one question, and an
+      ordinal read from the wrong one would exclude the wrong round.
+      **Watched failing** (convention 13), six injections, each restored: (1) flipping
+      `DEFAULT_JUDGEMENT_KIND` to `opinion` turned two core cases red; (2) deleting the
+      first-judging-round guard turned the "decorative reviewer" case red; (3) reclassifying
+      `review` as `deterministic` made the end-to-end scenario **time out at 60 s** — the
+      feature loops on send-backs to `max_rounds` and never reaches `publishing`, which is
+      precisely the goalpost-moving failure LOOP-09 exists to prevent; (4) dropping the
+      `gate_follow_ups` event turned the audit-trail assertion red; (5) persisting the gate's
+      original verdict rather than the acted-on one turned the `[2, 'warn']` assertion red;
+      (6) turning the repository's LEFT JOIN into an INNER JOIN turned the "a gate that
+      passed still counts as having judged" case red. **And a seventh, unplanned:** the
+      pre-existing cross-product guard in `transition.test.ts` went red the moment the event
+      kind was added and before the sample was written — 11 cases, the same way 7.2's did.
+      **A trap worth recording:** `@adl/manager` resolves `@adl/core` through its built
+      `dist`, so a core-only edit is invisible to a manager test until `tsc -b` runs.
+      Injection 3 passed green on its first attempt for exactly this reason before being
+      re-run against a rebuilt `dist`. Any future watched-failing pass that edits `@adl/core`
+      and observes `@adl/manager` must rebuild in between or it is observing the old code.
+      22 new cases across three files, plus two new modules and one new repository method.
+
 - [ ] **7.9** — **Removal proof.** Delete the reviewer from `adl.yml`'s pipeline, watch the
       feature run to a PR without it, with **no code change** — the negative half of
       HARN-04, and the one assertion that would catch a reviewer that had quietly become

@@ -168,6 +168,22 @@ export type FeatureEvent =
       readonly stageId: string;
       readonly findingCount: number;
     }
+  /**
+   * `gating → gating`. A gate raised findings, every one of them new since its
+   * own first look at this feature, so they became follow-ups and the pipeline
+   * moved on (LOOP-09, M07 step 7.8).
+   *
+   * A third kind rather than a flag on either neighbour, for the reason
+   * `gate_deferred` is a second one: `gate_passed` reads as "this gate was
+   * satisfied" and this gate was not, while `gate_deferred` reads as "this gate
+   * is still blocking, later" and this gate is not. Three events with one
+   * honest meaning each.
+   */
+  | {
+      readonly t: 'gate_follow_ups';
+      readonly stageId: string;
+      readonly findingCount: number;
+    }
   /** `gating → publishing`. The whole pipeline is satisfied. */
   | { readonly t: 'all_gates_passed' }
   /** `gating → developing`. The only edge that consumes a round. */
@@ -201,6 +217,7 @@ export const FEATURE_EVENT_KINDS = Object.freeze([
   'dev_committed',
   'gate_passed',
   'gate_deferred',
+  'gate_follow_ups',
   'all_gates_passed',
   'send_back',
   'cr_opened',

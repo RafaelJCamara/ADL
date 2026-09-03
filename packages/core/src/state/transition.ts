@@ -189,6 +189,7 @@ export function transition(
       switch (event.t) {
         case 'gate_passed':
         case 'gate_deferred':
+        case 'gate_follow_ups':
           // EXEC-07 in one line: a gate passing moves an index, and the state
           // stays `gating`. This edge is identical for a pipeline of three
           // stages and a pipeline of thirty.
@@ -202,6 +203,12 @@ export function transition(
           // into one kind with a boolean: `gate_passed` is what an audit trail
           // reads as "this gate was satisfied", and a flag on it would make
           // that reading depend on remembering to check the flag.
+          //
+          // `gate_follow_ups` shares the same edge for the same reason (M07
+          // step 7.8): a gate whose findings were all raised for the first time
+          // after its own first look moved one index and spent no round. Three
+          // kinds, one edge — they differ in what they mean to a reader, never
+          // in what they do to the state machine.
           if (ctx.currentStageIndex + 1 > ctx.pipelineLength) {
             return invalid(
               state,

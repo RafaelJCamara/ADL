@@ -60,3 +60,16 @@ export {
   costClassOf,
   onSendBackFor,
 } from './send-back-policy.js';
+
+// LOOP-09 (M07 step 7.8) — findings raised after a gate's own first look become
+// follow-ups rather than fresh send-backs. Pure for the reason every module
+// here is: the caller supplies the resolved stage and the fingerprint history
+// it read, and this reads no database of its own.
+export {
+  DEFAULT_JUDGEMENT_KIND,
+  applyFollowUpPolicy,
+  judgementKindOf,
+  type FollowUpDecision,
+  type FollowUpPolicyInput,
+  type JudgementKind,
+} from './follow-up-policy.js';
