@@ -237,11 +237,51 @@ is that each step now says what exists, what is greenfield, and what it must pro
       `worker-entry/gates/`, so it inherits `adl/gate-fresh-context` on the day it is
       created. It judges implementation against spec and code quality, and reports spend
       through 7.1's channel — the first invocation that proves `D-5-18-1` closed.
-- [ ] **7.5** — **Fresh context, proven for the reviewer specifically** (ROLE-03). The
+- [x] **7.5** — **Fresh context, proven for the reviewer specifically** (ROLE-03). The
       structural guarantee already exists as a type and a lint rule; what does not exist is
       a run in which a real reviewer had a real developer transcript sitting on disk beside
       it and demonstrably could not name it. A real-daemon scenario, on
       `detect-restart-reconciliation.test.ts`'s precedent.
+      **Shipped as one scenario and one new double, and the double is the interesting
+      part.** `ADL_TRACER_CLAUDE_BINARY_JSON` names ONE binary for the whole daemon, so a
+      `['develop', 'review']` pipeline cannot be driven by two separate doubles.
+      `fake-claude-role-switch.mjs` therefore decides which role it is playing by reading
+      its own `--append-system-prompt` argument — which is also the honest stand-in for what
+      actually distinguishes the two invocations in production: the argv, and nothing else.
+      A flag the test passed would have let the double be "the reviewer" on a run where ADL
+      never told it it was one.
+      As the reviewer it **hunts**: it walks every directory ADL gave it a root for and
+      writes what it found — every file, plus its complete argv and environment — to a
+      report outside the worktree. The test then asserts the developer's transcript really
+      exists at its real path carrying its real session id and real reasoning; that the walk
+      found the developer's committed output and was not truncated; that it found no
+      `*.ndjson`, no `*.prompt` and no `logs/` anywhere; and that the reviewer's **full
+      command line** — which carries the entire rendered prompt, read back out of the
+      process that received it rather than out of ADL's belief about what it sent —
+      contains no transcript path, no logs root, no session ref and none of the developer's
+      words. A negative control keeps that meaningful: the same command line does carry the
+      spec, the criteria and the changed paths.
+      **What it deliberately does NOT claim, stated in the file rather than left to be
+      discovered:** that the reviewer is _sandboxed_ from the transcript. It is not — v1 is
+      one trust domain per daemon (`DEBT.md` D-2-R-1), and in a real installation
+      `logsRootFor(dbFilePath)` is a sibling of the scratch root the worktree lives under.
+      ROLE-03's claim is the narrower one under test: ADL does not hand the reviewer the
+      developer's context and gives it nothing from which to derive it.
+      **Watched failing** (convention 13), four separate injections, each restored:
+      (1) a stray `notes.ndjson` written into the worktree by the developer half →
+      `transcripts` is `['notes.ndjson']`, so the detector detects; (2) the walk stubbed to
+      return nothing → the "hunt worked" assertion goes red, so "found nothing" cannot be a
+      broken search; (3) `logsRoot` threaded onto the built gate context and appended to the
+      reviewer's instructions — the real ROLE-03 defect — → the needle assertion names it
+      exactly (`the reviewer was handed the logs root (…)`), **and `adl/gate-fresh-context`
+      independently went red on the same line**, which is the two guards catching one defect
+      from opposite directions; (4) the spec and criteria withheld from the prompt → the
+      negative control goes red.
+      **Found and not fixed:** `D-7-05-1` — `upsertComment` is check-then-act, so a sticky
+      comment can be posted twice. Reproduced on `main` with no local changes; recorded in
+      `DEBT.md` § 3 with an owner rather than folded into § 4's flake row, because it is an
+      assertion about product state and not a timeout.
+      1 new case, 1 new double.
 - [ ] **7.6** — **Spec-clause citation, checked against the spec** (ROLE-04, finding 5).
       `PassVerdictSchema.checked` is already non-empty by schema, so the missing half is
       semantic: a reviewer `pass` citing a criterion id **that the spec does not contain**

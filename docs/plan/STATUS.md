@@ -1,6 +1,6 @@
 # STATUS — start here
 
-_Last updated: 2026-09-02_
+_Last updated: 2026-09-03_
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -612,10 +612,42 @@ in `GATE_COMPOSE_ONLY_MEMBERS`, where every read form stays banned and composing
 is allowed. Verified with an eslint probe first, and a second fixture asserts a
 composing gate lints **clean** -- the negative control the fire-check fixture cannot give.
 
-**7.5 is next: fresh context proven for the reviewer specifically (ROLE-03).** The
-structural guarantee exists as a type and a lint fence; what does not exist is a run in
-which a real reviewer had a real developer transcript sitting on disk beside it and
-demonstrably could not name it.
+**7.5 is done (2026-09-03): fresh context, observed rather than declared (ROLE-03).** The
+structural guarantee existed already as a type and a lint fence. What did not exist is a
+run in which a real reviewer had a real developer transcript sitting on disk beside it and
+demonstrably could not name it, and `test/scenario/reviewer-fresh-context.test.ts` is that
+run: a real daemon, a `['develop', 'review']` pipeline, and a double
+(`fake-claude-role-switch.mjs`) that decides which role it is playing by reading its own
+`--append-system-prompt` argument — the honest stand-in for what actually distinguishes the
+two invocations in production.
+
+**The reviewer half hunts.** It walks every directory ADL gave it a root for and writes
+what it found, plus its complete argv and environment, to a report outside the worktree.
+The test asserts the developer's transcript exists at its real path carrying its real
+session id and real reasoning; that the walk found the developer's committed output and was
+not truncated; that it found no `*.ndjson`, no `*.prompt` and no `logs/`; and that the
+reviewer's **full command line** — which carries the entire rendered prompt, read back out
+of the process that received it — names none of it. The negative control keeps that
+meaningful: the same command line does carry the spec, the criteria and the changed paths.
+
+**What it does not claim, and says so.** Not that the reviewer is _sandboxed_ from the
+transcript — v1 is one trust domain per daemon (`DEBT.md` D-2-R-1), and in a real install
+`logsRootFor(dbFilePath)` is a sibling of the scratch root the worktree lives under.
+ROLE-03's claim is the narrower one: ADL does not hand the reviewer the developer's context
+and gives it nothing from which to derive it.
+
+**Watched failing four ways**, including the real defect: threading `logsRoot` onto the
+built gate context and into the reviewer's instructions turned the needle assertion red
+_and_ tripped `adl/gate-fresh-context` on the same line — two guards catching one defect
+from opposite directions.
+
+**Found and not fixed:** `D-7-05-1` — `upsertComment` is check-then-act, so a sticky
+comment can be posted twice. Reproduced on `main` with no local changes, and recorded in
+`DEBT.md` § 3 rather than folded into § 4's flake row: it is an assertion about product
+state, not a timeout.
+
+**7.6 is next: spec-clause citation checked against the spec (ROLE-04).** A reviewer `pass`
+citing a criterion id the spec does not contain must be `unparseable`, not an approval.
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.
