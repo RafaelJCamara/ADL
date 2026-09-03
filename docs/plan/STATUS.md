@@ -588,13 +588,34 @@ index and id disagree is about a pipeline this worker is not looking at, and rea
 different entry's `with:` block would hand a gate someone else's program with nothing
 reporting the mismatch. It checks both now.
 
-**7.4 is next: the reviewer agent itself (ROLE-02).** Everything it plugs into now exists.
-One entry in `stage-runner.ts`'s `AGENT_ROLE_PRODUCERS` (`reviewer: 'review'`, which 6.10
-left deliberately `null` with the lookup derived from it) plus the gate module under
-`worker-entry/gates/`, so it inherits `adl/gate-fresh-context` on the day it is created. It
-judges implementation against spec and code quality, and reports spend through 7.1's
-wrapped runner -- the first invocation that proves D-5-18-1 closed end to end rather than
-by unit test.
+**7.4 is done (2026-09-03): the reviewer agent exists (ROLE-02).** The one-entry change
+6.10 was built for worked exactly as designed -- `reviewer: null` became
+`reviewer: 'review'` in `AGENT_ROLE_PRODUCERS`, and the derived lookup,
+`resolveStageRole`, the per-role model read and the dispatch classification all followed
+with nothing else edited. The reviewer runs on the published `GateContext` through the same
+construction the command gate uses; there is no branch giving an agent gate anything a
+third party's gate would not also get, which is HARN-04 as code rather than as a claim.
+
+**The verdict comes from a file, not from the transcript.** An agentic CLI prints prose,
+and scraping a verdict out of prose would make ADL's contract "whatever the model said
+last". The reviewer writes `.adl/<stage>-verdict.json` -- `adl.yml`'s `ADL_VERDICT_FILE`
+variable has named this mechanism since M01 and this is its first consumer -- validated
+against the same `VerdictSchema` the published JSON Schema is emitted from. Every way of
+not producing one is a `StageError`, never a pass.
+
+**A real finding changed a load-bearing lint rule.** `adl/gate-fresh-context` banned the
+identifiers `systemPrompt` and `instructions` outright, and those are `AgentTask`'s two
+required fields -- so a gate could not invoke a model at all. A ban that makes the reviewer
+impossible is not enforcing ROLE-03, it is enforcing "there is no reviewer". What ROLE-03
+forbids is reading the _developer's_ prompt, which is always a read; the two names now sit
+in `GATE_COMPOSE_ONLY_MEMBERS`, where every read form stays banned and composing your own
+is allowed. Verified with an eslint probe first, and a second fixture asserts a
+composing gate lints **clean** -- the negative control the fire-check fixture cannot give.
+
+**7.5 is next: fresh context proven for the reviewer specifically (ROLE-03).** The
+structural guarantee exists as a type and a lint fence; what does not exist is a run in
+which a real reviewer had a real developer transcript sitting on disk beside it and
+demonstrably could not name it.
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.

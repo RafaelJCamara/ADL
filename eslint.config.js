@@ -534,6 +534,34 @@ export const GATE_FORBIDDEN_MEMBERS = Object.freeze([
   'sessionRef',
   'sendBackBriefJson',
   'stageAttemptId',
+]);
+
+/**
+ * Names a gate may **compose** but must never **read** (M07 step 7.4).
+ *
+ * These two were in the list above until the reviewer needed to exist, and the
+ * distinction they now sit on is real rather than a concession. `systemPrompt`
+ * and `instructions` are the two required fields of `AgentTask` — and M07 step
+ * 7.1 put `agents: AgentRunner` on `GateContext`, so an agent-backed gate
+ * cannot invoke a model at all without writing an object literal carrying
+ * both. A ban that made the reviewer impossible would not be enforcing
+ * ROLE-03; it would be enforcing "there is no reviewer".
+ *
+ * What ROLE-03 actually forbids is a gate arriving at the **developer's**
+ * rendered prompt, and that is always a *read*: `task.systemPrompt`,
+ * `const { instructions } = x`, `x['systemPrompt']`. Every one of those stays
+ * banned below. Building your own is a write, and a gate composing its own
+ * instructions has learned nothing about anyone else's.
+ *
+ * **The two forms are distinguishable, and that was verified before this was
+ * written** (convention 15): a throwaway eslint probe confirmed
+ * `ObjectExpression > Property[key.name=…]` reports an object literal while
+ * `ObjectPattern > Property[key.name=…]` reports destructuring, with
+ * `MemberExpression` and its computed form covering the remaining two reads.
+ * The bare `Property[key.name=…]` the list above uses matches both, which is
+ * exactly why these names could not stay in it.
+ */
+export const GATE_COMPOSE_ONLY_MEMBERS = Object.freeze([
   'systemPrompt',
   'instructions',
 ]);
@@ -571,20 +599,41 @@ const GATE_FRESH_CONTEXT_MESSAGE =
  * object literal with that key. All four are ways to arrive at the value
  * without ever writing a member expression.
  */
-const GATE_FRESH_CONTEXT_SYNTAX = GATE_FORBIDDEN_MEMBERS.flatMap((member) => [
-  {
-    selector: `MemberExpression[property.name='${member}']`,
-    message: `.${member} ${GATE_FRESH_CONTEXT_MESSAGE}`,
-  },
-  {
-    selector: `Property[key.name='${member}']`,
-    message: `${member} (destructured or as an object key) ${GATE_FRESH_CONTEXT_MESSAGE}`,
-  },
-  {
-    selector: `MemberExpression[computed=true][property.value='${member}']`,
-    message: `['${member}'] ${GATE_FRESH_CONTEXT_MESSAGE}`,
-  },
-]);
+const GATE_FRESH_CONTEXT_SYNTAX = [
+  ...GATE_FORBIDDEN_MEMBERS.flatMap((member) => [
+    {
+      selector: `MemberExpression[property.name='${member}']`,
+      message: `.${member} ${GATE_FRESH_CONTEXT_MESSAGE}`,
+    },
+    {
+      selector: `Property[key.name='${member}']`,
+      message: `${member} (destructured or as an object key) ${GATE_FRESH_CONTEXT_MESSAGE}`,
+    },
+    {
+      selector: `MemberExpression[computed=true][property.value='${member}']`,
+      message: `['${member}'] ${GATE_FRESH_CONTEXT_MESSAGE}`,
+    },
+  ]),
+  // Read-banned, compose-allowed. Same three read forms as above, minus the
+  // bare `Property[key.name=…]` — replaced by `ObjectPattern > Property`, which
+  // is destructuring only, so an `ObjectExpression` building an `AgentTask`
+  // passes. See GATE_COMPOSE_ONLY_MEMBERS for why the split exists and for the
+  // probe that established the two are distinguishable.
+  ...GATE_COMPOSE_ONLY_MEMBERS.flatMap((member) => [
+    {
+      selector: `MemberExpression[property.name='${member}']`,
+      message: `.${member} ${GATE_FRESH_CONTEXT_MESSAGE}`,
+    },
+    {
+      selector: `ObjectPattern > Property[key.name='${member}']`,
+      message: `${member} (destructured off something else) ${GATE_FRESH_CONTEXT_MESSAGE} A gate may BUILD its own ${member} — that is an object literal, and it is allowed — but never read one.`,
+    },
+    {
+      selector: `MemberExpression[computed=true][property.value='${member}']`,
+      message: `['${member}'] ${GATE_FRESH_CONTEXT_MESSAGE}`,
+    },
+  ]),
+];
 
 /** Where a gate implementation lives. See the block comment above for why a directory. */
 const GATE_PACKAGES = [

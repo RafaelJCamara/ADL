@@ -898,6 +898,11 @@ describe('the command gate', () => {
   }, 30_000);
 
   it('refuses a stage id this build has no implementation for, before opening a workspace', async () => {
+    // ⚠ This case named `review` until M07 step 7.4, and went red the moment
+    // the reviewer gained a producer — which is the assertion doing its job.
+    // `security` is the replacement: not a built-in, not an agent role, and
+    // declaring no `with.command`, so it is unsupported for all three reasons
+    // rather than by coincidence.
     await withTempRepo(async ({ mainRepo, scratchRoot, git }) => {
       const featureId = `feat-${ulid()}`;
       await writeFeatureSpec(mainRepo, featureId);
@@ -909,7 +914,7 @@ describe('the command gate', () => {
         mainRepo,
         scratchRoot,
         baseRef,
-        stageId: 'review',
+        stageId: 'security',
         stageIndex: 1,
       });
 
@@ -923,7 +928,7 @@ describe('the command gate', () => {
       // than looping forever on a stage that will never exist in this build.
       expect(verdict.error.kind).toBe('binary_missing');
       expect(verdict.error.retryable).toBe(false);
-      expect(verdict.error.detail).toContain('review');
+      expect(verdict.error.detail).toContain('security');
 
       // Refused BEFORE anything was created: a stage this build cannot run
       // must not leave a worktree behind on its way to being refused. The one

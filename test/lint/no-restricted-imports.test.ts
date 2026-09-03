@@ -8,6 +8,7 @@ import {
   FORGE_MERGE_MEMBERS,
   FORGE_MERGE_ROUTES,
   GATE_FORBIDDEN_IMPORT_GROUPS,
+  GATE_COMPOSE_ONLY_MEMBERS,
   GATE_FORBIDDEN_MEMBERS,
   WORKSPACE_EXEMPTION,
   architectureConfigs,
@@ -1262,6 +1263,37 @@ describe('fresh-context gate isolation (ROLE-03)', () => {
         }
       }
 
+      // M07 step 7.4: the compose-allowed names get the same three READ forms,
+      // with `ObjectPattern > Property` in place of the bare `Property` one —
+      // and the bare form must be ABSENT, because it is what would also report
+      // a gate building its own `AgentTask`. Stated as a prohibition rather
+      // than left as an absence: putting it back would make the reviewer
+      // unlintable while the rule still looked stricter.
+      for (const member of GATE_COMPOSE_ONLY_MEMBERS) {
+        if (
+          !selectors.includes(`MemberExpression[property.name='${member}']`)
+        ) {
+          uncovered.push(`${member}: no member-expression selector`);
+        }
+        if (
+          !selectors.includes(`ObjectPattern > Property[key.name='${member}']`)
+        ) {
+          uncovered.push(`${member}: no destructuring selector`);
+        }
+        if (
+          !selectors.includes(
+            `MemberExpression[computed=true][property.value='${member}']`,
+          )
+        ) {
+          uncovered.push(`${member}: no computed-access selector`);
+        }
+        if (selectors.includes(`Property[key.name='${member}']`)) {
+          uncovered.push(
+            `${member}: the bare Property selector is back, which also bans a gate composing its own AgentTask`,
+          );
+        }
+      }
+
       expect(
         uncovered,
         `every forbidden context field must be banned at ${source} in all three shapes — a member read, a destructuring, and a computed access are three independent ways to the same value, and a guard that catches one of them catches none of the other two`,
@@ -1402,7 +1434,10 @@ describe('fresh-context gate isolation (ROLE-03)', () => {
       .join('\n');
 
     const silent: string[] = [];
-    for (const member of GATE_FORBIDDEN_MEMBERS) {
+    for (const member of [
+      ...GATE_FORBIDDEN_MEMBERS,
+      ...GATE_COMPOSE_ONLY_MEMBERS,
+    ]) {
       if (!combined.includes(member)) silent.push(member);
     }
     for (const [group] of GATE_FORBIDDEN_IMPORT_GROUPS) {
@@ -1418,6 +1453,34 @@ describe('fresh-context gate isolation (ROLE-03)', () => {
     expect(
       silent,
       `these banned entries resolve but never fired on the fixture: ${silent.join(', ')}. Either the selector matches nothing, or test/lint/fixtures/gate-reaches-past-context.ts has no case for it — a banned entry nobody has watched fire is the Pitfall 8 shape this whole file exists to prevent.`,
+    ).toEqual([]);
+  });
+
+  it('lets a gate COMPOSE its own systemPrompt and instructions (M07 step 7.4)', async () => {
+    // The negative control, and the half a fire-check cannot give. Every
+    // assertion above proves the ban fires; this proves it is not simply "no
+    // gate may mention these names", which would read as strict and would
+    // actually mean "there is no reviewer" — `AgentTask` requires both fields,
+    // and M07 step 7.1 put `agents: AgentRunner` on `GateContext` precisely so
+    // an agent-backed gate could invoke a model.
+    //
+    // Linted through the SAME real config, at a path inside the gate glob, so
+    // this is the rule set `packages/manager/src/worker-entry/gates/` runs
+    // under and not a reconstruction of it.
+    const [result] = await realConfigLinter().lintFiles([
+      absolute('test/lint/fixtures/gate-composes-its-own-task.ts'),
+    ]);
+
+    expect(result).toBeDefined();
+    const reported = (result!.messages ?? []).map(
+      (message) => `${String(message.ruleId)}: ${message.message}`,
+    );
+
+    expect(
+      reported,
+      'a gate composing its own AgentTask must lint clean, and this one did not:\n' +
+        `${reported.join('\n')}\n` +
+        'If the bare Property[key.name=...] selector is back in the ban, the reviewer gate cannot be written at all.',
     ).toEqual([]);
   });
 

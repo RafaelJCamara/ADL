@@ -95,6 +95,7 @@ import { resolveSnapshotPipeline } from '../pipeline.js';
 import { parseSendBackBriefJson } from '../loop/send-back-brief.js';
 import { buildGateContext } from './gate-context.js';
 import { runCommandGate } from './gates/command-gate.js';
+import { runReviewerGate } from './gates/reviewer-gate.js';
 import { loadSpecFromWorktree } from './spec-from-worktree.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
@@ -346,6 +347,65 @@ export function reportingAgentRunner(
  * is one entry, and so that "what built-ins can this build run?" is a value a
  * test can read rather than control flow it has to re-derive.
  */
+/**
+ * The model ADL selected for one role, or `undefined` when it selected none
+ * (BACK-10, M06 steps 6.9/6.10, shared by the developer and gate paths as of
+ * M07 step 7.4).
+ *
+ * `BACKEND_DEFAULT_MODEL` means "ADL selected no model", which is not the same
+ * statement as "ADL selected a model called `default`". Returning `undefined`
+ * is what keeps those two apart at the port boundary rather than in each
+ * adapter's own head (rule 9).
+ *
+ * One function rather than the expression written twice, now that two paths
+ * need it — a transcribed copy is exactly the mistake that would make the
+ * sentinel leak through one path while the other stayed correct (rule 8).
+ */
+function modelForRole(
+  effectiveConfig: EffectiveConfig,
+  role: AgentRole,
+): string | undefined {
+  const model = effectiveConfig.agents[role].model;
+  return model === BACKEND_DEFAULT_MODEL ? undefined : model;
+}
+
+/**
+ * Wrap an agent runner so every task it runs carries the model ADL selected for
+ * this role, unless the caller chose one itself (BACK-10, M07 step 7.4).
+ *
+ * **A gate does not, and should not, know about model selection.** It composes
+ * a prompt; which model answers it is the daemon's decision (D-22 as amended by
+ * 6.11), read from `effectiveConfig.agents[role].model` by the one module that
+ * holds the effective config. Making the gate read it would put the
+ * daemon/repo trust boundary inside every third-party gate.
+ */
+function withSelectedModel(
+  inner: AgentRunner,
+  model: string | undefined,
+): AgentRunner {
+  if (model === undefined) return inner;
+  return {
+    // The gate's own choice wins if it made one — nothing does today, and a
+    // gate that genuinely needs a specific model (a security harness pinned to
+    // one it was evaluated against) should be able to say so.
+    run: (task, ctx) =>
+      inner.run(task.model === undefined ? { ...task, model } : task, ctx),
+    probe: () => inner.probe(),
+  };
+}
+
+/**
+ * Which gate function implements each agent role (M07 step 7.4).
+ *
+ * Separate from {@link AGENT_ROLE_PRODUCERS}, which answers "what dispatches
+ * this role"; this answers "what runs when it does". A role with a producer and
+ * no implementation here is refused by name rather than dispatched into
+ * nothing — the honest state of `tester` until M08.
+ */
+const AGENT_GATE_IMPLEMENTATIONS: Readonly<
+  Partial<Record<AgentRole, (gate: GateContext) => Promise<StageRunnerVerdict>>>
+> = Object.freeze({ reviewer: runReviewerGate });
+
 const GATE_IMPLEMENTATIONS: Readonly<Record<string, 'command'>> = Object.freeze(
   { test: 'command' },
 );
@@ -377,7 +437,11 @@ const DEVELOPER_PRODUCER = 'pipeline-index-0';
  */
 const AGENT_ROLE_PRODUCERS = Object.freeze({
   developer: DEVELOPER_PRODUCER,
-  reviewer: null,
+  // M07 step 7.4: the reviewer's producer. This is the one-entry change 6.10
+  // was built for — `AGENT_GATE_ROLES` is derived from this map, so the stage
+  // classification, the per-role model read and the dispatch all followed from
+  // changing `null` to a stage id, with nothing else edited.
+  reviewer: 'review',
   tester: null,
 }) satisfies Record<AgentRole, string | null>;
 
@@ -400,10 +464,10 @@ void _everyAgentRoleProduced;
  * Stage id → the agent role that stage runs as, **derived** from
  * {@link AGENT_ROLE_PRODUCERS} rather than restated beside it (convention 8).
  *
- * Empty in this build, and legibly so: the one produced role arrives by
- * position, not by name. M07 changes `reviewer: null` to `reviewer: 'review'`
- * in one place and this lookup, `resolveStageRole`, and the model read all
- * follow — there is no second list to remember.
+ * Holds `review → reviewer` as of M07 step 7.4, and holds it without this
+ * declaration being edited: `reviewer: null` became `reviewer: 'review'` in the
+ * map above and this lookup, `resolveStageRole`, the per-role model read and
+ * the dispatch classification all followed. That is what deriving it bought.
  */
 const AGENT_GATE_ROLES: ReadonlyMap<string, AgentRole> = new Map(
   AGENT_ROLES.flatMap((role) => {
@@ -630,7 +694,13 @@ export function createProductionStageRunner(
           env: backendEnv,
         });
 
-      if (role.kind === 'command-gate') {
+      // Both gate kinds take the same context and differ only in what runs
+      // against it (M07 step 7.4). The reviewer sharing this construction with
+      // the command gate is HARN-04 as code rather than as a claim: there is no
+      // branch here that gives an agent gate anything a third party's gate
+      // would not also get.
+      const isAgentGate = role.kind === 'agent' && role.role !== 'developer';
+      if (role.kind === 'command-gate' || isAgentGate) {
         // M05 step 5.17. **This is the only place a gate is constructed, and
         // `assign` does not cross the line.** `buildGateContext` narrows the
         // message down to spec + diff + repository — ROLE-03's permitted
@@ -656,7 +726,16 @@ export function createProductionStageRunner(
           // through a runner that already reports the spend. See
           // `reportingAgentRunner` above for why the obligation is on the
           // runner rather than on a `GateContext` member.
-          agents: reportingAgentRunner(agentBackend, assign.leaseToken),
+          // Two wrappers, one job each. `reportingAgentRunner` makes the spend
+          // unforgettable (D-5-18-1); `withSelectedModel` applies the model
+          // ADL chose for this role, so the gate never has to know that model
+          // selection exists.
+          agents: withSelectedModel(
+            reportingAgentRunner(agentBackend, assign.leaseToken),
+            role.kind === 'agent'
+              ? modelForRole(effectiveConfig, role.role)
+              : undefined,
+          ),
         });
         if (!built.ok) {
           // Context assembly failed, so the gate never ran, so nothing was
@@ -678,18 +757,35 @@ export function createProductionStageRunner(
         // `provider_error` because a bad block will not parse on a retry
         // either, and `stageErrorPolicy` makes that kind non-retryable so the
         // round escalates instead of spinning.
-        const gateCommand = resolveGateCommand(built.gate, effectiveConfig);
-        if (!gateCommand.ok) {
-          await Promise.all(appendPromises);
-          return stageErrorResult('unparseable', gateCommand.detail);
+        let verdict: StageRunnerVerdict;
+        if (role.kind === 'agent') {
+          // ROLE-02 (M07 step 7.4). A role with a producer but no
+          // implementation is refused by name rather than dispatched into
+          // nothing — the honest state of `tester` until M08.
+          const implementation = AGENT_GATE_IMPLEMENTATIONS[role.role];
+          if (implementation === undefined) {
+            await Promise.all(appendPromises);
+            return stageErrorResult(
+              'binary_missing',
+              `pipeline stage "${assign.stageId}" dispatches the ${role.role} role, but this ` +
+                'build ships no implementation for it — the behaviour tester is M08.',
+            );
+          }
+          verdict = await implementation(built.gate);
+        } else {
+          const gateCommand = resolveGateCommand(built.gate, effectiveConfig);
+          if (!gateCommand.ok) {
+            await Promise.all(appendPromises);
+            return stageErrorResult('unparseable', gateCommand.detail);
+          }
+          verdict = await runCommandGate(built.gate, {
+            command: gateCommand.command,
+            path: process.env['PATH'] ?? '',
+            ...(gateCommand.emits !== undefined
+              ? { emits: gateCommand.emits }
+              : {}),
+          });
         }
-        const verdict = await runCommandGate(built.gate, {
-          command: gateCommand.command,
-          path: process.env['PATH'] ?? '',
-          ...(gateCommand.emits !== undefined
-            ? { emits: gateCommand.emits }
-            : {}),
-        });
         // BACK-09 (M05 step 5.18): this path sends NO `usage` message, and
         // that is the honest answer rather than an omission — a command gate
         // runs `adl.yml`'s test command, not an agent, so there is no model,
@@ -765,31 +861,13 @@ export function createProductionStageRunner(
         contextFiles: [],
         // BACK-10 (M06 steps 6.9 and 6.10): the model ADL selected **for this
         // role**, or **nothing at all** when the resolved value is the
-        // sentinel.
-        //
-        // 6.10 replaced a hardcoded `.agents.developer` here. That hardcode
-        // was the same class of defect as 6.9's dead guard one line down: a
-        // reviewer or tester dispatch would have run on the *developer's*
-        // configured model, spent against it, and priced the round under a
-        // model nobody chose for that role — while `agents.reviewer.model`
-        // sat in `adl.yml` validating and doing nothing. `role.role` comes
-        // from `resolveStageRole`, which is the only place the question is
-        // answered.
-        //
-        // The guard this replaces was dead. `ResolvedAgentBlockSchema.model`
-        // is `z.string().min(1)`, so `mergeConfig` always produces a string
-        // and `!== undefined` was always true — it read like a real check
-        // while admitting the one value that must never reach a backend.
-        //
-        // `BACKEND_DEFAULT_MODEL` means "ADL selected no model", which is not
-        // the same statement as "ADL selected a model called `default`".
-        // Omitting the field is what keeps those two apart at the port
-        // boundary rather than in each adapter's own head (rule 9): an adapter
-        // receiving `task.model` may pass it straight to its CLI, because the
-        // only values that ever arrive are ones a human actually chose.
-        ...(effectiveConfig.agents[role.role].model === BACKEND_DEFAULT_MODEL
+        // sentinel. 6.10 replaced a hardcoded `.agents.developer` here; M07
+        // step 7.4 moved the read itself into {@link modelForRole}, which the
+        // gate path now shares. See that function for why absence rather than
+        // the sentinel is what crosses the port.
+        ...(modelForRole(effectiveConfig, role.role) === undefined
           ? {}
-          : { model: effectiveConfig.agents[role.role].model }),
+          : { model: modelForRole(effectiveConfig, role.role) }),
         limits: { maxWallClockMs: DEFAULT_MAX_WALL_CLOCK_MS },
       };
 

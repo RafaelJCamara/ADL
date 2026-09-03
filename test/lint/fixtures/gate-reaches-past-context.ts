@@ -64,11 +64,21 @@ export function inheritTheDevelopersContext(
   const attempt = loose['stageAttemptId'];
 
   // 8. Rebuilding the object, which is how a value is laundered into a shape
-  //    something else will read.
+  //    something else will read. The KEYS here are allowed as of M07 step 7.4
+  //    — a gate composes its own `AgentTask` — but the VALUES are member reads
+  //    off something the gate was handed, and those are still banned. That is
+  //    the whole distinction: building your own is fine, copying someone
+  //    else's is not.
   const relayed = {
     systemPrompt: handed.systemPrompt,
     instructions: handed.instructions,
   };
+
+  // 9. Destructuring the same two names — a read, and still banned, through
+  //    the `ObjectPattern > Property` selector that replaced the bare
+  //    `Property` one for these names (M07 step 7.4).
+  const { systemPrompt } = handed;
+  const { instructions: inherited } = handed;
 
   return {
     root,
@@ -76,6 +86,8 @@ export function inheritTheDevelopersContext(
     brief,
     attempt,
     relayed,
+    systemPrompt,
+    inherited,
     assign,
     transcriptPathFor,
     buildDeveloperPrompt,

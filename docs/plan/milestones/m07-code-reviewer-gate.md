@@ -231,7 +231,7 @@ is that each step now says what exists, what is greenfield, and what it must pro
       fixture was rejected as `unparseable` before the assertion could read it — the schema
       validation proving itself on the first run rather than on a contrived one.
       13 new cases across four files.
-- [ ] **7.4** — **The reviewer agent gate** (ROLE-02), on 7.1's context with zero
+- [x] **7.4** — **The reviewer agent gate** (ROLE-02), on 7.1's context with zero
       special-casing. One entry in `stage-runner.ts`'s `AGENT_ROLE_PRODUCERS`
       (`reviewer: 'review'`, finding 6) plus the gate module itself under
       `worker-entry/gates/`, so it inherits `adl/gate-fresh-context` on the day it is
