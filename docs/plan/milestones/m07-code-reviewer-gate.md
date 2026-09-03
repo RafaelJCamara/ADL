@@ -1,6 +1,6 @@
 # M07 — Code Reviewer on the Gate Plugin Interface
 
-**Status:** ◀ **IN PROGRESS**
+**Status:** ◀ **IN PROGRESS** — step 7.7's known-bad-diff corpus deferred into `DEBT.md` § 1 (item 1.8) by the 2026-09-03 maintainer decision; acceptance criterion 4 stays unticked until it runs
 **Depends on:** M06
 **Requirements:** HARN-01…04, ROLE-02, ROLE-04, LOOP-09 (7)
 
@@ -78,6 +78,9 @@ and code quality from fresh context, on exactly the interface a third party woul
       none is rejected as _malformed_ rather than accepted as an approval.
 - [ ] A known-bad-diff fixture set runs in ADL's own CI and turns the build red if the
       reviewer approves it — so rubber-stamping is **measured**, not assumed.
+      **Unticked, and deferred by the 2026-09-03 maintainer decision** — `DEBT.md` § 1
+      item 1.8. Measuring rubber-stamping against a replay double measures the double.
+      See step 7.7.
 - [ ] Findings raised after the first review round arrive as PR follow-ups rather than
       fresh send-backs, so the goalposts cannot move mid-feature (LOOP-09).
 
@@ -335,11 +338,32 @@ is that each step now says what exists, what is greenfield, and what it must pro
       actually produced.
       19 new cases across three files, plus one new module.
 
-- [ ] **7.7** — **The known-bad-diff fixture corpus, red-build in ADL's own CI.** Diffs
-      that a competent reviewer must send back — a criterion silently unimplemented, a test
-      weakened to pass, a protected path touched. The build goes red if the reviewer
-      approves one. This is the milestone's only _continuous_ measurement, and criterion 4
-      exists because an approving reviewer is worse than no reviewer.
+- [~] **7.7** — **The known-bad-diff fixture corpus, red-build in ADL's own CI.** Diffs
+  that a competent reviewer must send back — a criterion silently unimplemented, a test
+  weakened to pass, a protected path touched. The build goes red if the reviewer
+  approves one. This is the milestone's only _continuous_ measurement, and criterion 4
+  exists because an approving reviewer is worse than no reviewer.
+  **DEFERRED by maintainer decision, 2026-09-03**, into `DEBT.md` § 1's end-of-project
+  credential batch as item **1.8** — the same shape M06's step 6.1 was deferred in on
+  2026-08-27, and for the same reason: a live `ANTHROPIC_API_KEY` plus an unshadowed
+  pinned CLI is an environment precondition, not project work.
+  **The reasoning is specific to this step and is why it was raised rather than
+  quietly faked.** This corpus's whole purpose is to measure whether a real reviewer
+  rubber-stamps. Run against a replay double — which is what every gate test in this
+  build uses, correctly — it measures the double: the double sends back because the
+  fixture told it to, and a green build would be evidence of nothing. That is worse
+  than no corpus, because criterion 4 would read as satisfied.
+  **One of the three named bad diffs is already covered, credential-free, and is
+  therefore NOT in the deferred batch.** "A protected path touched" is not the
+  reviewer's job at all: 5.16's protected-paths check catches it by diffing the round's
+  real commit, **before** stage 1 is ever dispatched, and
+  `test/scenario/protected-paths-loop.test.ts` already proves it end to end against a
+  real daemon and a real commit. What is deferred is the half that genuinely needs a
+  judging model — a criterion silently unimplemented, and a test weakened to pass.
+  **Criterion 4 in "Done when" therefore stays unticked**, and M07 closes as
+  code-complete-with-one-deferred-check rather than as fully proven — the same status
+  M02, M04, M05 and M06 each carry.
+
 - [ ] **7.8** — **Follow-ups instead of fresh send-backs after round 1** (LOOP-09). A
       finding first raised in round 2+ becomes a PR follow-up rather than a new send-back,
       so the goalposts cannot move mid-feature. `fingerprintFinding` and

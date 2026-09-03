@@ -674,9 +674,25 @@ from disagreeing, and the disagreement would resolve in favour of the approval. 
 failures are `unparseable` and non-retryable: a gate citing a criterion that does not exist
 did not judge _this_ spec, so the round escalates rather than costing a round (CORE-06).
 
-**7.7 is next: the known-bad-diff fixture corpus.** It carries a judgement call — measuring
-rubber-stamping against a fake reviewer measures the fake — raised there rather than decided
-here.
+**7.7 is deferred (maintainer decision, 2026-09-03): the known-bad-diff corpus goes into
+`DEBT.md` § 1 as item 1.8.** The corpus exists to measure whether a real reviewer
+rubber-stamps. Run against a replay double — which is what every gate test in this build
+correctly uses — it measures the double: the double sends back because the fixture told it
+to, and a green build would be evidence of nothing. That is worse than no corpus, because
+acceptance criterion 4 would read as satisfied. It is the same deferral M06's step 6.1 took
+on 2026-08-27, for the same reason: a live `ANTHROPIC_API_KEY` plus an unshadowed pinned CLI
+is an environment precondition, not project work.
+
+**One of the three named bad diffs is already covered and is _not_ in the deferred batch.**
+"A protected path touched" is not the reviewer's job: 5.16's check catches it by diffing the
+round's real commit, before stage 1 is ever dispatched, and `protected-paths-loop.test.ts`
+already proves it against a real daemon. What is deferred is the half that needs a judging
+model — a criterion silently unimplemented, and a test weakened to pass.
+
+**Acceptance criterion 4 therefore stays unticked**, and M07 will close as
+code-complete-with-one-deferred-check — the same status M02, M04, M05 and M06 each carry.
+
+**7.8 is next: follow-ups instead of fresh send-backs after round 1 (LOOP-09).**
 
 Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
 cross-model review _configurable_, and nothing yet makes it the recommended default.
