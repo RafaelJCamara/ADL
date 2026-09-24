@@ -103,7 +103,8 @@ keeps.
 > `violatedProtectedPaths` flags **anything** inside the feature folder unconditionally, so
 > the demarcated location structurally cannot live under `features/<id>/`. Two constraints
 > on 8.6 the sketch does not mention, and the first is a defect waiting for the natural
-> configuration.
+> configuration — reachable on `main` today through 7.3's plain-command gate, and
+> recorded as `DEBT.md`'s **D-8-A-1**, owner 8.6.
 >
 > **8. The tester is a fourth built-in, and the build will refuse to compile until it
 > declares two policies. The sketch has no step for that.** `BUILT_IN_STAGE_IDS` is
@@ -249,7 +250,8 @@ code-blindness and any commit exist.
 - [ ] **8.6** — **The tester's tests are committed** (ROLE-09, finding 7). Two structural
       facts first: a gate has no commit channel, and a gate commit made after
       `recordRoundHeadSha` is attributed to the **developer** by the next round's
-      protected-path check. So this step decides who commits and when, and it makes the
+      protected-path check (`DEBT.md`'s **D-8-A-1**, unreproduced because the fixture it
+      needs is this step's own first task). So this step decides who commits and when, and it makes the
       demarcated location a **third always-on protection** alongside the feature folder and
       `adl.yml` — because `protected_paths` defaults to `[]`, and committed tests the
       developer may rewrite next round are precisely the ImpossibleBench surface the Notes
