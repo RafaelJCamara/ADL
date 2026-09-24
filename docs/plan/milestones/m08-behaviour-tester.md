@@ -179,30 +179,32 @@ every layer this milestone touches — a real daemon, a real allocated port, a r
 and started and probed and reaped — and it is deliberately proven _before_ any agent, any
 code-blindness and any commit exist.
 
-- [ ] **8.0** — **The code-blind tester spike** (the milestone's own research flag;
-      `docs(08-00)`). Tester prompt design under a _structural_ code-blind constraint has no
-      public exemplar, and finding 10 says this is a decision to reach rather than a
-      criterion to tick. Its output is written into this file's Notes: what the tester is
-      told, what it is given, what it does when the spec is ambiguous and it cannot peek,
-      and — the question that decides 8.1's allowlist — **what a test runner actually needs
-      on disk to execute one test against a running app.** Answer that last one empirically
-      against real `git worktree` and real `npm`, per convention 15; the research prose in
-      this repository has been wrong before and is not taken on faith.
+- [x] **8.0** — **The code-blind tester spike** — done, 2026-09-24. Its output is
+      [The 8.0 spike record](#the-80-spike-record-2026-09-24) below rather than this file's
+      Notes, because it is longer than a note and 8.1 consumes it directly. It answered the
+      empirical question it was written for and **the answer revised finding 3**: a second
+      worktree with a sparse checkout is _not_ code-blind, so 8.1's mechanism changed before
+      a line of it was written. Probes were throwaway, run against real git 2.49 and real
+      node 24 per convention 15, and deleted.
 - [ ] **8.1** — **A gate declares the view it gets, and ADL composes it** (ROLE-06,
       findings 1–3). The one-way decision: a pipeline entry gains a key ADL itself reads —
       `on_send_back`'s precedent, not opaque `with:` data — declaring the repo-relative
       allowlist its gate's workspace contains. The tester declares one; every other gate
-      declares nothing and gets today's behaviour byte-for-byte. Greenfield underneath:
-      a **second, concurrently-live workspace per feature**, with its own spec identity,
-      visible to the GC sweep, composed by path allowlist (`matchesGlob`, not a second
-      matcher). `GateContext` gains **no** new member and `GATE_CONTEXT_MEMBERS` does not
-      move — code-blindness is a property of what is on disk under `Workspace.root`, never
-      something the gate is asked to honour. **Must prove:** the implementation source is
-      absent from the tester's root while the spec, `adl.yml` and the suite's own
-      prerequisites are present; and GC reclaims both workspaces. Prove the absence
-      **from outside ADL** — 7.5 and 7.9's pattern, a double that walks its own root and
-      writes what it found to a report file, so the evidence does not come from ADL's own
-      bookkeeping.
+      declares nothing and gets today's behaviour byte-for-byte. Greenfield underneath, and
+      **8.0 settled what it is**: a second, concurrently-live workspace per feature that is
+      a **materialised copy of the allowlist with no `.git`**, placed **outside any git
+      repository's working tree** — not a second worktree, and not a sparse checkout, both
+      of which the spike proved are code-blind in appearance only. It needs its own spec
+      identity and must be visible to the GC sweep, and it is composed by path allowlist
+      (`matchesGlob`, not a second matcher). `GateContext` gains **no** new member and
+      `GATE_CONTEXT_MEMBERS` does not move — code-blindness is a property of what is on disk
+      under `Workspace.root`, never something the gate is asked to honour. **Must prove:**
+      the implementation source is absent from the tester's root while the spec and the
+      suite's own prerequisites are present; that `git cat-file`, `git show` and
+      `git sparse-checkout disable` all fail from inside it; and that GC reclaims both
+      workspaces. Prove the absence **from outside ADL** — 7.5 and 7.9's pattern, a double
+      that walks its own root and writes what it found to a report file, so the evidence
+      does not come from ADL's own bookkeeping.
 - [ ] **8.2** — **The app lifecycle ADL owns** (ROLE-07, findings 4–5). **The tracer.**
       `commands.build` → `commands.start` → the readiness probe → `commands.teardown`, on
       an ADL-allocated port reaching the app through `${ADL_PORT}` and `interpolate()` —
@@ -282,15 +284,124 @@ code-blindness and any commit exist.
       not rendered on the pull request** — that is M09 steps 9.3–9.5, and building it twice
       is the sequencing mistake this step exists to avoid.
 
+## The 8.0 spike record (2026-09-24)
+
+The milestone's own notes flagged this as research: tester prompt design under a
+_structural_ code-blind constraint has no public exemplar. What follows is the decision the
+spike reached, and the measurements it reached them from. **It revises audit finding 3.**
+
+Probes were throwaway, run against **git 2.49.0.windows.1** and **node v24.19.0** — a real
+repository, two real worktrees, a real server on a real allocated port, a real test run —
+and deleted afterwards, per convention 15. The research prose in this project has been wrong
+before; none of the below is taken from documentation.
+
+### What was measured
+
+| #   | Question                                                                      | Answer                                                             |
+| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| P1  | Two worktrees of one repo, same commit, different branches, at once?          | **Yes**                                                            |
+| P2  | Does `sparse-checkout` remove the implementation from disk?                   | **Yes** — `src/` is absent from the working tree                   |
+| P3  | Does the sparse worktree report **clean**, or look like a deletion?           | **Clean** — a commit from it would not remove the source           |
+| P4  | Can a port be allocated by binding `:0` and closing?                          | **Yes**                                                            |
+| P5  | Does the app become ready on it?                                              | **Yes**                                                            |
+| P6  | Can the code-blind tree run a behaviour test with **no `node_modules`**?      | **Yes** — 1 pass, 0 fail                                           |
+| P7  | Is the implementation marker in any **file** under the tester root?           | **No** — the working tree is genuinely code-blind                  |
+| P8a | Can `git cat-file -p HEAD:src/server.mjs` print it from inside that tree?     | **YES — the source comes straight back**                           |
+| P8b | Can `git show <rev>:<path>`?                                                  | **Yes** — a second spelling of the same door                       |
+| P8c | Can the tester run `git sparse-checkout disable`?                             | **YES — one command restores the whole tree**                      |
+| P9  | Is a plain copy of the allowlist with **no `.git`** blind, and can it run?    | **Blind: yes · git door: closed · test: passed**                   |
+| P10 | With `node:test`, is `package.json` needed, or is the test file alone enough? | **The test file alone is enough**                                  |
+| P11 | A plain `.git`-less copy at ADL's **default** scratch root (`<repo>/.adl/…`)? | **LEAKS** — git walks up and finds the watched repository          |
+| P12 | The same copy **outside any repository**?                                     | **Refused** — `fatal: not a git repository`                        |
+| P13 | `GIT_CEILING_DIRECTORIES` instead of moving the directory?                    | Blocks the walk-up — but a child can unset it: a fence, not a wall |
+
+### The four decisions
+
+**1. The tester's workspace is a materialised copy with no `.git`, outside any repository.**
+Not a second worktree, and not a sparse checkout. P2 and P7 make sparse-checkout _look_
+right — the source really is off the disk — and P8a/P8b/P8c are why it is not: a linked
+worktree's `.git` file points at the **main repository's object store**, which holds every
+blob of the excluded source. `git cat-file` and `git show` read it back, and
+`git sparse-checkout disable` restores the entire tree in one command, because
+sparse-checkout is a _checkout preference, not a permission_. A tester that must be asked not
+to run that command is code-blind by instruction wearing a structural costume, which is the
+one thing criterion 1 rules out.
+
+**2. Where it lives is part of the mechanism, not a deployment detail.** P11 is the finding
+that would have been missed by reasoning alone: git resolves a repository by walking **up**
+the directory tree, and ADL's `scratchRoot` today is `join(dirname(dbFilePath), 'scratch')`
+— `<repo>/.adl/scratch`, **inside the watched repository's working tree**. A perfectly
+`.git`-less copy placed there leaks the source anyway, and `.adl/` being gitignored makes no
+difference: ignore rules are not access control. So 8.1 must place the tester's workspace
+outside any repository, and must **assert** that rather than assume it —
+`git rev-parse --show-toplevel` failing from inside the tester root is the check, and it is
+cheap. `GIT_CEILING_DIRECTORIES` (P13) works but is an environment variable the child can
+unset, so it is defence in depth, never the guarantee.
+
+**3. The allowlist is small, and it is the repository's to declare rather than ADL's to
+guess.** P10 is the useful surprise: with node's built-in runner, `node --test
+tests/x.test.mjs` passed against the running app with **no `package.json`, no
+`node_modules`, and nothing else on disk** — `node:test`, `node:assert` and `fetch` are all
+built in, and the `.mjs` extension carries the module type. So the floor for a behaviour test
+is _the test directory_. Everything above that floor — a lockfile, an install, a
+`vitest.config.ts` — is a property of **which runner the repository chose**, which is
+exactly why audit finding 2's conclusion holds and its wording does not: the allowlist is not
+inherently big, it is inherently _repository-specific_. This also means the tracer in 8.2 can
+use a node-native fixture app and a node-native test with no install step at all, which keeps
+the first cross-process proof fast and free of npm.
+
+**4. A tester that cannot see the source also cannot commit — and that is the right shape.**
+It follows from decision 1 rather than being chosen: a directory with no `.git` has nothing
+to commit _to_. That agrees with audit finding 7, where `GateContext` has no commit channel
+and a gate commit would be attributed to the developer by the next round's protected-path
+check (`DEBT.md` D-8-A-1). So 8.6 is **ADL carrying the surviving tests back into the
+developer's worktree and committing them itself**, at a point it controls relative to
+`recordRoundHeadSha` — not the tester committing. One decision removes a capability, a
+defect and a design question together.
+
+### What the tester is told, and what it does when it cannot peek
+
+- **It is given:** the acceptance criteria with their ids, the base URL of the running app
+  (`${ADL_PORT}`), the declared test directory, and the command that runs the suite.
+- **It is told the blindness is deliberate**, and that the implementation is not merely
+  off-limits but absent. A tester that does not know this spends turns hunting for source
+  that is not there, and 7.5's reviewer report is the precedent for how much walking an agent
+  will do before it concludes anything.
+- **Ambiguity is reported, not guessed.** When a criterion admits more than one reading and
+  the tester cannot resolve it by looking at the implementation — which is the whole point —
+  it writes the test against the **most literal reading** and raises a `warn` finding naming
+  the criterion and the reading it took. This needs no new machinery: `aggregate` already
+  knows a `warn` never produces a `send_back` and that its findings still ride into the brief
+  and the pull request. Guessing silently would produce a false failure the developer cannot
+  act on; reporting `inconclusive` would let one ambiguous criterion sink an otherwise
+  verified feature.
+- **Not the prompt's job:** stopping the tester from writing a test that cannot fail. That is
+  8.7's assertion floor and 8.8's must-fail-at-base guardrail, and a prompt is the wrong
+  place to enforce it — the same reason ROLE-06 is a workspace composition and not an
+  instruction.
+
+### What the spike did not settle
+
+Whether a **real** code-blind tester writes behaviour-relevant tests at a useful rate. The
+probes ran a hand-written test, not a model-authored one, so what is established is that the
+_mechanism_ works end to end and what the tester must be given — not the quality of what it
+produces. Audit finding 10 already says why that cannot be measured against a replay double,
+and it stays a known limit of this milestone rather than a sixth acceptance criterion.
+
 ## Notes
 
-- ⚠️ **Research flagged.** Tester prompt design under the _structural_ code-blind
-  constraint has no public exemplar. Budget a spike — **8.0**, and finding 10 says what it
-  has to answer.
+- ✅ **The research flag is discharged.** Tester prompt design under the _structural_
+  code-blind constraint had no public exemplar; 8.0 is the spike, and
+  [its record](#the-80-spike-record-2026-09-24) carries the four decisions it reached. What
+  it deliberately did **not** settle is the quality of a real tester's output — finding 10
+  says why a replay double cannot measure it.
 - **The code-blindness must be structural.** A tester that can read the implementation
   starts approving intent instead of outcomes — which is exactly the failure the
   behaviour-first framing exists to prevent. Finding 1 is why this is a workspace
-  composition and not a `GateContext` member.
+  composition and not a `GateContext` member; the spike is why it is a `.git`-less copy
+  outside any repository rather than the sparse worktree finding 3 assumed. **A mechanism
+  that only looks structural is the trap here** — sparse-checkout passes every test you
+  would think to run on the working tree and fails to `git show`.
 - **Guardrail 4 is the load-bearing one.** A test that passes against the pre-feature
   commit tested nothing. Without it, committed coverage is a machine for generating
   green noise. It is 8.8, on its own, for that reason.

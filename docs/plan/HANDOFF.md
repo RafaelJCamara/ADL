@@ -24,20 +24,22 @@ as of the last commit and says exactly where things stand.
 
 CONTEXT: You were asked to take every remaining item up to and including M10, build
 a work queue, and implement them one by one. M06 and M07 are both closed and
-code-complete. Fifteen items are done and committed to main: 6.10, 6.11, the M06
+code-complete. Sixteen items are done and committed to main: 6.10, 6.11, the M06
 close-out, an M07 step-sketch refinement, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, the 7.7
-deferral, 7.8, 7.9, the M07 close-out, and M08's step refinement.
+deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, and 8.0.
 
-REMAINING QUEUE — 26 items, in order. Rebuild this as a task list, then work
+REMAINING QUEUE — 25 items, in order. Rebuild this as a task list, then work
 through it one at a time:
 
-  8.0 — the code-blind tester spike (docs; the milestone's own research flag)  <- NEXT
-  8.1–8.9, M08 close-out
+  8.1 — the tester's code-blind workspace (ROLE-06; the one-way decision)  <- NEXT
+  8.2–8.9, M08 close-out
   M09 step refinement, 9.1–9.8, M09 close-out
   M10 step refinement, 10.1–10.6, M10 close-out
 
 M08's sketch HAS been refined — ten steps, 8.0 through 8.9, with the audit's ten
-findings in the milestone file's own header. Start at 8.0. M09 and M10 still ship as
+findings in the milestone file's own header. 8.0, the spike, is done: read "The
+8.0 spike record" in that file before starting 8.1, because it REVISED finding 3
+and 8.1's mechanism with it. Start at 8.1. M09 and M10 still ship as
 step *sketches* and each says "refine into small steps when this milestone starts"
 — do that refinement as its own docs commit, after a pre-implementation audit, the
 way M06 and M07 were opened. The audits have been high-value: M07's found seven

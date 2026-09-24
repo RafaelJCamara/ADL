@@ -75,8 +75,8 @@ request; the record of why is in the milestone file.
 **M08 — Behaviour Tester & Committed Regression Tests — is in progress.** Its sketch has
 been refined into ten steps (8.0–8.9) after a pre-implementation audit, the way M06 and M07
 were opened; the audit found ten things, four of which changed what the steps are. See
-[What to do next](#what-to-do-next) for those four and the milestone file for all ten. No
-code has been written yet.
+[What to do next](#what-to-do-next) for those four and the milestone file for all ten.
+**8.0, the spike, is done and revised one of them**; no code has been written yet.
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -86,7 +86,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — steps refined, 8.0–8.9, no code yet
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0 done; 8.1–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -606,6 +606,46 @@ commit either does or does not. What a double **cannot** measure is whether a _r
 code-blind tester writes behaviour-relevant tests at a useful rate — the double writes what
 the fixture says. That is the research the milestone flags, and it is 8.0's spike, whose
 output is a decision rather than a sixth criterion.
+
+**8.0 is done (2026-09-24): the spike, and it revised a finding before a line of 8.1 was
+written.** The milestone's research flag was tester prompt design under a structural
+code-blind constraint — no public exemplar — and the half of it that could be measured was
+measured, against real git 2.49 and real node 24 rather than against documentation.
+
+**Sparse-checkout is code-blind in appearance only, and that is the spike's whole value.** A
+second worktree with `sparse-checkout` really does take the implementation off the disk — the
+working tree is clean, a full-tree scan finds nothing, and a behaviour test runs against the
+app from it. Then `git cat-file -p HEAD:src/server.mjs` prints the source straight back,
+because a linked worktree shares the **main repository's object store**; `git show` is a
+second spelling of the same door; and `git sparse-checkout disable` restores the entire tree
+in **one command**. Sparse-checkout is a checkout preference, not a permission. A tester that
+has to be asked not to run that command is code-blind by instruction wearing a structural
+costume — the one thing criterion 1 rules out. **8.1's mechanism changed as a result:** a
+materialised copy of the allowlist with no `.git`, not a worktree.
+
+**And where it lives turned out to be part of the mechanism.** Git resolves a repository by
+walking _up_, and `scratchRoot` today is `join(dirname(dbFilePath), 'scratch')` —
+`<repo>/.adl/scratch`, inside the watched repository. A perfectly `.git`-less copy placed
+there leaks the source anyway, and `.adl/` being gitignored makes no difference, because
+ignore rules are not access control. So 8.1 must place the tester's workspace outside any
+repository and **assert** it rather than assume it.
+
+**The useful surprise: the allowlist's floor is one directory.**
+`node --test tests/x.test.mjs` passed against the running app with no `package.json`, no
+`node_modules` and nothing else on disk — `node:test`, `node:assert` and `fetch` are all
+built in. Everything above that floor is a property of which runner the repository chose,
+which is why it is declared rather than guessed. 8.2's tracer can therefore use a
+node-native fixture with no install step at all.
+
+**One decision removed a capability, a defect and a design question together.** A directory
+with no `.git` has nothing to commit _to_, so the tester structurally cannot commit — which
+agrees with finding 7 and `D-8-A-1`. 8.6 is therefore ADL carrying the surviving tests back
+into the developer's worktree and committing them itself, at a point it controls relative to
+`recordRoundHeadSha`.
+
+**What the spike did not settle**, and says so: the probes ran a hand-written test, not a
+model-authored one. The mechanism works end to end; the _quality_ of a real code-blind
+tester's output is what finding 10 says a replay double cannot measure.
 
 ---
 
