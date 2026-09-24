@@ -422,6 +422,20 @@ const HarnessEntrySchema = z.strictObject({
     'Whether a send_back from this stage continues the pipeline or stops it (Phase 7). ' +
       "Default: derived from the stage's cost class at runtime, not by this schema.",
   ),
+  visible_paths: z
+    .array(RepoRelativePathSchema)
+    .min(1)
+    .optional()
+    .describe(
+      "Repo-relative glob patterns naming everything this gate's workspace contains — " +
+        'ROLE-06, and the behaviour tester is its first declarer. ADL composes a workspace ' +
+        'holding the matches and NOTHING else, so a gate that declares this cannot read ' +
+        'what it did not ask for. Same matcher as protected_paths. OMITTING the key is not ' +
+        'the same as an empty list and means the opposite of it: the gate attaches to the ' +
+        "workspace the previous stage left, which is every gate's pre-M08 behaviour. An " +
+        'empty list is therefore refused rather than made to mean one of the two silently. ' +
+        'Default: absent (the whole worktree).',
+    ),
 });
 
 /**

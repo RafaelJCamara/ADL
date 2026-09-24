@@ -53,6 +53,17 @@ export interface ResolvedStage {
   readonly with?: Readonly<Record<string, unknown>> | undefined;
   /** Whether a send_back from this stage continues the pipeline or stops it. */
   readonly onSendBack?: OnSendBack | undefined;
+  /**
+   * What this gate's workspace contains, if it declared one (ROLE-06, M08 step
+   * 8.1).
+   *
+   * `undefined` means the key was absent, which is the **opposite** of an empty
+   * list: the gate attaches to the workspace the previous stage left, which is
+   * every gate's pre-M08 behaviour. `@adl/core/stage`'s `selectVisiblePaths`
+   * interprets it, and `stage/visible-paths.ts` carries the reasoning for why a
+   * view the gate is *given* is declared here rather than inside opaque `with:`.
+   */
+  readonly visiblePaths?: readonly string[] | undefined;
 }
 
 /**
@@ -105,6 +116,7 @@ export type PipelineEntryInput =
       readonly harness: string;
       readonly with?: Readonly<Record<string, unknown>> | undefined;
       readonly on_send_back?: OnSendBack | undefined;
+      readonly visible_paths?: readonly string[] | undefined;
     }
   | { readonly group: readonly unknown[] };
 
@@ -228,6 +240,13 @@ export function resolvePipeline(
         : {}),
       ...(typeof entry !== 'string' && entry.on_send_back !== undefined
         ? { onSendBack: entry.on_send_back }
+        : {}),
+      // Carried, never interpreted. Whether these patterns match anything is a
+      // question about a filesystem, and this module has never touched one —
+      // `@adl/workspace` answers it at the point the copy happens, where there
+      // is a real root to contain the answer to (ROLE-06, M08 step 8.1).
+      ...(typeof entry !== 'string' && entry.visible_paths !== undefined
+        ? { visiblePaths: entry.visible_paths }
         : {}),
     });
   }

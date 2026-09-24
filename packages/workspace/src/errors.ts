@@ -58,3 +58,36 @@ export class ContainmentError extends Error {
     Object.setPrototypeOf(this, ContainmentError.prototype);
   }
 }
+
+/**
+ * A composed workspace would not actually be code-blind (ROLE-06, M08 step
+ * 8.1).
+ *
+ * A **third sibling**, not a subclass of either neighbour, for
+ * {@link ContainmentError}'s reason applied one level up. Three things can go
+ * wrong when composing a gate's view and a caller has to name which:
+ * `WorkspaceError` is "the copy did not happen", `ContainmentError` is "a path
+ * was refused", and this is **"the copy happened and the result can still reach
+ * the implementation"** — the only one of the three that is silent, because the
+ * workspace it describes looks correct from every direction except the one that
+ * matters. If this extended `WorkspaceError`, a test asserting a composition
+ * failed would pass for a composition that succeeded and leaked.
+ *
+ * The message names the reason and never the resolved repository path
+ * (T-2-28), on `ContainmentError`'s precedent: whoever provoked this has no
+ * business learning the operator's directory layout.
+ */
+export class VisibilityError extends Error {
+  override readonly name = 'VisibilityError';
+
+  /** Which composed workspace failed the check. */
+  readonly workspaceId: string;
+
+  constructor(workspaceId: string, reason: string) {
+    super(
+      `Composed workspace ${JSON.stringify(workspaceId)} is not code-blind — ${reason}`,
+    );
+    this.workspaceId = workspaceId;
+    Object.setPrototypeOf(this, VisibilityError.prototype);
+  }
+}

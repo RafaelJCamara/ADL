@@ -68,6 +68,13 @@ export {
   type RestoreHandle,
 } from './workspace.js';
 
+// What a gate's workspace CONTAINS, when the pipeline entry declared it
+// (ROLE-06, M08 step 8.1). Pure: it splits a listing against the declared
+// patterns and holds no root, because containment belongs where the copy
+// happens. `visible-paths.ts` carries why this is a declaration rather than a
+// detection, and why the key names a property rather than a mechanism.
+export { selectVisiblePaths, type VisibleSelection } from './visible-paths.js';
+
 // The AgentRunner port — the only way a stage calls a model (BACK-01). Real
 // interfaces and schemas live in `./agent.ts`; declared here (not in
 // `./stage.ts`) for the same reason `Workspace` is, and re-exported through

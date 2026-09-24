@@ -56,7 +56,7 @@
  * whole `worker-entry/` directory and say so. Everything the manager needs
  * to persist travels over the existing `fork()` IPC channel as `verdictJson`.
  */
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   AGENT_ROLES,
   BACKEND_DEFAULT_MODEL,
@@ -83,6 +83,8 @@ import {
   workspaceRegistry,
   managerGitClient,
   branchNameFor,
+  composeVisibleWorkspace,
+  visibleWorkspaceRoot,
 } from '@adl/workspace';
 import {
   CLAUDE_CODE_CAPABILITIES,
@@ -644,6 +646,15 @@ export function createProductionStageRunner(
     };
 
     let writerClosed = false;
+
+    // ROLE-06 (M08 step 8.1). Declared out here rather than beside the
+    // composition below so the dispatch's own `finally` can reclaim it on every
+    // exit path — including the four `return stageErrorResult(...)` paths
+    // between the two. A composed workspace is this stage's alone and has no
+    // successor, so unlike the attached worktree it is DESTROYED rather than
+    // detached; leaving one behind would leak a full copy of the allowlist per
+    // gate per round.
+    let composedWorkspace: Workspace | undefined;
     const writer = await openTranscriptWriter(
       transcriptPathFor(assign.logsRoot, address),
     );
@@ -712,8 +723,68 @@ export function createProductionStageRunner(
         // than as a rule (`@adl/core/stage`'s `gate-context.ts` carries the
         // guard, `eslint.config.js`'s `adl/gate-fresh-context` the residual).
         const appendPromises: Promise<void>[] = [];
+
+        // ROLE-06 (M08 step 8.1): a gate that declared `visible_paths` does not
+        // get the workspace the previous stage left. It gets a materialised
+        // copy of exactly what it declared, with no `.git`, outside every
+        // repository — see `@adl/workspace`'s `visible/compose.ts` for why each
+        // of those three is load-bearing and what M08 step 8.0 measured to find
+        // out.
+        //
+        // **Composed here rather than inside `buildGateContext`, deliberately.**
+        // A gate's workspace has to be DESTROYED when the gate is done, and
+        // `buildGateContext` has no teardown half — it narrows a message into a
+        // context and returns. Putting a resource with a lifetime behind a
+        // function whose job is narrowing is how a leak per gate per round gets
+        // written, and the composed root outlives nothing: this stage is its
+        // only user.
+        //
+        // Every other gate is unaffected byte-for-byte. `visiblePaths` is
+        // `undefined` when the key was absent, which is the opposite of an
+        // empty list.
+        const declaredVisiblePaths = resolvedStageFor(assign)?.visiblePaths;
+        let gateWorkspace = workspace;
+        if (declaredVisiblePaths !== undefined) {
+          try {
+            composedWorkspace = await composeVisibleWorkspace({
+              id: `${assign.featureId}--${assign.stageId}`,
+              source: workspace.root,
+              root: join(
+                visibleWorkspaceRoot(),
+                `${assign.featureId}--${assign.stageId}-${assign.stageAttemptId}`,
+              ),
+              visiblePaths: declaredVisiblePaths,
+            });
+            gateWorkspace = composedWorkspace;
+          } catch (error) {
+            // A workspace that cannot be made blind must not be handed over,
+            // and the gate must not silently fall back to the sighted one —
+            // that fallback is how ROLE-06 becomes false with a green build.
+            //
+            // `binary_missing` on `resolveStageRole`'s precedent above: "this
+            // build cannot run this stage", non-retryable, costing neither a
+            // round nor budget, because a root inside a repository will still
+            // be inside it on the next attempt. The kind is named for the case
+            // that motivated it rather than for this one; M08 step 8.3 owns the
+            // failure-mode taxonomy and is where a better-named kind belongs if
+            // one is added.
+            await Promise.all(appendPromises);
+            return stageErrorResult(
+              'binary_missing',
+              `pipeline stage ${JSON.stringify(assign.stageId)} declares visible_paths, and ` +
+                `its workspace could not be composed: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+            );
+          }
+        }
+
         const built = await buildGateContext({
-          workspace,
+          // What the gate can reach…
+          workspace: gateWorkspace,
+          // …and where ADL reads the spec and the diff from. The same object
+          // whenever no view was declared, which is every pre-M08 pipeline.
+          repository: workspace,
           assign,
           onEvent: (event: AgentEvent) => {
             appendPromises.push(appendRecord(event));
@@ -1029,6 +1100,13 @@ export function createProductionStageRunner(
         writerClosed = true;
         await writer.close();
       }
+      // The composed workspace, if this stage had one, goes the other way:
+      // `destroy`, not `detach`. It was built for this gate out of a copy, no
+      // later stage can attach to it, and it lives outside `scratchRoot` where
+      // `worktree/gc.ts`'s sweep does not look — so this is its only
+      // reclamation, and it must not be conditional on the stage succeeding.
+      await composedWorkspace?.destroy();
+
       // `detach`, not `destroy` (M05 step 5.14). This stage is over; the
       // workspace is not. The gate at the next index has to judge the commit
       // this stage just made, and round 2's developer has to build on it, so

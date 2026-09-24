@@ -24,22 +24,24 @@ as of the last commit and says exactly where things stand.
 
 CONTEXT: You were asked to take every remaining item up to and including M10, build
 a work queue, and implement them one by one. M06 and M07 are both closed and
-code-complete. Sixteen items are done and committed to main: 6.10, 6.11, the M06
+code-complete. Seventeen items are done and committed to main: 6.10, 6.11, the M06
 close-out, an M07 step-sketch refinement, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, the 7.7
-deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, and 8.0.
+deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, and 8.1.
 
-REMAINING QUEUE — 25 items, in order. Rebuild this as a task list, then work
+REMAINING QUEUE — 24 items, in order. Rebuild this as a task list, then work
 through it one at a time:
 
-  8.1 — the tester's code-blind workspace (ROLE-06; the one-way decision)  <- NEXT
-  8.2–8.9, M08 close-out
+  8.2 — the app lifecycle ADL owns (ROLE-07; the milestone's TRACER slice)  <- NEXT
+  8.3–8.9, M08 close-out
   M09 step refinement, 9.1–9.8, M09 close-out
   M10 step refinement, 10.1–10.6, M10 close-out
 
 M08's sketch HAS been refined — ten steps, 8.0 through 8.9, with the audit's ten
-findings in the milestone file's own header. 8.0, the spike, is done: read "The
-8.0 spike record" in that file before starting 8.1, because it REVISED finding 3
-and 8.1's mechanism with it. Start at 8.1. M09 and M10 still ship as
+findings in the milestone file's own header. 8.0 and 8.1 are done: read "The 8.0
+spike record" in that file before starting 8.2, because it revised finding 3, and
+read 8.1's own note, because the end-to-end proof there found that a gate's
+WORKSPACE and the place ADL reads the spec and diff from are two different
+things. Start at 8.2 — it is the milestone's tracer slice. M09 and M10 still ship as
 step *sketches* and each says "refine into small steps when this milestone starts"
 — do that refinement as its own docs commit, after a pre-implementation audit, the
 way M06 and M07 were opened. The audits have been high-value: M07's found seven
@@ -74,9 +76,11 @@ KNOWN ENVIRONMENT ISSUE: the manager suite flakes on this Windows dev machine.
 DEBT.md § 4 records it. The mitigation already applied to several files is an
 explicit per-file timeout ({ timeout: 30_000 } or larger) on tests that build a
 real temp repo, worktree or daemon; extend that to new tests of the same shape.
-Always baseline against main by stashing before believing a red suite — this
-session did exactly that and found `test/tracer/draft-cr-wiring.test.ts` red on a
-clean tree, which became DEBT.md's D-7-05-1.
+Always baseline against main by stashing before believing a red suite — that is
+how `test/tracer/draft-cr-wiring.test.ts` was found red on a clean tree and became
+DEBT.md's D-7-05-1. It is INTERMITTENT: 8.1 measured four full-suite runs on a
+clean main (one failure) against four with its changes applied (two), so a single
+red run proves nothing either way. Baseline with several runs, not one.
 ```
 
 ---
@@ -126,4 +130,5 @@ and in the commit messages:
 
 **Two debts closed:** `D-5-18-1` (7.1) and `D-6-09-1` (the close-out). **One
 opened:** `D-7-05-1` — `upsertComment` is check-then-act, so a sticky comment can
-be posted twice; reproduced on `main` with no local changes, owner M09.
+be posted twice; reproduced on `main` with no local changes — intermittently, as
+8.1 later measured — owner M09.

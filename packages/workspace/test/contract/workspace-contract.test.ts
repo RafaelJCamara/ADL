@@ -493,10 +493,20 @@ describe('no module under src/ reaches git through simple-git', () => {
     // A record of which modules DO, not a ceiling on which may. A new entry is a
     // deliberate line in a diff, and its author is then told by the loop below
     // that it needs a guard or an argument for why it does not.
+    //
+    // `visible/compose.ts` joined on M08 step 8.1 and is the argument this
+    // assertion asks for: a gate declaring `visible_paths` gets a workspace
+    // with no git in it at all, so it cannot borrow the worktree backend's
+    // `exec` and needs its own. It carries the cwd guard the loop below
+    // demands, contained to the COMPOSED root rather than to the worktree —
+    // which is the whole point, since the two are different directories and
+    // guarding the wrong one would let a gate run a process in the tree it is
+    // supposed to be blind to.
     expect(callers.sort()).toEqual([
       'git/adl-git.ts',
       'git/host-backend.ts',
       'stub/backend.ts',
+      'visible/compose.ts',
       'worktree/backend.ts',
     ]);
 
@@ -539,7 +549,16 @@ describe('no module under src/ reaches git through simple-git', () => {
     // which ones DO. A new entry here is a deliberate line in a diff rather
     // than a fourth quiet git call site, which is precisely how the three
     // simple-git handles this guard replaced came to exist unnoticed.
+    //
+    // `visible/compose.ts` joined on M08 step 8.1, and it runs git for an
+    // unusual reason worth stating: it runs `rev-parse --show-toplevel` and
+    // **needs it to FAIL**. ROLE-06's guarantee is that nothing at or above a
+    // composed workspace is a repository, and the only authority on what git
+    // considers a repository is git — so the check asks rather than assumes.
+    // A call site whose success case is a non-zero exit is exactly the kind
+    // this pin exists to make somebody look at.
     expect(reaching.sort()).toEqual([
+      'visible/compose.ts',
       'worktree/backend.ts',
       'worktree/lifecycle.ts',
       'worktree/list.ts',

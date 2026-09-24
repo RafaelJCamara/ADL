@@ -15,7 +15,7 @@
 // Errors — the workspace layer's own failure types. `ContainmentError` is a
 // sibling of `WorkspaceError`, not a subclass, so a caller can tell "the
 // interface refused to address that path" apart from "the file was not there".
-export { ContainmentError, WorkspaceError } from './errors.js';
+export { ContainmentError, VisibilityError, WorkspaceError } from './errors.js';
 
 // The D-02 containment guard. Exported because a backend living outside this
 // package must be able to enforce the same rule with the same code — a second
@@ -239,3 +239,17 @@ export {
   reportScratchHomeTeardown,
   type TeardownSink,
 } from './teardown.js';
+
+// The workspace a gate declaring `visible_paths` receives — a materialised copy
+// of its allowlist, with no `.git`, outside every repository (ROLE-06, M08 step
+// 8.1). Not a `WorkspaceBackend` and deliberately not a registry entry: a
+// backend answers `WorkspaceSpec`, which has no room for an allowlist, and this
+// is a workspace DERIVED from another workspace. A gate still receives a plain
+// `Workspace` and cannot tell which kind it holds, which is HARN-04 holding.
+export {
+  composeVisibleWorkspace,
+  composeVisibleWorkspaceWithReport,
+  visibleWorkspaceRoot,
+  type VisibleComposition,
+  type VisibleWorkspaceSpec,
+} from './visible/compose.js';

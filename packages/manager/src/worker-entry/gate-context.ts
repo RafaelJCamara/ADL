@@ -54,8 +54,33 @@ export type GateContextResult =
     };
 
 export interface BuildGateContextInput {
-  /** The workspace this stage attached to — already carrying the developer's commit (M05 step 5.14). */
+  /**
+   * The workspace **the gate receives** — which is not necessarily the one this
+   * stage attached to.
+   *
+   * Before M08 it always was. A gate declaring `visible_paths` (ROLE-06, step
+   * 8.1) is handed a composed copy of its allowlist instead, and that copy has
+   * no `.git` and may not contain the feature folder — both deliberately.
+   */
   readonly workspace: Workspace;
+  /**
+   * Where ADL reads the *facts* from: the attached worktree, always.
+   *
+   * Defaults to {@link BuildGateContextInput.workspace}, so every pre-M08
+   * caller is unchanged. **The split exists because these were one thing and
+   * should never have been**, and the end-to-end proof for step 8.1 is what
+   * found it: pointing `workspace` at a blind copy also pointed the spec load
+   * and the `git diff` at it, so the first composed gate failed `unparseable`
+   * before it ran — the spec was not in the copy, and `managerGitClient` has no
+   * git to call.
+   *
+   * The distinction is the right one independently of that bug. `spec` and
+   * `diff` are facts ADL gathers and hands over; `workspace` is what the gate
+   * can *reach*. Deriving the first from the second means "the tester may read
+   * its own acceptance criteria" and "the tester's directory contains the spec
+   * file" are one knob, and they are not the same question.
+   */
+  readonly repository?: Workspace;
   /** The dispatch being narrowed. Nothing on it reaches the returned context except the fields named below. */
   readonly assign: AssignMessage;
   /** The transcript sink the caller already opened for this attempt. */
@@ -115,10 +140,13 @@ export async function buildGateContext(
   input: BuildGateContextInput,
 ): Promise<GateContextResult> {
   const { workspace, assign, onEvent } = input;
+  // The attached worktree, unless the caller composed a separate view for the
+  // gate. Never `workspace` when the two differ: that is the defect above.
+  const repository = input.repository ?? workspace;
 
   let spec;
   try {
-    spec = await loadSpecFromWorktree(workspace, assign.workspaceHandle);
+    spec = await loadSpecFromWorktree(repository, assign.workspaceHandle);
   } catch (error) {
     return {
       ok: false,
@@ -130,7 +158,10 @@ export async function buildGateContext(
     };
   }
 
-  const git = managerGitClient(workspace);
+  // `repository`, not `workspace`. A composed workspace has no `.git` at all —
+  // that absence is ROLE-06's mechanism, not an oversight — so asking it for a
+  // diff is asking the one question it exists to be unable to answer.
+  const git = managerGitClient(repository);
   let head: string;
   let changedPaths: readonly string[];
   try {

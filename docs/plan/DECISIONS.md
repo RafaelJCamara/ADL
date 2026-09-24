@@ -111,6 +111,38 @@ per-feature budget or the global cap — so the manager hands a gate a runner th
 reports, and there is nothing to forget (`DEBT.md`'s D-5-18-1, closed by construction).
 (M07 step 7.1, HARN-01/04.)
 
+**A gate declares the view it gets; ADL composes it. Code-blindness is a property of the
+workspace on disk, never an instruction to the gate.**
+ROLE-06 asks that the behaviour tester _structurally cannot read the implementation_, and the
+published contract said the opposite: `GateContext.workspace` is documented as the repository
+"already carrying the developer's work", and one workspace per dispatch was handed to
+developer and gate alike. Resolving that is M08's one-way decision. A pipeline entry gains
+`visible_paths`, a key **ADL itself reads** — `on_send_back`'s precedent, not opaque `with:`
+data — and a gate that declares one is handed a composed workspace containing the matches and
+nothing else. Omitting the key means what it always meant: attach to the workspace the
+previous stage left. The tester is the first declarer and a third party's gate declares the
+identical key, which is what keeps HARN-04 true with no branch anywhere on the tester's name.
+**ADL does not detect which files are implementation source, and will not**, for the reason
+`protected_paths` already records about tests: auto-detecting it is exactly the
+non-deterministic guess the schema's `commands` refuse to make.
+**The mechanism is a materialised copy with no `.git`, placed outside every repository** —
+not a second worktree, and specifically not a sparse checkout, which step 8.0 measured and
+found code-blind in appearance only: the working tree is clean of the source and `git
+cat-file`, `git show` and a one-command `git sparse-checkout disable` all read it back out of
+the main repository's object store. Location is part of the mechanism rather than a
+deployment detail, because git resolves a repository by walking _up_ — so a `.git`-less copy
+under the default `scratchRoot` (`<repo>/.adl/scratch`) leaks anyway, and `.adl/` being
+gitignored changes nothing, because ignore rules are not access control. ADL therefore
+**asks git rather than assuming**, before the copy and again after it, and refuses with a
+`VisibilityError` rather than handing over a workspace that only looks blind.
+**What the gate can reach and where ADL reads facts from are two questions, not one.** The
+spec and the diff are gathered from the attached worktree and handed over as data; only
+`workspace` narrows. Conflating them made the first composed gate fail before it ran — the
+spec was not in the copy and there was no git to diff — and would have made "the tester may
+read its own acceptance criteria" the same knob as "the tester's directory contains the spec
+file".
+(M08 steps 8.0–8.1, ROLE-06, HARN-04.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.

@@ -45,7 +45,7 @@ goalposts cannot move mid-feature (7.8, LOOP-09); and the removal proof — dele
 reviewer from `adl.yml` removes it from the pipeline, with no code change (7.9, HARN-04's
 negative half).
 
-**One test is red on `main` at this close-out, and it is not M07's.**
+**One test is INTERMITTENTLY red on `main`, and it is not M07's.**
 `test/tracer/draft-cr-wiring.test.ts` fails under the full manager suite — two sticky
 comments where it expects one — and passes alone in 3.3 s. It was reproduced on a clean
 tree, with this milestone's work stashed, before being believed: `upsertComment` is
@@ -76,7 +76,8 @@ request; the record of why is in the milestone file.
 been refined into ten steps (8.0–8.9) after a pre-implementation audit, the way M06 and M07
 were opened; the audit found ten things, four of which changed what the steps are. See
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
-**8.0, the spike, is done and revised one of them**; no code has been written yet.
+**8.0, the spike, is done and revised one of them, and 8.1 — the one-way decision —
+is done and is this milestone's first code.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -86,7 +87,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0 done; 8.1–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0, 8.1 done; 8.2–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -646,6 +647,65 @@ into the developer's worktree and committing them itself, at a point it controls
 **What the spike did not settle**, and says so: the probes ran a hand-written test, not a
 model-authored one. The mechanism works end to end; the _quality_ of a real code-blind
 tester's output is what finding 10 says a replay double cannot measure.
+
+**8.1 is done (2026-09-24): a gate declares the view it gets, and ADL composes it
+(ROLE-06).** The milestone's one-way decision, and 8.0's spike had already settled the
+mechanism: `visible_paths` on the pipeline entry — a key ADL itself reads, on
+`on_send_back`'s precedent — and a gate that declares one is handed a **materialised copy of
+its allowlist with no `.git`, outside every repository**. Omitting the key still means
+"attach to the workspace the previous stage left", which is every pre-M08 pipeline,
+byte-for-byte. `GateContext` gained **no** member and `GATE_CONTEXT_MEMBERS` did not move:
+code-blindness is a property of what is on disk under `Workspace.root`, never something a
+gate is asked to honour. `DECISIONS.md` records it.
+
+**ADL asks git rather than assuming, twice per composition.** Before the copy, against the
+destination's parent, so a misconfigured root costs no I/O; and after it, against the
+finished root, because the first check cannot see a `.git` the copy itself introduced. Either
+failure is a `VisibilityError` — a **third sibling** of `WorkspaceError` and
+`ContainmentError`, not a subclass, because "the copy failed" and "the copy succeeded and can
+still reach the implementation" are different events and only the second is silent.
+
+**The finding, and the end-to-end proof is what found it.** `buildGateContext` read the spec
+_and the diff_ out of the gate's own workspace, so pointing `workspace` at a blind copy
+pointed the spec load and `managerGitClient` at it too — the first composed gate died
+`unparseable` before it ran, because the spec was not in the copy and there was no `.git` to
+diff. Every workspace-level test was green at the time; this is only visible end to end. The
+fix is the distinction the design was missing: **what a gate can reach and where ADL reads
+facts from are two questions.** `buildGateContext` gained a `repository` input defaulting to
+`workspace`, so `spec` and `diff` come from the attached worktree and are handed over as
+data, and only `workspace` narrows. Worth carrying to 8.4: the tester still receives
+`diff.changedPaths`, which **names** the implementation files without containing them — a
+bounded disclosure 8.4 should decide about deliberately rather than inherit.
+
+**Proven twice, and watched failing five ways.**
+`packages/workspace/test/visible/compose.test.ts` runs the real `cat-file`, `show`, `log` and
+`sparse-checkout disable` against a composed workspace and requires every one to fail;
+`packages/manager/test/scenario/gate-visible-paths.test.ts` drives a real daemon whose gate
+is a plain program that walks its own cwd and writes what it found outside every workspace —
+7.5's and 7.9's pattern, so the evidence never comes from ADL's own bookkeeping. The five
+injections: copying `.git` along with the allowlist; dropping the pre-copy location check
+(the rejection still happened — what went red is "nothing was copied first"); dropping the
+cwd guard; defaulting an absent `visible_paths` to `[]`; and handing the gate the sighted
+worktree. **The first of those initially changed nothing**, because the allowlist filtered
+`.git` out regardless — which is how the greedy-glob case (`visible_paths: ['**']` must still
+not hand over git) came to be written.
+
+**Two contract pins moved deliberately**, both in
+`packages/workspace/test/contract/workspace-contract.test.ts`: `visible/compose.ts` is a new
+importer of `exec/run.js` and a new module that runs git. The second is unusual enough to
+state — it runs `rev-parse --show-toplevel` and **needs it to fail**.
+
+**Found and not fixed: `D-8-01-1`.** That contract suite's comment stripper runs its
+block-comment regex first, so a `//` line containing `/**` silently deletes the rest of the
+file before the cwd-guard rule reads it. That is how a guard which _was_ present got reported
+as missing here — and how a guard that is genuinely missing could be reported as present.
+Owner 8.2.
+
+**And a correction to this file's own claim.** `D-7-05-1` is **intermittently** red on
+`main`, not deterministically. Telling a suite failure apart from a regression required
+measuring it: four full-suite runs on a clean `main` failed once, four with 8.1 applied
+failed twice, and at n=4 those are not distinguishable. What matters is that it reproduces
+with no local changes at all. `DEBT.md`'s row is corrected too.
 
 ---
 

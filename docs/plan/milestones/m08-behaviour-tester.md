@@ -186,7 +186,7 @@ code-blindness and any commit exist.
       worktree with a sparse checkout is _not_ code-blind, so 8.1's mechanism changed before
       a line of it was written. Probes were throwaway, run against real git 2.49 and real
       node 24 per convention 15, and deleted.
-- [ ] **8.1** — **A gate declares the view it gets, and ADL composes it** (ROLE-06,
+- [x] **8.1** — **A gate declares the view it gets, and ADL composes it** (ROLE-06,
       findings 1–3). The one-way decision: a pipeline entry gains a key ADL itself reads —
       `on_send_back`'s precedent, not opaque `with:` data — declaring the repo-relative
       allowlist its gate's workspace contains. The tester declares one; every other gate
@@ -205,6 +205,17 @@ code-blindness and any commit exist.
       workspaces. Prove the absence **from outside ADL** — 7.5 and 7.9's pattern, a double
       that walks its own root and writes what it found to a report file, so the evidence
       does not come from ADL's own bookkeeping.
+      **Done, 2026-09-24.** `visible_paths` on the pipeline entry,
+      `selectVisiblePaths` in `@adl/core/stage` (pure, and reusing `matchesGlob` rather
+      than growing a second matcher), `composeVisibleWorkspace` in `@adl/workspace`, and
+      the wiring in `stage-runner.ts`. `GateContext` gained no member, as promised.
+      Proven twice: `packages/workspace/test/visible/compose.test.ts` runs the real
+      `cat-file`, `show`, `log` and `sparse-checkout disable` against a composed workspace
+      and requires every one of them to fail, and
+      `packages/manager/test/scenario/gate-visible-paths.test.ts` drives a real daemon
+      whose gate is a plain program that walks its own cwd and reports what it found to a
+      file outside every workspace. **Watched failing five ways**, listed below. > **8.1's finding, and the end-to-end proof is what found it.** `buildGateContext` > read the spec **and the diff** out of the gate's own workspace, so pointing > `workspace` at a blind copy pointed the spec load and `managerGitClient` at it > too: the first composed gate died `unparseable` before it ran, because the spec > was not in the copy and there was no `.git` to diff. The workspace-level tests > were all green at the time — this is only visible end to end. The fix is the > distinction the design was missing: **what a gate can reach and where ADL reads > facts from are two questions.** `buildGateContext` gained a `repository` input, > defaulting to `workspace` so every pre-M08 caller is untouched; `spec` and `diff` > come from the attached worktree and are handed over as data, and only `workspace` > narrows. Worth keeping for 8.4: the tester still receives `diff.changedPaths`, > which **names** the implementation files without containing them — a deliberate, > bounded disclosure that 8.4 should decide about explicitly rather than inherit. > > **Watched failing five ways.** Copying `.git` along with the allowlist (caught by > a case that had to be _added_ — the first injection changed nothing, because the > allowlist filtered `.git` out anyway, which is how the greedy-glob case came to > exist). Dropping the pre-copy location check (the rejection still happened; what > went red is "nothing was copied first"). Dropping the cwd guard. Defaulting an > absent `visible_paths` to `[]`. And handing the gate the sighted worktree, which > is the wiring defect the whole scenario exists for. > > **Found and not fixed:** `D-8-01-1`. The contract suite's comment stripper runs > its block-comment regex first, so a `//` line containing `/**` silently deletes > the rest of the file before the cwd-guard rule reads it — which is how a guard > that was present got reported as missing here, and how a guard that is genuinely > missing could be reported as present. Owner 8.2.
+
 - [ ] **8.2** — **The app lifecycle ADL owns** (ROLE-07, findings 4–5). **The tracer.**
       `commands.build` → `commands.start` → the readiness probe → `commands.teardown`, on
       an ADL-allocated port reaching the app through `${ADL_PORT}` and `interpolate()` —
@@ -258,8 +269,11 @@ code-blindness and any commit exist.
       `adl.yml` — because `protected_paths` defaults to `[]`, and committed tests the
       developer may rewrite next round are precisely the ImpossibleBench surface the Notes
       below name. The location is declared in `adl.yml`, must be outside `features_dir`, and
-      needs the new-key precedent `protected_paths` set (unknown-key strictness, the
-      published JSON Schema and its CI diff). **Must prove:** the tests are on the branch
+      follows the new-key precedent `visible_paths` set in 8.1 — `z.strictObject` means an
+      unknown key is a boot-time refusal, and there is **no** published `adl.yml` JSON
+      Schema to diff, unlike the verdict schema (`packages/core/schema/` holds that one
+      alone). This sentence previously claimed otherwise; 8.1 is what established the
+      real precedent. **Must prove:** the tests are on the branch
       that becomes the change request — pushed from **inside** the worker, before teardown
       reclaims the branch, 5.10's constraint — and that the developer editing them in a
       later round is refused.
