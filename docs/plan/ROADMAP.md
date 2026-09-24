@@ -16,7 +16,7 @@ with the whole loop's reasoning visible in the PR.
 
 ```
 M01 ██████████ done        M07 █████████▒ code done
-M02 █████████▒ code done   M08 ░░░░░░░░░░ NEXT ◀
+M02 █████████▒ code done   M08 ░░░░░░░░░░ IN PROGRESS ◀
 M03 ██████████ done        M09 ░░░░░░░░░░ not started
 M04 █████████▒ code done   M10 ░░░░░░░░░░ not started
 M05 █████████▒ code done   M11 ░░░░░░░░░░ not started
@@ -60,7 +60,7 @@ implementation is unfalsifiable.
 | M05     | The Loop Closes                                   | 🟡 code complete     | M04        | [m05](./milestones/m05-the-loop-closes.md)           |
 | M06     | Accountant — Budgets, Stalls, Escalation          | 🟡 code complete     | M05        | [m06](./milestones/m06-accountant.md)                |
 | M07     | Code Reviewer on the Gate Plugin Interface        | 🟡 code complete     | M06        | [m07](./milestones/m07-code-reviewer-gate.md)        |
-| **M08** | **Behaviour Tester & Committed Regression Tests** | ◀ **NEXT**           | M07        | [m08](./milestones/m08-behaviour-tester.md)          |
+| **M08** | **Behaviour Tester & Committed Regression Tests** | ◀ **IN PROGRESS**    | M07        | [m08](./milestones/m08-behaviour-tester.md)          |
 | M09     | The Pull Request as the Product                   | ⬜ not started       | M08        | [m09](./milestones/m09-pr-as-product.md)             |
 | M10     | Webhook Detection                                 | ⬜ not started       | M09        | [m10](./milestones/m10-webhook-detection.md)         |
 | M11     | Second Agent Backend — Owned Loop                 | ⬜ not started       | M10        | [m11](./milestones/m11-second-backend.md)            |

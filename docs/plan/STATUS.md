@@ -72,10 +72,11 @@ repository able to request one from a daemon-declared allowlist (6.9–6.11, BAC
 The last three steps were added to the milestone on 2026-09-01 at the maintainer's
 request; the record of why is in the milestone file.
 
-**M08 — Behaviour Tester & Committed Regression Tests — is next.** Its steps still ship as
-a sketch; refine them into real steps as their own docs commit, after a pre-implementation
-audit, the way M06 and M07 were opened. M07's audit found seven things, two of which changed
-what the steps were.
+**M08 — Behaviour Tester & Committed Regression Tests — is in progress.** Its sketch has
+been refined into ten steps (8.0–8.9) after a pre-implementation audit, the way M06 and M07
+were opened; the audit found ten things, four of which changed what the steps are. See
+[What to do next](#what-to-do-next) for those four and the milestone file for all ten. No
+code has been written yet.
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -85,7 +86,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ NEXT
+M08 Behaviour Tester ................ ◀ IN PROGRESS — steps refined, 8.0–8.9, no code yet
 M09–M18 ............................. not started
 ```
 
@@ -536,7 +537,81 @@ end-of-project verification pass. See [`DEBT.md`](./DEBT.md) § 1 — M05's own 
 
 ## What to do next
 
-**Start M07 — Code Reviewer on the Gate Plugin Interface**
+**Start M08 — Behaviour Tester & Committed Regression Tests**
+([`milestones/m08-behaviour-tester.md`](./milestones/m08-behaviour-tester.md)), ten steps,
+8.0 through 8.9. Its goal: behaviour is verified by an agent that _structurally cannot read
+the implementation_, against an app ADL starts and tears down itself, leaving tests the team
+keeps.
+
+**The sketch has been refined into steps (2026-09-24), after a pre-implementation audit** —
+the same discipline M06 and M07 opened with. It contradicted the sketch in three places,
+re-scoped two more, and found one step the sketch did not have at all. All ten findings live
+in the milestone file's own header; these four are the ones that changed what the steps are.
+
+**1. The published gate contract says a gate's workspace carries the developer's work, and
+ROLE-06 says the tester's must not.** `GateContext.workspace` is documented as the
+repository _"already carrying the developer's work, because a stage attaches to the
+workspace the previous stage left rather than branching afresh"_, and `stage-runner.ts`
+hands developer and gate the same one — `attach(spec) ?? create(spec)`, once per dispatch.
+So a code-blind tester is either a **second** workspace, which nothing in this system can
+hold today, or a special case, which HARN-04 forbids. That is M08's one genuinely one-way
+decision and it is 8.1: a pipeline entry **declares the view its gate gets** — on
+`on_send_back`'s precedent, a key ADL itself reads rather than opaque `with:` data — and a
+third party's gate declares the identical thing. The alternative, a `GateContext` member the
+tester is trusted to honour, is exactly the _"merely forbidden by instruction"_ that
+criterion 1 rules out.
+
+**2. `inconclusive` is not a soft outcome in this codebase — it ends the feature.**
+`aggregate` maps an `inconclusive` with no `send_back` anywhere to `unverified`, and
+`round-step.ts` turns `unverified` into `complete` plus an `unrecoverable` event. So the
+sketch's "never-ready → `inconclusive`" wakes a human on a lost port race, with no retry,
+while `timeout` is a `StageError` that is retryable and costs no round. An app that never
+boots because the developer's code crashes wants a send-back; because `commands.start` is
+wrong wants the operator; because a port was taken wants a retry. 8.3 is now the whole
+failure-mode map rather than one line of it.
+
+**3. A gate cannot commit — and if it could, the protected-path check would blame the
+developer.** `round-runner.ts` records the round's head sha from the **developer's** commit,
+before any gate runs, and `checkProtectedPaths` diffs `latestClosedRound.head_sha ...
+committedSha`. A gate commit lands after that sha and therefore appears in the _next_
+round's diff as the developer's work. With `protected_paths: ['tests/**']` — the schema's
+own worked example, and the ROLE-11 configuration M08 is what makes necessary — the tester's
+own committed tests hard-fail the following round. And `violatedProtectedPaths` flags
+anything inside the feature folder unconditionally, so the demarcated location cannot live
+under `features_dir` either.
+
+**4. The tester is a fourth built-in, and the build refuses to compile until it declares two
+policies.** `BUILT_IN_COST_CLASSES` and `BUILT_IN_JUDGEMENT_KINDS` each carry an `Exclude<>`
+assertion whose docblock says a fourth built-in fails the **build** rather than inheriting a
+default. Judgement kind is the sharp one: `opinion` lets LOOP-09 demote a genuine round-2
+regression to a follow-up and ships a broken feature, while `deterministic` loops to
+`max_rounds` if the tester re-invents its tests every round. The resolution is that 8.6's
+committed tests are what make `deterministic` honest — a **re-run** test has a stable
+fingerprint, so the tester stops being a fresh opinion each round. That turns 8.6 from a
+product nicety into a correctness requirement of the loop.
+
+**Three mechanisms M08 is the first consumer of**, all built, all required by the schema, all
+with zero production readers: `commands.build`, `commands.start` and `commands.teardown`;
+`interpolate()` and `ADL_VARIABLES`, which is where `ADL_PORT` is defined; and all four
+readiness probe kinds. **8.2 is the tracer slice** (convention 14) — a real daemon, a real
+allocated port, a real app built, started, probed and reaped — deliberately proven before any
+agent, any code-blindness and any commit exist. It is also the first time ADL has ever
+installed dependencies or started a server, and it does both per worktree.
+
+**No acceptance criterion here is credential-bound**, which would make M08 the first
+milestone since M03 able to close fully code-complete rather than 🟡. All five are provable
+against the replay doubles M01–M07 already use: an absence is observable, a port is
+observable, a guardrail is deterministic, and a test that must fail against the pre-feature
+commit either does or does not. What a double **cannot** measure is whether a _real_
+code-blind tester writes behaviour-relevant tests at a useful rate — the double writes what
+the fixture says. That is the research the milestone flags, and it is 8.0's spike, whose
+output is a decision rather than a sixth criterion.
+
+---
+
+### The M07 record (code complete, 2026-09-03)
+
+**M07 — Code Reviewer on the Gate Plugin Interface**
 ([`milestones/m07-code-reviewer-gate.md`](./milestones/m07-code-reviewer-gate.md)), nine
 steps, 7.1 through 7.9. Its goal: the reviewer is the first real plugin gate, judging
 implementation against spec and code quality from fresh context, **on exactly the interface
@@ -790,8 +865,15 @@ would take) turned the removal case red; making the double write its report rega
 role turned **both** cases red, which is the proof the evidence is role-specific rather than
 "a process ran".
 
-Still owed an answer by this milestone: `DEBT.md`'s **D-6-09-1** — 6.9–6.11 made
-cross-model review _configurable_, and nothing yet makes it the recommended default.
+**The last decision this milestone owed was answered at the close-out rather than deferred
+again.** `DEBT.md`'s **D-6-09-1**: 6.9–6.11 made cross-model review _configurable_ and
+nothing made it happen, so `DEFAULT_AGENT_BLOCK` put all three roles on the identical
+default and an untouched install had the reviewer judging its own author's work. ADL now
+warns at boot when the reviewer would run on the developer's model, **including the
+backend-default case** — unlike its sibling `boot/model-pricing-warning.ts`, which skips
+that sentinel, because here the default case is the dangerous one and its remedy is one line
+of configuration. A warning, never a refusal: ADL does not pick models on an operator's
+behalf.
 
 ---
 
