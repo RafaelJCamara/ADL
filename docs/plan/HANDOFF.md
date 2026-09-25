@@ -59,7 +59,7 @@ WORKING RULES (also in .claude/CLAUDE.md — follow them exactly):
 - Update STATUS.md and the milestone file at the end of every step.
 - Verify with: pnpm typecheck, pnpm lint, pnpm format, and the package suites.
 
-TWO TRAPS THIS SESSION HIT, both worth knowing before you start:
+FOUR TRAPS THESE SESSIONS HIT, all worth knowing before you start:
 
 1. `@adl/manager` resolves `@adl/core` through its BUILT dist, not through src.
    A core-only edit is invisible to a manager test until `pnpm --filter @adl/core
@@ -71,6 +71,22 @@ TWO TRAPS THIS SESSION HIT, both worth knowing before you start:
 2. `git checkout -- <file>` to undo an injection also reverts the step's own
    uncommitted work in that file. Undo injections by reversing the edit, not by
    checking the file out.
+
+3. A `//` line comment containing the three characters `/**` BLINDS the contract
+   suite's comment stripper for the rest of the file, because
+   `workspace-contract.test.ts`'s `withoutComments` strips block comments first.
+   8.1 hit this documenting a glob: its `exec` DID call `assertCwdWithinRoot` and
+   the suite reported it as an unguarded `run()` caller, because 5223 of 15066
+   characters survived the strip and `async exec` was not among them. This is
+   DEBT.md's D-8-01-1 and 8.2 OWNS IT — the dangerous direction is the inverse, a
+   genuinely unguarded module passing because an innocent `/**` hid it.
+
+4. Prettier silently breaks a Markdown blockquote when a continuation line starts
+   with `<` or `{` — it reads them as HTML/JSX and drops the `> ` prefix, so
+   everything after that line falls out of the quote. It bit the M08 milestone
+   file twice (`<path> <baseRef>` and `{ test: 'command' }` at a line start).
+   Re-wrap so no quoted line begins with either character, and re-run
+   `pnpm exec prettier --check` after writing any long blockquote.
 
 KNOWN ENVIRONMENT ISSUE: the manager suite flakes on this Windows dev machine.
 DEBT.md § 4 records it. The mitigation already applied to several files is an
