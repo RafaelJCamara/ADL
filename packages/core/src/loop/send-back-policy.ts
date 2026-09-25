@@ -59,7 +59,9 @@ export const DEFAULT_COST_CLASS: CostClass = 'expensive';
  * and produces a `DeveloperOutcome`, not a verdict, so no `send_back` policy
  * ever applies to it. `review` is an agent (M07 step 7.4) and `test` runs
  * `adl.yml`'s test command, which is the distinction the cost class exists to
- * draw.
+ * draw. `behaviour` is the tester (M08 step 8.4) and is the most expensive stage
+ * ADL has: it is an agent, and it is the only stage that also builds and starts
+ * the app under test before the agent even begins (ROLE-07).
  *
  * Keyed by `BuiltInStageId` and machine-checked against the frozen
  * `BUILT_IN_STAGE_IDS` below, so a fourth built-in fails the **build** rather
@@ -70,6 +72,13 @@ const BUILT_IN_COST_CLASSES = Object.freeze({
   develop: 'expensive',
   review: 'expensive',
   test: 'cheap',
+  // M08 step 8.4. An agent, so `expensive` for the reviewer's reason — and
+  // more so than the reviewer, because reaching the agent at all costs a
+  // dependency install and a server start per attempt. The consequence is the
+  // one that matters: `expensive` defaults `on_send_back` to `stop`, so an
+  // earlier gate's send-back does not pay to build and boot an app in order to
+  // judge code already known to need changes.
+  behaviour: 'expensive',
 }) satisfies Record<BuiltInStageId, CostClass>;
 
 /**

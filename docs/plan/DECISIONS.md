@@ -205,6 +205,48 @@ ran, so converting it into a failure would let a cleanup command overturn a corr
 It is `report_only`: recorded on the transcript and on the daemon log, and acting on nothing.
 (M08 step 8.3, ROLE-07.)
 
+**The behaviour tester is a built-in gate with no privileged path, and the one thing it needs
+that no existing mechanism could give it is a port.**
+`AGENT_ROLE_PRODUCERS.tester` went from `null` to `'behaviour'` and
+`AGENT_GATE_IMPLEMENTATIONS` gained one entry — the same one-line change M06 step 6.10 built
+the derivation for and M07 step 7.4 spent. The stage id is `behaviour` and not `test`, because
+`test` is the built-in command gate's and `resolvePipeline` refuses a duplicate id: that id is
+what verdicts, `stage_attempts` and coverage rows join on.
+**Being a fourth built-in made the build refuse to compile until two policies were declared**,
+which is finding 8 observed rather than asserted — six errors across
+`BUILT_IN_COST_CLASSES` and `BUILT_IN_JUDGEMENT_KINDS`. It is `expensive`, so `on_send_back`
+defaults to `stop` and an earlier gate's send-back does not pay to build and boot an app to
+judge code already known to need changes. It is **`deterministic`**, which is the sharp one:
+`opinion` would let LOOP-09 demote a genuine round-2 regression — caught by a test that ran
+and failed — to a follow-up, and ship a broken feature. `deterministic` is only honest because
+step 8.6 commits the surviving tests, so a later round **re-runs** them and a re-run failure
+has a stable fingerprint. That is why 8.6 is a correctness requirement of the loop rather than
+the product nicety the sketch called it.
+**`GateContext` gained its first member since M07 step 7.1: `app`, carrying a port.** 8.1 and
+8.2 each deliberately added none — code-blindness is a property of what is on disk, and a
+_command_ gate learns its port from `${ADL_PORT}` in its own interpolated `env`. An **agent**
+gate has no command and therefore no `env`, so it is the first consumer the existing mechanism
+genuinely cannot serve. A port and not a base URL, because a URL would make ADL own an
+`http://` convention that is wrong for the app with no HTTP surface `ExecReadyProbeSchema`
+exists for. `APP_UNDER_TEST_PORT_MEMBERS` governs the nested type for `GATE_DIFF_MEMBERS`'
+reason — door 2 reads member _names_, so a `sourceRoot` reaching a gate through `ctx.app`
+would be a hole in it, and for this gate a path back to the implementation is the one thing
+ROLE-06 withholds.
+**ADL does not infer `needs_app` from a stage's name, so the tester refuses without one.** A
+pipeline naming `behaviour` with no `needs_app: true` gets a `StageError` naming the key rather
+than a tester that verifies nothing and reports a pass. Inferring it would be exactly the
+branch on the tester's identity HARN-04 forbids; refusing is the same
+be-strict-about-your-own-requirements move the reviewer makes about citing a criterion.
+**The tester receives `diff.changedPaths` and its prompt does not use them.** 8.1 flagged the
+disclosure to be decided here. Withholding the member _for the tester_ would be a special
+case; using it would produce tests about modules instead of tests about behaviour. So the
+member stays, the prompt omits it, and a test asserts the absence.
+**It does NOT borrow the reviewer's must-cite-a-criterion rule**, deliberately: "the suite ran
+and passed" and "AC-3 was verified" are different claims, and enforcing citation before step
+8.5 gives a tester's coverage claim any evidence would reward it for asserting coverage it
+cannot support.
+(M08 step 8.4, ROLE-05, HARN-04.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.

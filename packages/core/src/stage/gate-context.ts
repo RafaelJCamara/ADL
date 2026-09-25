@@ -26,6 +26,7 @@
  * | {@link GateContext.workspace} | the repository | the worktree, contained to its own root (D-02) |
  * | {@link GateContext.config} | `adl.yml` | this gate's own `with:` block — the maintainer's configuration of *this gate*, not the developer's output |
  * | {@link GateContext.agents} | ADL | a capability, not information: a way to *call* a model, carrying nothing back about the developer's call |
+ * | {@link GateContext.app} | ADL | the port ADL allocated for an app it started on this gate's behalf — a number, and one this gate asked for by declaring `needs_app` |
  *
  * The workspace is the interesting one, because it is a live filesystem handle
  * and looks like the widest member here. It is not: `Workspace.read` and
@@ -199,8 +200,55 @@ export interface GateContext {
    * transcript" from quietly becoming "the gate can read one".
    */
   readonly onEvent: (event: AgentEvent) => void;
+  /**
+   * The app ADL started for this gate, when the pipeline entry declared
+   * `needs_app: true` (ROLE-07, M08 step 8.4).
+   *
+   * **Absent when no app was asked for**, which is every pre-M08 pipeline, and a
+   * gate that needs one is expected to say so rather than assume: the behaviour
+   * tester refuses with a `StageError` naming the key, which is the same
+   * be-strict-about-your-own-requirements move the reviewer makes about citing a
+   * criterion. ADL does not infer `needs_app` from a stage's *name*, because that
+   * would be exactly the branch on the tester's identity HARN-04 forbids.
+   *
+   * ## Why it is here at all, having deliberately not been added in 8.1 or 8.2
+   *
+   * 8.1 added `visible_paths` and added **no** `GateContext` member, because
+   * code-blindness is a property of what is on disk and not something a gate is
+   * asked to honour. 8.2 built the lifecycle and still added none, because a
+   * *command* gate learns its port the same way the app does — `${ADL_PORT}`
+   * interpolated into its own command's `env` — and this file's own discipline is
+   * that vocabulary nothing supplies does not get carried.
+   *
+   * An **agent** gate has no command, and therefore no `env`. It is the first
+   * consumer that genuinely cannot be served by the existing mechanism, which is
+   * why the member lands now rather than earlier or later.
+   *
+   * ## Why a port and not a base URL
+   *
+   * A URL would be a second representation of the same fact, and ADL would then
+   * own a convention (`http://127.0.0.1:…`) that is only right for HTTP apps —
+   * `ExecReadyProbeSchema` exists precisely because an app under test may have no
+   * HTTP surface at all. The port is what ADL allocated; what to do with it is
+   * the gate's business.
+   */
+  readonly app?: AppUnderTestPort;
   /** Fires on budget interrupt, pause, or shutdown — the same signal `ExecSpec.signal` takes. */
   readonly signal?: AbortSignal;
+}
+
+/**
+ * What a gate is told about the app ADL started for it.
+ *
+ * One field, and it is a `number`. Kept as a named interface rather than a bare
+ * `port?: number` on {@link GateContext} for the reason {@link GateDiff} has its
+ * own member list: a nested type is where a member sneaks past a name-based
+ * guard, so having a type at all is what lets {@link APP_UNDER_TEST_PORT_MEMBERS}
+ * govern it.
+ */
+export interface AppUnderTestPort {
+  /** The loopback port ADL allocated and the app was told to bind. */
+  readonly port: number;
 }
 
 /**
@@ -227,6 +275,11 @@ export const GATE_CONTEXT_MEMBERS = Object.freeze([
   'diff',
   'config',
   'agents',
+  // M08 step 8.4, and the first time this list has moved since M07 step 7.1.
+  // 8.1 and 8.2 each deliberately did not move it; see {@link GateContext.app}
+  // for why an agent gate is the first consumer that could not be served without
+  // it, and why the member carries a port rather than a URL.
+  'app',
   'onEvent',
   'signal',
 ] as const) satisfies readonly (keyof GateContext)[];
@@ -253,6 +306,21 @@ export const GATE_DIFF_MEMBERS = Object.freeze([
 export type GateDiffMember = (typeof GATE_DIFF_MEMBERS)[number];
 
 /**
+ * The same list for {@link AppUnderTestPort}, for {@link GATE_DIFF_MEMBERS}'
+ * reason: door 2 reads member *names*, so a nested type is a hole in it. A
+ * `sourceRoot` or a `workspacePath` added to this type would reach a gate through
+ * `ctx.app` while `GATE_CONTEXT_MEMBERS` still read `[…, 'app', …]` — and for the
+ * behaviour tester specifically, a path back to the implementation is the one
+ * thing ROLE-06 exists to withhold.
+ */
+export const APP_UNDER_TEST_PORT_MEMBERS = Object.freeze([
+  'port',
+] as const) satisfies readonly (keyof AppUnderTestPort)[];
+
+export type AppUnderTestPortMember =
+  (typeof APP_UNDER_TEST_PORT_MEMBERS)[number];
+
+/**
  * Compile-time proof that neither list omits a member — door 1 above. A member
  * added to either interface and not listed fails the **build**, not a test,
  * which is what stops the fresh-context assertion from silently narrowing to a
@@ -267,3 +335,10 @@ type _EveryGateDiffMemberListed =
   Exclude<keyof GateDiff, GateDiffMember> extends never ? true : never;
 const _everyGateDiffMemberListed: _EveryGateDiffMemberListed = true;
 void _everyGateDiffMemberListed;
+
+type _EveryAppMemberListed =
+  Exclude<keyof AppUnderTestPort, AppUnderTestPortMember> extends never
+    ? true
+    : never;
+const _everyAppMemberListed: _EveryAppMemberListed = true;
+void _everyAppMemberListed;

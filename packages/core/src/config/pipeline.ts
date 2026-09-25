@@ -25,6 +25,7 @@ export const BUILT_IN_STAGE_IDS = Object.freeze([
   'develop',
   'review',
   'test',
+  'behaviour',
 ] as const);
 export type BuiltInStageId = (typeof BUILT_IN_STAGE_IDS)[number];
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  APP_UNDER_TEST_PORT_MEMBERS,
   GATE_CONTEXT_MEMBERS,
   GATE_DIFF_MEMBERS,
 } from '../../src/stage/index.js';
@@ -115,9 +116,14 @@ describe('the vocabulary has teeth', () => {
 
 describe('GateContext cannot name the developer’s session or transcript (ROLE-03)', () => {
   it('declares not one forbidden member', () => {
-    const offenders = [...GATE_CONTEXT_MEMBERS, ...GATE_DIFF_MEMBERS].filter(
-      isForbiddenContext,
-    );
+    const offenders = [
+      ...GATE_CONTEXT_MEMBERS,
+      ...GATE_DIFF_MEMBERS,
+      // M08 step 8.4's nested type, scanned for the same reason `GateDiff`'s
+      // members are: door 2 reads member NAMES, so a type reached through
+      // `ctx.app` is a hole in it unless its own list is here too.
+      ...APP_UNDER_TEST_PORT_MEMBERS,
+    ].filter(isForbiddenContext);
 
     expect(
       offenders,
@@ -142,8 +148,9 @@ describe('GateContext cannot name the developer’s session or transcript (ROLE-
     // `Exclude<keyof T, never>` is only non-empty, not *complete*, and the
     // `satisfies` clause permits a SHORT list. The counts are checked here
     // instead, from the outside.
-    expect(GATE_CONTEXT_MEMBERS.length).toBeGreaterThanOrEqual(8);
+    expect(GATE_CONTEXT_MEMBERS.length).toBeGreaterThanOrEqual(9);
     expect(GATE_DIFF_MEMBERS.length).toBeGreaterThanOrEqual(3);
+    expect(APP_UNDER_TEST_PORT_MEMBERS.length).toBeGreaterThanOrEqual(1);
   });
 
   it('still declares the three sources M05 AC3 permits, so the list is the real context', () => {
@@ -170,5 +177,19 @@ describe('GateContext cannot name the developer’s session or transcript (ROLE-
       expect.arrayContaining(['config', 'agents']),
     );
     expect(['config', 'agents'].filter(isForbiddenContext)).toEqual([]);
+  });
+
+  it('declares the member M08 step 8.4 added, carrying a port and nothing else', () => {
+    // Named specifically for the reason the 7.1 case above is: the guard was
+    // written before this member existed, and a list can grow without anyone
+    // re-reading what the guard covers.
+    //
+    // The second half is the one that matters for ROLE-06. `AppUnderTestPort` is
+    // handed to a gate whose workspace is deliberately blind to the
+    // implementation, so a `sourceRoot`, a `workspacePath` or a `repoRoot` on it
+    // would hand back exactly the door the composed workspace closes — and it
+    // would arrive through a member the outer list already blesses by name.
+    expect([...GATE_CONTEXT_MEMBERS]).toEqual(expect.arrayContaining(['app']));
+    expect([...APP_UNDER_TEST_PORT_MEMBERS]).toEqual(['port']);
   });
 });

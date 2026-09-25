@@ -76,8 +76,8 @@ request; the record of why is in the milestone file.
 been refined into ten steps (8.0–8.9) after a pre-implementation audit, the way M06 and M07
 were opened; the audit found ten things, four of which changed what the steps are. See
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
-**8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice) and 8.3 (the
-failure-mode map) are done.**
+**8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice), 8.3 (the
+failure-mode map) and 8.4 (the tester agent) are done.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -87,7 +87,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.3 done; 8.4–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.4 done; 8.5–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -793,6 +793,53 @@ semantics were kept and the warning went into the lifecycle rather than at boot,
 boot there is no gate yet and therefore no number to compare against. `D-8-03-1` opened —
 `gracefulShutdown` destroys the database without awaiting an in-flight dispatch, surfaced as an
 intermittent unhandled rejection by the first test to stop a daemon mid-retry; owner M09.
+
+**8.4 is done (2026-09-25): the tester agent — ROLE-05, and the first time all of M08 runs
+together.** `packages/manager/test/scenario/behaviour-tester.test.ts` has a real daemon build
+and start a real app on an allocated port (8.2), compose a `.git`-less copy of `tests/**`
+outside every repository (8.1), and dispatch an agent into it as the built-in `behaviour`
+stage (8.4). The replay double reads the base URL out of its own instructions, **really
+fetches it**, walks its own root, and only emits a `pass` if the app answered — so
+reachability and code-blindness are measured from opposite ends at once, and neither comes
+from ADL's own bookkeeping.
+
+**Finding 8's build-failure claim was observed rather than assumed.** Adding `behaviour` to
+`BUILT_IN_STAGE_IDS` before declaring anything produced six compile errors across
+`BUILT_IN_COST_CLASSES` and `BUILT_IN_JUDGEMENT_KINDS`. The tester declares `expensive` — so
+`on_send_back` defaults to `stop` and an earlier gate's send-back does not pay to boot an app
+to judge code already known to need changes — and **`deterministic`**, which is the sharp one:
+`opinion` would let LOOP-09 demote a genuine round-2 regression to a follow-up and ship a
+broken feature. `deterministic` is only honest because 8.6 commits the surviving tests, so a
+later round _re-runs_ them and a re-run failure has a stable fingerprint. That is what makes
+8.6 a correctness requirement of the loop rather than a nicety.
+
+**`GateContext` gained its first new member since 7.1 — `app`, carrying a port.** 8.1 and 8.2
+each deliberately added none; a _command_ gate learns its port from `${ADL_PORT}` in its own
+interpolated `env`, and an **agent** gate has no command, so it is the first consumer the
+existing mechanism cannot serve. A port and not a URL, because a URL would make ADL own an
+`http://` convention that is wrong for an app with no HTTP surface.
+
+**HARN-04 is now asserted as code, not only by removal.** 7.9's proof — delete the reviewer
+from `adl.yml` and it leaves the pipeline — cannot see a branch that hands the built-in tester
+a richer context than a third party's gate, because the gate it removes is the one that would
+notice. `harn-04-no-privileged-gate.test.ts` reads `stage-runner.ts` and catches the exact
+harmless-looking edit: one composed context, handed to the agent implementation and the
+command gate alike.
+
+**And 8.4 found a real regression, which is the most useful thing it produced.** Adding
+`behaviour → tester` made two lookups in `resolveStageRole` collide for the first time, and
+the pre-existing order resolved it the wrong way round — the agent-role lookup ran before the
+`source: 'command'` check, so four existing scenario tests whose third-party gate is _named_
+`behaviour` were dispatched into the built-in tester instead of running their own program. The
+function's own docblock had predicted the collision and picked the wrong winner. An entry's
+declaration of what it runs beats ADL's name for one of its built-ins, which is the order
+`resolvePipeline` already uses. Guarded now by a source-order assertion, watched failing.
+
+**8.1's carried disclosure is decided.** `diff.changedPaths` stays on the contract —
+withholding it for the tester alone would be a special case — and the **prompt does not use
+it**, because a tester told which module changed writes tests about a module. A test asserts
+the absence. And the tester **refuses to run without an app**, naming `needs_app: true`,
+because ADL does not infer it from a stage's name.
 
 **And a correction to this file's own claim.** `D-7-05-1` is **intermittently** red on
 `main`, not deterministically. Telling a suite failure apart from a regression required

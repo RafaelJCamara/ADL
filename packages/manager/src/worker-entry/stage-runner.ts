@@ -107,6 +107,7 @@ import {
 import { buildGateContext } from './gate-context.js';
 import { runCommandGate } from './gates/command-gate.js';
 import { runReviewerGate } from './gates/reviewer-gate.js';
+import { runTesterGate } from './gates/tester-gate.js';
 import { loadSpecFromWorktree } from './spec-from-worktree.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
 import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
@@ -470,7 +471,7 @@ function withSelectedModel(
  */
 const AGENT_GATE_IMPLEMENTATIONS: Readonly<
   Partial<Record<AgentRole, (gate: GateContext) => Promise<StageRunnerVerdict>>>
-> = Object.freeze({ reviewer: runReviewerGate });
+> = Object.freeze({ reviewer: runReviewerGate, tester: runTesterGate });
 
 const GATE_IMPLEMENTATIONS: Readonly<Record<string, 'command'>> = Object.freeze(
   { test: 'command' },
@@ -508,7 +509,17 @@ const AGENT_ROLE_PRODUCERS = Object.freeze({
   // classification, the per-role model read and the dispatch all followed from
   // changing `null` to a stage id, with nothing else edited.
   reviewer: 'review',
-  tester: null,
+  // M08 step 8.4: the tester's producer, and the same one-entry change 6.10 was
+  // built for and 7.4 spent — `AGENT_GATE_ROLES` is derived from this map, so the
+  // stage classification, the per-role model read and the dispatch all follow
+  // from `null` becoming a stage id, with nothing else edited.
+  //
+  // `behaviour` and not `test`: `GATE_IMPLEMENTATIONS` already holds `test` for
+  // the built-in command gate, and `resolvePipeline` refuses a duplicate stage id
+  // because that id is what verdicts, `stage_attempts` and coverage rows join on.
+  // `behaviour` is also the honest name — it does not collide with the verdict
+  // vocabulary the way `verify` would.
+  tester: 'behaviour',
 }) satisfies Record<AgentRole, string | null>;
 
 /**
@@ -576,22 +587,40 @@ type StageRole =
  * than looping forever on a stage that will never exist in this build — and
  * the message names the milestone that supplies it.
  *
- * The agent lookup runs first because it is the more specific claim: a stage
- * id that names an agent role is an agent stage, whatever else it might also
- * appear in. Today the two lookups cannot collide — `AGENT_GATE_ROLES` is
- * empty — but the order is the one that stays correct when M07 fills it.
+ * **The `source: 'command'` check runs first**, and the reason is a bug M08 step
+ * 8.4 walked straight into — see the comment on that line. The original order put
+ * the agent lookup first, on the grounds that naming an agent role is the more
+ * specific claim, and noted that the two could not yet collide. They collide the
+ * moment a second agent role has a stage id, and the entry's own declaration of
+ * what it runs is the claim that has to win.
  */
 function resolveStageRole(assign: AssignMessage): StageRole {
   if (assign.stageIndex === 0) return { kind: 'agent', role: 'developer' };
-  const agentRole = AGENT_GATE_ROLES.get(assign.stageId);
-  if (agentRole !== undefined) return { kind: 'agent', role: agentRole };
-  // HARN-02 (M07 step 7.3): an entry carrying its own program is a command
-  // gate whatever it is called. Checked before the built-in map because it is
-  // the more specific claim — this entry said what it runs, where a built-in
-  // id only says which of ADL's own implementations to look up.
+  // HARN-02 (M07 step 7.3): an entry carrying its own program is a command gate
+  // **whatever it is called**, and that claim beats every lookup below it —
+  // including the agent-role one.
+  //
+  // **This order changed in M08 step 8.4, and the collision it now resolves was
+  // predicted here and got resolved the wrong way round.** Until 8.4,
+  // `AGENT_GATE_ROLES` held only `review → reviewer`, so the two lookups could
+  // not collide and the agent lookup ran first on the grounds that naming a role
+  // is "the more specific claim". Adding `behaviour → tester` made them collide
+  // immediately: four existing scenario tests use `harness: 'behaviour'` with
+  // their own `with.command` — as an arbitrary third-party gate name, which is
+  // exactly what HARN-02 promises is allowed — and all four were suddenly
+  // dispatched into the built-in tester agent instead of running their own
+  // program.
+  //
+  // The entry's own declaration is the more specific claim, not ADL's name for
+  // one of its built-ins: `declaresCommand` is what `resolvePipeline` already
+  // uses to decide `source: 'command'`, and it checks the `with:` block *before*
+  // the registry for the same reason. A third party must be able to name their
+  // gate anything without ADL quietly running something else.
   if (resolvedStageFor(assign)?.source === 'command') {
     return { kind: 'command-gate' };
   }
+  const agentRole = AGENT_GATE_ROLES.get(assign.stageId);
+  if (agentRole !== undefined) return { kind: 'agent', role: agentRole };
   if (GATE_IMPLEMENTATIONS[assign.stageId] === 'command') {
     return { kind: 'command-gate' };
   }
@@ -922,6 +951,22 @@ export function createProductionStageRunner(
         const runGate = async (
           app: AppUnderTest | undefined,
         ): Promise<StageRunnerVerdict> => {
+          // ROLE-07 (M08 step 8.4): `GateContext.app`, added to the context the
+          // narrowing already produced rather than built into it.
+          //
+          // `buildGateContext` runs BEFORE `withAppUnderTest`, because the
+          // lifecycle needs the gate command's own timeout (D-8-02-2) and
+          // resolving that needs the context. So the port cannot be a
+          // `buildGateContext` input without making the two circular. One spread,
+          // at the one place both are in scope, is the whole of it.
+          //
+          // Applied to EVERY gate kind, not only the agent one. A third party's
+          // command gate declaring `needs_app` reads `ctx.app` exactly as the
+          // built-in tester does — HARN-04 as code, in the one line where a
+          // branch would have been easiest to write.
+          const gateForRun: GateContext =
+            app === undefined ? built.gate : { ...built.gate, app };
+
           if (role.kind === 'agent') {
             // ROLE-02 (M07 step 7.4). A role with a producer but no
             // implementation is refused by name rather than dispatched into
@@ -934,7 +979,7 @@ export function createProductionStageRunner(
                   'build ships no implementation for it — the behaviour tester is M08.',
               );
             }
-            return await implementation(built.gate);
+            return await implementation(gateForRun);
           }
 
           const gateCommand = resolvedGateCommand;
@@ -981,7 +1026,7 @@ export function createProductionStageRunner(
             }
           }
 
-          return await runCommandGate(built.gate, {
+          return await runCommandGate(gateForRun, {
             command,
             path: process.env['PATH'] ?? '',
             ...(gateCommand.emits !== undefined

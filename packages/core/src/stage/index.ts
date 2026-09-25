@@ -156,6 +156,9 @@ export type {
 // it was assembled from, are gone; `./stage.ts` and `./gate-context.ts` both
 // carry the reasoning, and `DECISIONS.md` records the decision.
 export {
+  APP_UNDER_TEST_PORT_MEMBERS,
+  type AppUnderTestPort,
+  type AppUnderTestPortMember,
   GATE_CONTEXT_MEMBERS,
   type GateContextMember,
   GATE_DIFF_MEMBERS,

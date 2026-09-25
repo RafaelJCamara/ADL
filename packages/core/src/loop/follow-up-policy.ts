@@ -105,6 +105,30 @@ const BUILT_IN_JUDGEMENT_KINDS = Object.freeze({
   develop: 'deterministic',
   review: 'opinion',
   test: 'deterministic',
+  // M08 step 8.4, and the sharpest of the four — M08's audit finding 8 is about
+  // this one entry.
+  //
+  // The tester is an agent, which points at `opinion`; its verdict comes from
+  // **executed tests**, which points at `deterministic`. Both choices are
+  // dangerous in opposite directions and neither is cosmetic:
+  //
+  // - `opinion` lets LOOP-09 demote a finding first raised in round 2 to a
+  //   follow-up. For a reviewer that is right — a second look yields second
+  //   thoughts. For a tester it means a **genuine round-2 regression**, caught
+  //   by a test that ran and failed, is filed as a note and the feature ships
+  //   broken.
+  // - `deterministic` keeps every round's findings load-bearing, but it is a
+  //   claim about reproducibility. A tester that invented fresh tests every
+  //   round would produce a fresh fingerprint every round, so
+  //   `limits.repeat_finding_threshold`'s stalemate detection would never fire
+  //   and the feature would loop to `max_rounds`.
+  //
+  // `deterministic` is correct, and **M08 step 8.6 is what makes it honest**:
+  // the tester's surviving tests are committed, so a later round RE-RUNS them
+  // rather than re-inventing them, and a re-run test's failure has a stable
+  // fingerprint. That is why 8.6 is a correctness requirement of the loop
+  // rather than the product nicety the step sketch called it.
+  behaviour: 'deterministic',
 }) satisfies Record<BuiltInStageId, JudgementKind>;
 
 /** Compile-time proof the map above covers `BUILT_IN_STAGE_IDS`. */

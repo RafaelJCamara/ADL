@@ -24,43 +24,33 @@ as of the last commit and says exactly where things stand.
 
 CONTEXT: You were asked to take every remaining item up to and including M10, build
 a work queue, and implement them one by one. M06 and M07 are both closed and
-code-complete. Nineteen items are done and committed to main: 6.10, 6.11, the M06
+code-complete. Twenty items are done and committed to main: 6.10, 6.11, the M06
 close-out, an M07 step-sketch refinement, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, the 7.7
-deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, 8.1, 8.2, and 8.3.
+deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, 8.1, 8.2, 8.3,
+and 8.4.
 
-REMAINING QUEUE — 22 items, in order. Rebuild this as a task list, then work
+REMAINING QUEUE — 21 items, in order. Rebuild this as a task list, then work
 through it one at a time:
 
-  8.4 — the tester agent (ROLE-05)  <- NEXT
-  8.5–8.9, M08 close-out
+  8.5 — outcomes from structured runner output; zero tests is not a pass  <- NEXT
+  8.6–8.9, M08 close-out
   M09 step refinement, 9.1–9.8, M09 close-out
   M10 step refinement, 10.1–10.6, M10 close-out
 
 M08's sketch HAS been refined — ten steps, 8.0 through 8.9, with the audit's ten
-findings in the milestone file's own header. 8.0 through 8.3 are done. Before
-starting 8.4, read the milestone's notes for 8.1 and 8.2, because 8.4 inherits two
-things from them:
+findings in the milestone file's own header. 8.0 through 8.4 are done. Before
+starting 8.5, read `packages/manager/src/worker-entry/gates/tester-gate.ts`'s
+closing comment: 8.4 deliberately did NOT give the tester the reviewer's
+must-cite-a-criterion rule, and named 8.5 as the reason. "The suite ran and passed"
+and "AC-3 was verified" are different claims, and enforcing citation before a
+tester's coverage claim has evidence behind it would reward it for asserting
+coverage it cannot support. 8.5 is where that evidence comes from.
 
-  - 8.1's carried finding: the tester still receives `diff.changedPaths`, which
-    NAMES the implementation files without containing them. 8.4 is told to decide
-    about that bounded disclosure deliberately rather than inherit it.
-  - 8.2's decision that a gate learns the port through `${ADL_PORT}` in its own
-    command's `env`, and NOT through a `GateContext` member. An agent gate has no
-    command, so 8.4 is the first consumer that actually needs one — adding it means
-    moving `GATE_CONTEXT_MEMBERS`, which 8.1 deliberately did not, so it is a
-    decision to make out loud rather than a line to slip in.
-
-Finding 8 is the sharp part of 8.4: `BUILT_IN_COST_CLASSES` and
-`BUILT_IN_JUDGEMENT_KINDS` each carry an `Exclude<>` assertion, so the fourth
-built-in FAILS THE BUILD until it declares both. The milestone recommends the stage
-id `behaviour` (`test` is taken by `GATE_IMPLEMENTATIONS`), cost class `expensive`,
-and judgement kind `deterministic` — with 8.6's committed tests as what makes
-`deterministic` honest. M09 and M10 still ship as
-step *sketches* and each says "refine into small steps when this milestone starts"
-— do that refinement as its own docs commit, after a pre-implementation audit, the
-way M06 and M07 were opened. The audits have been high-value: M07's found seven
-things, two of which changed what the steps were, and M08's found ten, four of
-which did.
+8.5's own open decision, from the milestone: whether structured runner output is a
+third `emits:` mode (a runner-report parser) or the existing `verdict` mode plus a
+declared adapter. Say which in the step. A parser that lands in `@adl/core` must
+stay I/O-free. Must prove: a runner that executed ZERO tests reports
+`inconclusive`, and is distinguishable from a suite that ran and passed.
 
 WORKING RULES (also in .claude/CLAUDE.md — follow them exactly):
 - One step, one commit, conventional-commit scoped: feat(08-01): …
