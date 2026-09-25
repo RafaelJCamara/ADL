@@ -190,6 +190,7 @@ export function transition(
         case 'gate_passed':
         case 'gate_deferred':
         case 'gate_follow_ups':
+        case 'gate_inconclusive':
           // EXEC-07 in one line: a gate passing moves an index, and the state
           // stays `gating`. This edge is identical for a pipeline of three
           // stages and a pipeline of thirty.
@@ -206,9 +207,14 @@ export function transition(
           //
           // `gate_follow_ups` shares the same edge for the same reason (M07
           // step 7.8): a gate whose findings were all raised for the first time
-          // after its own first look moved one index and spent no round. Three
-          // kinds, one edge — they differ in what they mean to a reader, never
-          // in what they do to the state machine.
+          // after its own first look moved one index and spent no round.
+          //
+          // `gate_inconclusive` is the fourth (M08 step 8.5): a gate that could
+          // not conclude does not stop the pipeline, so it moves one index and
+          // spends no round like the others — and until it existed that move
+          // was written down as `gate_passed`, for a gate that verified
+          // nothing. Four kinds, one edge — they differ in what they mean to a
+          // reader, never in what they do to the state machine.
           if (ctx.currentStageIndex + 1 > ctx.pipelineLength) {
             return invalid(
               state,

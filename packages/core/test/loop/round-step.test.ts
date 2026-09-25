@@ -287,6 +287,27 @@ describe('planRoundStep — gates', () => {
     expect(result.kind).toBe('advance');
   });
 
+  // M08 step 8.5. The advance above used to be recorded as `gate_passed` —
+  // "this gate was satisfied" in the audit trail and the pull request — for a
+  // gate that concluded nothing. The negative assertion is the one that
+  // matters: the positive one alone would stay green if both were emitted.
+  it('an inconclusive that advances is recorded as gate_inconclusive, never as gate_passed', () => {
+    const result = step({
+      stageIndex: 1,
+      stageId: 'behaviour',
+      completion: gate(INCONCLUSIVE),
+    });
+
+    expect(result.kind).toBe('advance');
+    expect(result.events).toEqual([
+      { t: 'gate_inconclusive', stageId: 'behaviour' },
+    ]);
+    expect(
+      result.events.some((event) => event.t === 'gate_passed'),
+      'an inconclusive gate was written into the audit trail as passed',
+    ).toBe(false);
+  });
+
   it('an inconclusive carried to the end with nothing actionable escalates as unverified', () => {
     const result = step({
       stageIndex: 3,

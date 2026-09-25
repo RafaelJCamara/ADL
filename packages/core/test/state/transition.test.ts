@@ -39,6 +39,7 @@ const SAMPLE_EVENTS: {
     stageId: 'code_review',
     findingCount: 2,
   },
+  gate_inconclusive: { t: 'gate_inconclusive', stageId: 'behaviour' },
   all_gates_passed: { t: 'all_gates_passed' },
   send_back: { t: 'send_back', stageId: 'code_review', findingCount: 2 },
   cr_opened: {
@@ -184,6 +185,7 @@ describe('the feature lifecycle vocabulary', () => {
       'gate_passed',
       'gate_deferred',
       'gate_follow_ups',
+      'gate_inconclusive',
       'all_gates_passed',
       'send_back',
       'cr_opened',
@@ -258,10 +260,10 @@ describe('transition() is total across every state-by-event pair', () => {
     );
     // The literal is the vacuity control for the line above it: a
     // `FEATURE_STATES` or `FEATURE_EVENT_KINDS` emptied by a bad merge would
-    // make the derived assertion pass over nothing. 11 states x 17 event kinds
-    // — 17 since M07 step 7.8 added `gate_follow_ups`, up from 16, which 7.2
-    // had raised from 15.
-    expect(outcomes).toHaveLength(187);
+    // make the derived assertion pass over nothing. 11 states x 18 event kinds
+    // — 18 since M08 step 8.5 added `gate_inconclusive`, up from the 17 M07
+    // step 7.8 reached with `gate_follow_ups`, which 7.2 had raised from 15.
+    expect(outcomes).toHaveLength(198);
   });
 
   it('never throws, for any pair', () => {
@@ -361,6 +363,25 @@ describe('every edge the architecture diagram draws', () => {
     expect(result.next).toBe('gating');
     expect(result.counters.currentStageIndex).toBe(1);
     expect(result.counters.round).toBe(0);
+  });
+
+  /**
+   * M08 step 8.5: a gate that could not conclude moves the index exactly as a
+   * passing one does — the pipeline does not stop on `inconclusive` — and is
+   * a different event only so that the audit trail stops calling it "passed".
+   */
+  it('gating --gate_inconclusive--> gating, the same edge as gate_passed and no round', () => {
+    const ctx = ctxWith({ currentStageIndex: 1 });
+    const inconclusive = applied(
+      transition('gating', SAMPLE_EVENTS.gate_inconclusive, ctx),
+    );
+    const passed = applied(
+      transition('gating', SAMPLE_EVENTS.gate_passed, ctx),
+    );
+
+    expect(inconclusive.next).toBe('gating');
+    expect(inconclusive.counters).toEqual(passed.counters);
+    expect(inconclusive.counters.round).toBe(0);
   });
 
   it('gating --all_gates_passed--> publishing without spending a round', () => {

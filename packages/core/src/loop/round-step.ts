@@ -355,6 +355,13 @@ export function planRoundStep(input: RoundStepInput): RoundStep {
   // that says so. It is emitted INSTEAD of `gate_passed` — a demoted verdict is
   // a `warn` by the time it reaches here, and `gate_passed` is what the pull
   // request reads as "satisfied".
+  //
+  // M08 step 8.5 adds the fourth. An `inconclusive` does not stop the pipeline
+  // (`stopsPipeline` above), so it advances too — and before this, it advanced
+  // as `gate_passed`, which wrote "satisfied" into the audit trail for a gate
+  // that verified nothing. A behaviour suite that executed zero tests is exactly
+  // that verdict (ROLE-08). It cannot also carry follow-ups: an `inconclusive`
+  // has no findings to demote.
   const advanced: FeatureEvent =
     completion.verdict.outcome === 'send_back'
       ? {
@@ -362,9 +369,11 @@ export function planRoundStep(input: RoundStepInput): RoundStep {
           stageId,
           findingCount: completion.verdict.findings.length,
         }
-      : followUps[0] !== undefined
-        ? followUps[0]
-        : { t: 'gate_passed', stageId };
+      : completion.verdict.outcome === 'inconclusive'
+        ? { t: 'gate_inconclusive', stageId }
+        : followUps[0] !== undefined
+          ? followUps[0]
+          : { t: 'gate_passed', stageId };
 
   return {
     kind: 'advance',

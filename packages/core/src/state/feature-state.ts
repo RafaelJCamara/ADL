@@ -184,6 +184,24 @@ export type FeatureEvent =
       readonly stageId: string;
       readonly findingCount: number;
     }
+  /**
+   * `gating → gating`. A gate ran and could not conclude — an `inconclusive`
+   * verdict — and the pipeline moved on (M08 step 8.5).
+   *
+   * The pipeline does not stop on `inconclusive` (`round-step.ts`'s
+   * `stopsPipeline` argues why), so the stage index advances exactly as it does
+   * for the other three; the round then ends `unverified` in `aggregate` unless
+   * a later gate sends the work back. Until this kind existed, that advance was
+   * recorded as `gate_passed` — which is what the pull request and the audit
+   * trail read as "this gate was satisfied", written for a gate that verified
+   * nothing. A behaviour suite that executed zero tests (ROLE-08) is the case
+   * that makes it routine rather than rare. Four events with one honest meaning
+   * each.
+   *
+   * It carries no `findingCount` because an `inconclusive` verdict carries no
+   * findings; its `reason` is on the verdict row and in the round's outcome.
+   */
+  | { readonly t: 'gate_inconclusive'; readonly stageId: string }
   /** `gating → publishing`. The whole pipeline is satisfied. */
   | { readonly t: 'all_gates_passed' }
   /** `gating → developing`. The only edge that consumes a round. */
@@ -218,6 +236,7 @@ export const FEATURE_EVENT_KINDS = Object.freeze([
   'gate_passed',
   'gate_deferred',
   'gate_follow_ups',
+  'gate_inconclusive',
   'all_gates_passed',
   'send_back',
   'cr_opened',
