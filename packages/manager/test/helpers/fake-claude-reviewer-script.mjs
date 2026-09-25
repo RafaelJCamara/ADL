@@ -29,6 +29,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const argv = process.argv.slice(2);
 
@@ -69,6 +70,9 @@ const isReviewer = (flag('--append-system-prompt') ?? '').startsWith(
 const cwd = process.cwd();
 
 if (!isReviewer) {
+  // Before any write: never in this repository's own checkout (see
+  // `refuse-source-checkout.mjs` for the incident that made this necessary).
+  refuseToCommitInSourceCheckout(cwd, 'fake-claude-reviewer-script');
   appendFileSync(
     `${cwd}/agent-output.txt`,
     `written by the fake claude double (pid ${process.pid}, ${process.hrtime.bigint()})\n`,

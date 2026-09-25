@@ -14,6 +14,7 @@
 // eslint-disable-next-line no-restricted-imports -- see the note above: this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
+import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const cwd = process.cwd();
 
@@ -68,6 +69,9 @@ const reportedModel =
 // which is exactly what `test/scenario/command-gate-loop.test.ts` reproduced
 // the first time it ran. A real agent handed a send-back makes a different
 // change; this line is the double's stand-in for that.
+// Before any write: never in this repository's own checkout (see
+// `refuse-source-checkout.mjs` for the incident that made this necessary).
+refuseToCommitInSourceCheckout(cwd, 'fake-claude-success');
 appendFileSync(
   `${cwd}/agent-output.txt`,
   `written by the fake claude double (pid ${process.pid}, ${process.hrtime.bigint()})\n`,

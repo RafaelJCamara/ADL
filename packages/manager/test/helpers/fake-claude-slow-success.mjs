@@ -14,6 +14,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const cwd = process.cwd();
 const delayMs = Number(process.env['ADL_TRACER_STAGE_DELAY_MS'] ?? '150');
@@ -28,6 +29,9 @@ process.stdout.write(
 );
 await delay(delayMs);
 
+// Before any write: never in this repository's own checkout (see
+// `refuse-source-checkout.mjs` for the incident that made this necessary).
+refuseToCommitInSourceCheckout(cwd, 'fake-claude-slow-success');
 writeFileSync(`${cwd}/agent-output.txt`, 'written by the fake claude double\n');
 execFileSync('git', ['add', 'agent-output.txt'], { cwd });
 execFileSync('git', ['commit', '-m', 'agent: implement the feature'], { cwd });

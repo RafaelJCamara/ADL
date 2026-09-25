@@ -24,6 +24,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
+import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const argv = process.argv.slice(2);
 
@@ -64,6 +65,9 @@ const isTester = (flag('--append-system-prompt') ?? '').startsWith(
 const cwd = process.cwd();
 
 if (!isTester) {
+  // Before any write: never in this repository's own checkout (see
+  // `refuse-source-checkout.mjs` for the incident that made this necessary).
+  refuseToCommitInSourceCheckout(cwd, 'fake-claude-tester');
   appendFileSync(
     `${cwd}/agent-output.txt`,
     `written by the fake claude double (pid ${process.pid})\n`,

@@ -10,9 +10,13 @@
 // eslint-disable-next-line no-restricted-imports -- see the note above: this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
+import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const cwd = process.cwd();
 
+// Before any write: never in this repository's own checkout (see
+// `refuse-source-checkout.mjs` for the incident that made this necessary).
+refuseToCommitInSourceCheckout(cwd, 'fake-claude-touches-adl-yml');
 appendFileSync(
   `${cwd}/agent-output.txt`,
   `written by the fake claude double (pid ${process.pid}, ${process.hrtime.bigint()})\n`,

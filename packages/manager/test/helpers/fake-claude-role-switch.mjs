@@ -36,6 +36,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
+import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const argv = process.argv.slice(2);
 
@@ -84,6 +85,9 @@ const isReviewer = (flag('--append-system-prompt') ?? '').startsWith(
 const cwd = process.cwd();
 
 if (!isReviewer) {
+  // Before any write: never in this repository's own checkout (see
+  // `refuse-source-checkout.mjs` for the incident that made this necessary).
+  refuseToCommitInSourceCheckout(cwd, 'fake-claude-role-switch');
   // ── Developer ───────────────────────────────────────────────────────────
   // The behaviour of `fake-claude-success.mjs`: append a DISTINCT line (see
   // that file's header for why a fixed one breaks round 2), stage it, commit.
