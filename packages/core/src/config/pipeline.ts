@@ -64,6 +64,19 @@ export interface ResolvedStage {
    * view the gate is *given* is declared here rather than inside opaque `with:`.
    */
   readonly visiblePaths?: readonly string[] | undefined;
+  /**
+   * Whether ADL owns the app's lifecycle around this gate (ROLE-07, M08 step
+   * 8.2).
+   *
+   * `undefined` and `false` mean the same thing here, unlike
+   * {@link ResolvedStage.visiblePaths} where the absent and empty cases are
+   * deliberately different. There is no third state to preserve: a gate either
+   * needs a running app or it does not, and `adl.yml`'s `commands.build` /
+   * `start` / `teardown` are required by schema whether or not any gate declares
+   * this, so there is no "declared but unconfigured" case for an absent value to
+   * carry.
+   */
+  readonly needsApp?: boolean | undefined;
 }
 
 /**
@@ -117,6 +130,7 @@ export type PipelineEntryInput =
       readonly with?: Readonly<Record<string, unknown>> | undefined;
       readonly on_send_back?: OnSendBack | undefined;
       readonly visible_paths?: readonly string[] | undefined;
+      readonly needs_app?: boolean | undefined;
     }
   | { readonly group: readonly unknown[] };
 
@@ -247,6 +261,13 @@ export function resolvePipeline(
       // is a real root to contain the answer to (ROLE-06, M08 step 8.1).
       ...(typeof entry !== 'string' && entry.visible_paths !== undefined
         ? { visiblePaths: entry.visible_paths }
+        : {}),
+      // Carried the same way, and for the same reason: whether `commands.start`
+      // can actually be started is a question about a process table, and this
+      // module has never touched one. `worker-entry/app/lifecycle.ts` answers it
+      // where there is a real workspace to answer it in (ROLE-07, M08 step 8.2).
+      ...(typeof entry !== 'string' && entry.needs_app !== undefined
+        ? { needsApp: entry.needs_app }
         : {}),
     });
   }

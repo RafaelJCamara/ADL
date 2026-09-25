@@ -143,6 +143,41 @@ read its own acceptance criteria" the same knob as "the tester's directory conta
 file".
 (M08 steps 8.0–8.1, ROLE-06, HARN-04.)
 
+**ADL owns the app's lifecycle, and it needs no new port method and no new launcher — an
+un-awaited `Workspace.exec` plus an `AbortController` _is_ the handle.**
+`ROLE-07` needs `commands.build` → `commands.start` → a readiness probe → `commands.teardown`,
+and M08's audit concluded that `Workspace.exec` could not express a long-lived child: `run()`
+awaits the child and returns an `ExecResult`, with no handle, no detach and no "running"
+state. That left two uncomfortable options — a new `Workspace` method, one-way because
+`@adl/plugin-sdk` republishes the port (D-01) and obliging a future container backend to model
+a running process; or a third sanctioned launcher inside `@adl/workspace`, which the contract
+suite pins at exactly two. **A throwaway probe against the installed execa showed neither is
+needed** (convention 15): a server started through the published `exec` is reachable while the
+promise is pending, its log chunks arrive live — which is what makes the `log` probe kind
+possible at all — and `abort()` reaps the whole tree including a grandchild. So the lifecycle
+is composition over the interface that already exists, the port is untouched, and the
+launcher count stays at two.
+**The probe also found a platform split worth carrying:** on win32 a cancelled child reports
+`exitCode: 1` with no signal, which is byte-for-byte what a crashed app returns — so
+`command-gate.ts`'s "`exitCode === null` means killed" reading is false there. The lifecycle
+never infers it: it holds the controller, so whether it reaped is a fact it knows.
+**A gate DECLARES that it needs an app**, `needs_app: true` on the pipeline entry, on
+`visible_paths`' precedent — a key ADL itself reads, not opaque `with:` data. Absent is every
+pre-M08 pipeline byte-for-byte, which is what keeps the existing fixtures' `start: {argv:
+['true']}` inert instead of reading as an app that died instantly; and a third party's gate
+declares the identical key, so there is no branch anywhere on the tester's name (HARN-04).
+**How a gate learns the port is the same mechanism the app learns it by** — `${ADL_PORT}`
+interpolated into its own command's `env` — rather than a new `GateContext` member. Vocabulary
+nothing supplies does not get carried; step 8.4's tester agent is the first consumer that
+would need one.
+**ADL reaps before `commands.teardown`, not after**, and the watched-failing pass is what
+settled the order: with teardown first, deleting the abort changed nothing observable, because
+the worker exits at the end of a dispatch and execa's own `cleanup` kills the subprocess then.
+Reaping first is also the right semantics — ADL reclaims the tree it started, then hands a
+repository-supplied teardown command a world that is already stopped — and it lets that
+command _witness_ the reap from outside ADL's bookkeeping.
+(M08 step 8.2, ROLE-07.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.

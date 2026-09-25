@@ -27,6 +27,11 @@ import {
   describeWorkspaceContract,
   type ContractSubject,
 } from '../helpers/contract.js';
+import {
+  callsCwdGuard,
+  importStatements,
+  withoutComments,
+} from '../helpers/source-scan.js';
 import { openTempRepo, type OpenedTempRepo } from '../helpers/temp-repo.js';
 
 /**
@@ -153,17 +158,14 @@ const BACKEND_FACTORIES = [
  * them — and this guard measures *imports*, which is the thing that creates a
  * second construction site.
  */
-function importStatements(source: string): readonly string[] {
-  // Strip comments first: this file's own prose names both factories, and a
-  // guard that reported on a docblock would be untrustworthy in both directions.
-  const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^[ \t]*\/\/.*$/gm, '');
-
-  return [
-    ...code.matchAll(/^[ \t]*import\s[\s\S]*?from\s*['"][^'"]+['"]/gm),
-  ].map((match) => match[0]);
-}
+// `importStatements`, `withoutComments` and `callsCwdGuard` all live in
+// `../helpers/source-scan.ts` as of M08 step 8.2. They were inline here, and the
+// comment stripper was a pair of regexes that ran the BLOCK rule first — so a
+// line comment containing a docblock-opener deleted the rest of the file before
+// any rule read it (`DEBT.md`'s D-8-01-1, which this step owns). The predicates
+// moved out so `../helpers/source-scan.test.ts` can run the same code over a
+// synthetic module with an unguarded `run()`, which is the only way to observe
+// the inverse failure — a genuinely unguarded module passing — going red.
 
 /**
  * Every extension a module under `src/` may carry.
@@ -407,13 +409,6 @@ describe('the registry is the only place a backend is named', () => {
  */
 const SIMPLE_GIT_MENTION = /simple-git|simpleGit/;
 
-/** Everything outside a comment. The prose about this rule must not trip it. */
-function withoutComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^[ \t]*\/\/.*$/gm, '');
-}
-
 /** The one module allowed to build a git argv for ADL's own account. */
 const SOLE_GIT_CHOKEPOINT = 'git/adl-git.ts';
 
@@ -520,10 +515,7 @@ describe('no module under src/ reaches git through simple-git', () => {
     const unguarded: string[] = [];
     for (const name of callers) {
       if (name === SOLE_UNGUARDED_RUNNER) continue;
-      const source = withoutComments(
-        await readFile(join(SRC_ROOT, name), 'utf8'),
-      );
-      if (!/\bassertCwdWithinRoot\s*\(/.test(source)) {
+      if (!callsCwdGuard(await readFile(join(SRC_ROOT, name), 'utf8'))) {
         unguarded.push(
           `${name} — it reaches run() but never calls assertCwdWithinRoot, so a caller supplying ExecSpec.cwd can start a child outside the root the workspace is confined to (WR-01). @adl/core's ExecSpec.cwd docblock states the guard as a promise; this is what keeps the promise true.`,
         );

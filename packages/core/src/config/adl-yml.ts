@@ -436,6 +436,20 @@ const HarnessEntrySchema = z.strictObject({
         'empty list is therefore refused rather than made to mean one of the two silently. ' +
         'Default: absent (the whole worktree).',
     ),
+  needs_app: z
+    .boolean()
+    .optional()
+    .describe(
+      'Whether ADL builds, starts, probes and tears down the app under test around this ' +
+        'gate — ROLE-07, and the behaviour tester is its first declarer. When true, ADL ' +
+        'allocates a port, runs commands.build, starts commands.start with ${ADL_PORT} ' +
+        'available to its env, waits for commands.start.ready, runs the gate, then runs ' +
+        "commands.teardown and reaps the app's process tree. The gate reads the port the " +
+        "same way the app does: ${ADL_PORT} in its own command's env. Declared rather " +
+        'than inferred for the reason commands are never auto-detected (promise 4) and ' +
+        'because most gates judge a tree rather than a running program — a lint harness ' +
+        'has no use for a server. Default: false (no app; every pre-M08 pipeline).',
+    ),
 });
 
 /**

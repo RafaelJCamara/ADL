@@ -24,24 +24,28 @@ as of the last commit and says exactly where things stand.
 
 CONTEXT: You were asked to take every remaining item up to and including M10, build
 a work queue, and implement them one by one. M06 and M07 are both closed and
-code-complete. Seventeen items are done and committed to main: 6.10, 6.11, the M06
+code-complete. Eighteen items are done and committed to main: 6.10, 6.11, the M06
 close-out, an M07 step-sketch refinement, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, the 7.7
-deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, and 8.1.
+deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, 8.1, and 8.2.
 
-REMAINING QUEUE — 24 items, in order. Rebuild this as a task list, then work
+REMAINING QUEUE — 23 items, in order. Rebuild this as a task list, then work
 through it one at a time:
 
-  8.2 — the app lifecycle ADL owns (ROLE-07; the milestone's TRACER slice)  <- NEXT
-  8.3–8.9, M08 close-out
+  8.3 — every way the app can fail to be judgeable, mapped once  <- NEXT
+  8.4–8.9, M08 close-out
   M09 step refinement, 9.1–9.8, M09 close-out
   M10 step refinement, 10.1–10.6, M10 close-out
 
 M08's sketch HAS been refined — ten steps, 8.0 through 8.9, with the audit's ten
-findings in the milestone file's own header. 8.0 and 8.1 are done: read "The 8.0
-spike record" in that file before starting 8.2, because it revised finding 3, and
-read 8.1's own note, because the end-to-end proof there found that a gate's
-WORKSPACE and the place ADL reads the spec and diff from are two different
-things. Start at 8.2 — it is the milestone's tracer slice. M09 and M10 still ship as
+findings in the milestone file's own header. 8.0, 8.1 and 8.2 are done. Before
+starting 8.3, read the milestone's 8.2 note: it owns the failure-mode map, and 8.2
+handed it three things — a deliberately conservative `provider_error` mapping in
+`stage-runner.ts` that says in a comment that 8.3 replaces it, the `AppFailure`
+union in `worker-entry/app/lifecycle.ts` (facts, never verdicts, so 8.3 is not a
+rename), and two debts it owns: D-8-02-1 (a `tcp` probe's port is an `int`, so an
+app on an ADL-allocated port cannot be tcp-probed) and D-8-02-2 (a declared
+`start.timeout` is a ceiling on the app's whole lifetime, and `adl-yml.ts`'s own
+worked example sets it shorter than its own test timeout). M09 and M10 still ship as
 step *sketches* and each says "refine into small steps when this milestone starts"
 — do that refinement as its own docs commit, after a pre-implementation audit, the
 way M06 and M07 were opened. The audits have been high-value: M07's found seven
@@ -72,24 +76,52 @@ FOUR TRAPS THESE SESSIONS HIT, all worth knowing before you start:
    uncommitted work in that file. Undo injections by reversing the edit, not by
    checking the file out.
 
-3. A `//` line comment containing the three characters `/**` BLINDS the contract
-   suite's comment stripper for the rest of the file, because
-   `workspace-contract.test.ts`'s `withoutComments` strips block comments first.
-   8.1 hit this documenting a glob: its `exec` DID call `assertCwdWithinRoot` and
-   the suite reported it as an unguarded `run()` caller, because 5223 of 15066
-   characters survived the strip and `async exec` was not among them. This is
-   DEBT.md's D-8-01-1 and 8.2 OWNS IT — the dangerous direction is the inverse, a
-   genuinely unguarded module passing because an innocent `/**` hid it.
+3. D-8-01-1 is CLOSED by 8.2 — the contract suite's comment stripper is now a
+   real scanner in `packages/workspace/test/helpers/source-scan.ts`, so a `//`
+   line containing `/**` no longer blinds it. Two things that fix taught, both
+   still live:
+   - A fixture that is supposed to REPRODUCE a defect can be green against it.
+     The first version of `source-scan.test.ts` passed against the restored
+     block-first stripper, because the lazy block regex closed immediately on a
+     line comment containing the four-character opener-plus-closer run. A
+     watched-failing pass that does not go red is telling you about your fixture
+     as often as about your fix.
+   - A `*/` inside a block comment still ends it, obviously — and writing
+     "packages/*/src/**" in a docblock is how you discover that at runtime. It
+     broke an app fixture with `ReferenceError: src is not defined`.
 
-4. Prettier silently breaks a Markdown blockquote when a continuation line starts
-   with `<` or `{` — it reads them as HTML/JSX and drops the `> ` prefix, so
-   everything after that line falls out of the quote. It bit the M08 milestone
-   file twice (`<path> <baseRef>` and `{ test: 'command' }` at a line start).
-   Re-wrap so no quoted line begins with either character, and re-run
-   `pnpm exec prettier --check` after writing any long blockquote.
+4. Prettier and Markdown list items do not mix. It silently breaks a blockquote
+   when a continuation line starts with `<` or `{` (HTML/JSX), and inside a
+   `- [x]` list item it also RE-INDENTS continuation lines on every `--write`,
+   growing the indent run after run and eventually de-indenting a line out of the
+   item altogether. Lines starting with a backtick-continuation of an inline-code
+   span, or with `1`-plus-punctuation, trigger it too. The stable shape for a long
+   note inside a list item is ONE UNWRAPPED LINE — which is what step 8.1's note
+   already was, and now 8.2's. Always run `pnpm exec prettier --write` twice and
+   diff, because a single pass that "succeeds" can still be non-idempotent.
 
-KNOWN ENVIRONMENT ISSUE: the manager suite flakes on this Windows dev machine.
-DEBT.md § 4 records it. The mitigation already applied to several files is an
+5. A watched-failing injection that stays GREEN may mean your assertion is
+   measuring something other than ADL. 8.2's reap assertion passed with
+   `controller.abort()` deleted, because the worker exits at the end of a dispatch
+   and execa's own `cleanup: true` kills its subprocess then. Before accepting a
+   green injection as "not load-bearing", ask what ELSE produces the observable.
+   The fix was an ordering change that made the reap observable from outside ADL.
+
+6. `node:child_process` is banned in test fixtures too, including `.mjs` ones —
+   `adl/no-direct-spawn`'s `no-restricted-imports` half covers them even though
+   DEBT.md § 4 notes the syntax-selector half does not. Do not take an exemption
+   for a double. 8.2 needed a multi-process app fixture and used `node:cluster`,
+   which is realistic and takes no exemption; that `node:cluster` and
+   `node:worker_threads` are missing from the ban's specifier list is now recorded
+   in DEBT.md § 4 as a real hole.
+
+KNOWN ENVIRONMENT ISSUE: the manager suite flakes on this Windows dev machine, and
+so does the workspace suite. DEBT.md § 4 records it. Run both with
+`pnpm exec vitest run --no-file-parallelism`: the workspace suite's default parallel
+run is red in 25 places with a clean tree AND with 8.2's changes (identical counts),
+and green serially. The manager suite serially is 536/537, the one failure being
+D-7-05-1 — confirmed by stashing and re-running, which failed in exactly the same
+place. The mitigation already applied to several files is an
 explicit per-file timeout ({ timeout: 30_000 } or larger) on tests that build a
 real temp repo, worktree or daemon; extend that to new tests of the same shape.
 Always baseline against main by stashing before believing a red suite — that is

@@ -83,6 +83,15 @@ export {
   type AdlVariableName,
 } from './interpolate.js';
 export {
+  APP_LIFECYCLE_VARIABLES,
+  appVariables,
+  interpolateCommandEnv,
+  interpolateReadyProbe,
+  type AppLifecycleVariable,
+  type AppVariableInputs,
+  type AppVariableValues,
+} from './app-variables.js';
+export {
   CONTEXT_FILE_CASCADE,
   pickFirstPresent,
   resolveContextFiles,

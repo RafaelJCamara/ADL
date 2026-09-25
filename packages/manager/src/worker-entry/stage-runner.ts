@@ -59,8 +59,10 @@
 import { basename, join } from 'node:path';
 import {
   AGENT_ROLES,
+  appVariables,
   BACKEND_DEFAULT_MODEL,
   CommandGateWithSchema,
+  interpolateCommandEnv,
   type AgentRole,
   type CommandGateOutputMode,
   type CommandSpec,
@@ -95,6 +97,7 @@ import {
 import { composeBranchFeatureId } from '../branch-identity.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
 import { parseSendBackBriefJson } from '../loop/send-back-brief.js';
+import { withAppUnderTest, type AppUnderTest } from './app/lifecycle.js';
 import { buildGateContext } from './gate-context.js';
 import { runCommandGate } from './gates/command-gate.js';
 import { runReviewerGate } from './gates/reviewer-gate.js';
@@ -150,12 +153,30 @@ function stageErrorResult(
   kind: StageErrorKind,
   detail: string,
 ): StageRunnerResult {
+  return { verdictJson: JSON.stringify(stageErrorVerdict(kind, detail)) };
+}
+
+/**
+ * The same envelope, unserialised — for a caller that has to keep composing
+ * around it rather than return immediately.
+ *
+ * {@link stageErrorResult} is now derived from this rather than the two being
+ * written out separately (rule 8): the `retryable` flag comes from
+ * `stageErrorPolicy` exactly once, so the serialised and unserialised forms of
+ * "this stage errored" cannot drift into disagreeing about whether a kind is
+ * retryable. The app lifecycle (M08 step 8.2) is the caller that needed it —
+ * its gate runs inside a `body` callback, so an early `return` from there is a
+ * value, not a result.
+ */
+function stageErrorVerdict(
+  kind: StageErrorKind,
+  detail: string,
+): StageRunnerVerdict {
   const policy = stageErrorPolicy(kind);
-  const verdict: StageRunnerVerdict = {
+  return {
     kind: 'stage_error',
     error: { kind, retryable: policy.retryable, detail },
   };
-  return { verdictJson: JSON.stringify(verdict) };
 }
 
 function developerOutcomeResult(outcome: DeveloperOutcome): StageRunnerResult {
@@ -829,34 +850,154 @@ export function createProductionStageRunner(
         // `provider_error` because a bad block will not parse on a retry
         // either, and `stageErrorPolicy` makes that kind non-retryable so the
         // round escalates instead of spinning.
-        let verdict: StageRunnerVerdict;
-        if (role.kind === 'agent') {
-          // ROLE-02 (M07 step 7.4). A role with a producer but no
-          // implementation is refused by name rather than dispatched into
-          // nothing — the honest state of `tester` until M08.
-          const implementation = AGENT_GATE_IMPLEMENTATIONS[role.role];
-          if (implementation === undefined) {
-            await Promise.all(appendPromises);
-            return stageErrorResult(
-              'binary_missing',
-              `pipeline stage "${assign.stageId}" dispatches the ${role.role} role, but this ` +
-                'build ships no implementation for it — the behaviour tester is M08.',
-            );
+        /**
+         * Run whichever gate this stage is, optionally told about a running app.
+         *
+         * Extracted into a callback rather than left inline because the app
+         * lifecycle below has to wrap it, and a second copy of the agent/command
+         * branch inside the `needs_app` path is how a gate ends up behaving
+         * differently depending on whether an app was started — HARN-04 violated
+         * by copy-paste. There is exactly one of these, and both paths call it.
+         *
+         * It answers with a `StageRunnerVerdict` on every path, including the two
+         * refusals, because a `return` out of a callback is a value rather than
+         * this function's result. `stageErrorVerdict` is where that envelope
+         * comes from, and `stageErrorResult` is derived from the same function.
+         */
+        const runGate = async (
+          app: AppUnderTest | undefined,
+        ): Promise<StageRunnerVerdict> => {
+          if (role.kind === 'agent') {
+            // ROLE-02 (M07 step 7.4). A role with a producer but no
+            // implementation is refused by name rather than dispatched into
+            // nothing — the honest state of `tester` until M08 step 8.4.
+            const implementation = AGENT_GATE_IMPLEMENTATIONS[role.role];
+            if (implementation === undefined) {
+              return stageErrorVerdict(
+                'binary_missing',
+                `pipeline stage "${assign.stageId}" dispatches the ${role.role} role, but this ` +
+                  'build ships no implementation for it — the behaviour tester is M08.',
+              );
+            }
+            return await implementation(built.gate);
           }
-          verdict = await implementation(built.gate);
-        } else {
+
           const gateCommand = resolveGateCommand(built.gate, effectiveConfig);
           if (!gateCommand.ok) {
-            await Promise.all(appendPromises);
-            return stageErrorResult('unparseable', gateCommand.detail);
+            return stageErrorVerdict('unparseable', gateCommand.detail);
           }
-          verdict = await runCommandGate(built.gate, {
-            command: gateCommand.command,
+
+          // ROLE-07 (M08 step 8.2): how a command gate learns the port.
+          //
+          // The SAME substitution the app itself got — `${ADL_PORT}` in the
+          // command's own `env` — so "where does the port come from?" has one
+          // answer for the program under test and the program judging it. A
+          // `GateContext` member would have been a second answer, and
+          // `gate-context.ts`'s own discipline is that vocabulary nothing
+          // supplies does not get carried: step 8.4's tester agent is the
+          // consumer that would need one, and it is 8.4's to add.
+          //
+          // A command referencing a variable ADL does not supply is
+          // `unparseable`, not an empty string (D-21) — and non-retryable,
+          // because it will not parse on a retry either.
+          let command = gateCommand.command;
+          if (app !== undefined) {
+            try {
+              command = interpolateCommandEnv(
+                command,
+                appVariables({ port: app.port, featureId: assign.featureId }),
+              );
+            } catch (error) {
+              return stageErrorVerdict(
+                'unparseable',
+                `the ${assign.stageId} gate's command env could not be interpolated: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+            }
+          }
+
+          return await runCommandGate(built.gate, {
+            command,
             path: process.env['PATH'] ?? '',
             ...(gateCommand.emits !== undefined
               ? { emits: gateCommand.emits }
               : {}),
           });
+        };
+
+        // ROLE-07 (M08 step 8.2): a gate that declared `needs_app` judges a
+        // RUNNING program, so ADL builds it, starts it on a port it allocated,
+        // waits for `commands.start.ready`, and reaps its whole process tree
+        // afterwards. Every other gate takes the branch below it and is
+        // unaffected byte-for-byte — which is also what keeps the existing
+        // fixtures' `start: { argv: ['true'] }` inert rather than reading as an
+        // app that died instantly.
+        //
+        // Declared rather than inferred from the stage's role, on `visible_paths`'
+        // precedent (8.1): a third party's gate declares the identical key and
+        // gets the identical lifecycle, so there is no branch anywhere on the
+        // tester's name.
+        const needsApp = resolvedStageFor(assign)?.needsApp === true;
+        let verdict: StageRunnerVerdict;
+        if (!needsApp) {
+          verdict = await runGate(undefined);
+        } else {
+          // Built and started in the DEVELOPER's worktree, never in a composed
+          // blind copy: the app is the implementation running, and a copy holding
+          // only `tests/**` has nothing to build. 8.1's finding generalised —
+          // what a gate can reach and where ADL does its own work are two
+          // questions.
+          const lifecycle = await withAppUnderTest(
+            {
+              workspace,
+              commands: effectiveConfig.commands,
+              featureId: assign.featureId,
+              path: process.env['PATH'] ?? '',
+              onLog: (phase, chunk) => {
+                // On the gate's own transcript, tagged by phase, so `adl logs -f`
+                // shows the build and the app's output beside the gate's.
+                // `messageId` carries the grouping — `AgentTextEvent`'s docblock
+                // says the field means nothing else — which is `command-gate.ts`'s
+                // own mapping with the phase name instead of the stream name.
+                appendPromises.push(
+                  appendRecord({
+                    kind: 'text',
+                    messageId: `app:${phase}:${chunk.stream}`,
+                    delta: chunk.text,
+                  }),
+                );
+              },
+              // The same signal the gate itself gets — a budget interrupt, a
+              // pause or a shutdown has to reach the app as well as the gate, or
+              // the round ends with a server still listening.
+              ...(built.gate.signal !== undefined
+                ? { signal: built.gate.signal }
+                : {}),
+            },
+            (app) => runGate(app),
+          );
+
+          if (lifecycle.kind === 'not-judgeable') {
+            // **A deliberately conservative mapping, and step 8.3 owns the real
+            // one.** M08's audit finding 6 is that `inconclusive` completes the
+            // feature as `unrecoverable`, so a port race must not escalate — and
+            // that no single mapping serves "the developer's code crashes", "the
+            // operator's `commands.start` is wrong" and "a port was taken".
+            // `provider_error` is retryable and costs no round, which is the
+            // honest first answer for everything here except a configuration
+            // error that will fail identically next time.
+            await Promise.all(appendPromises);
+            const { failure } = lifecycle;
+            return stageErrorResult(
+              failure.kind === 'config-invalid'
+                ? 'unparseable'
+                : 'provider_error',
+              `the app under test could not be brought up for the ${assign.stageId} gate ` +
+                `(${failure.kind}): ${failure.detail}`,
+            );
+          }
+          verdict = lifecycle.value;
         }
         // ROLE-04 (M07 step 7.6): a citation naming a criterion the spec does
         // not contain is `unparseable`, never a verdict.

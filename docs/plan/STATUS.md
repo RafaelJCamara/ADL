@@ -1,6 +1,6 @@
 # STATUS — start here
 
-_Last updated: 2026-09-03_
+_Last updated: 2026-09-25_
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -76,8 +76,7 @@ request; the record of why is in the milestone file.
 been refined into ten steps (8.0–8.9) after a pre-implementation audit, the way M06 and M07
 were opened; the audit found ten things, four of which changed what the steps are. See
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
-**8.0, the spike, is done and revised one of them, and 8.1 — the one-way decision —
-is done and is this milestone's first code.**
+**8.0 (the spike), 8.1 (the one-way decision) and 8.2 (the tracer slice) are done.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -87,7 +86,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0, 8.1 done; 8.2–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.2 done; 8.3–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -700,6 +699,58 @@ block-comment regex first, so a `//` line containing `/**` silently deletes the 
 file before the cwd-guard rule reads it. That is how a guard which _was_ present got reported
 as missing here — and how a guard that is genuinely missing could be reported as present.
 Owner 8.2.
+
+**8.2 is done (2026-09-25): the app lifecycle, and it is M08's tracer slice.** The first
+cross-process path through every layer this milestone touches — a real daemon builds a real
+app, starts it on a port ADL allocated, waits for a real `http` readiness probe to answer
+200, runs a gate that fetches it over the loopback, then reaps the app's whole process tree
+— proven before any agent, any code-blindness verdict and any commit exists. Three
+mechanisms got their **first production reader**: `commands.build` / `start` / `teardown`,
+`interpolate()` + `ADL_VARIABLES` (where `ADL_PORT` is defined), and all four readiness
+probe kinds.
+
+**The step's own premise was wrong, and a throwaway probe is what established that.** The
+audit said `Workspace.exec` cannot start a server, so the step was written to choose between
+a new `Workspace` method (one-way, D-01) and a third sanctioned launcher (which convention 1
+says turns the contract guard red). **Neither was needed.** An un-awaited `exec` promise
+paired with an `AbortController` already _is_ the handle: measured against real node 24 and
+execa 10, the server is reachable while the promise is pending, log chunks arrive live —
+which is what makes the `log` probe kind possible at all — and `abort()` reaps a grandchild.
+The published port is untouched, the launcher count is still two, and the contract suite's
+importer pin **did not move**, which the step expected to be a deliberate diff line.
+
+**A gate declares that it needs an app.** `needs_app: true` on the pipeline entry, on
+`visible_paths`' precedent — a key ADL itself reads, not opaque `with:` data. Absent is every
+pre-M08 pipeline byte-for-byte, which is what keeps the existing fixtures' inert
+`start: { argv: ['true'] }` from reading as an app that died instantly; and a third party's
+gate declares the identical key, so no branch anywhere turns on the tester's name. A gate
+learns the port the same way the app does — `${ADL_PORT}` in its own command's `env` — rather
+than through a new `GateContext` member, because `gate-context.ts`'s own discipline is that
+vocabulary nothing supplies does not get carried.
+
+**The watched-failing pass changed the design, which is the point of doing it.** Four
+injections went red as expected. The fifth — deleting `controller.abort()` — left the tracer
+**green**, because the worker exits at the end of a dispatch and execa's own `cleanup` kills
+the subprocess then: the assertion was measuring execa rather than ADL. So ADL now **reaps
+before `commands.teardown` rather than after**, which is both the better semantics (a
+repository's teardown should not remove the database from under a still-running app) and what
+lets that repository-supplied command _witness_ the reap while the worker is still alive. The
+witness is a program that is not ADL, which is 7.5/7.9/8.1's pattern.
+
+**`D-8-01-1` is closed** — this step owned it. The contract suite's two inline comment
+strippers became one left-to-right scanner in `workspace/test/helpers/source-scan.ts`, and
+the cwd-guard predicate moved there so it can run over a synthetic module, which is the only
+way to write the fixture the debt asked for. Watched failing four ways, including the inverse
+direction the debt named. That pass also corrected the fixtures: the first version was
+**green against the defect**, because the lazy block regex closed immediately on a line
+comment containing the opener-plus-closer run.
+
+**Found and not fixed: three.** `D-8-02-1` (a `tcp` probe's port is an `int`, so an app on an
+allocated port cannot be tcp-probed), `D-8-02-2` (a declared `start.timeout` is a ceiling on
+the app's whole lifetime, and the schema's own worked example sets it shorter than its own
+test timeout) — both owner 8.3 — and `D-8-02-3` (`killDescendants: true` cannot be watched
+failing on win32, because the platform reaps the subtree without it; it is the deferred
+batch's new check 1.9, for Linux CI).
 
 **And a correction to this file's own claim.** `D-7-05-1` is **intermittently** red on
 `main`, not deterministically. Telling a suite failure apart from a regression required
