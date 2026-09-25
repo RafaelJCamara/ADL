@@ -77,7 +77,10 @@ been refined into ten steps (8.0–8.9) after a pre-implementation audit, the wa
 were opened; the audit found ten things, four of which changed what the steps are. See
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
 **8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice), 8.3 (the
-failure-mode map) and 8.4 (the tester agent) are done.**
+failure-mode map) and 8.4 (the tester agent) are done. 8.5 is in flight (2026-09-25):
+its preceding `fix(08-05)` is committed and the `@adl/core` half of its feature commit
+is written, green and uncommitted — [`HANDOFF.md`](./HANDOFF.md) carries the design,
+what remains, and an incident on `main` the maintainer needs to see.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -87,7 +90,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.4 done; 8.5–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.4 done; 8.5 in flight; 8.6–8.9 to go
 M09–M18 ............................. not started
 ```
 
