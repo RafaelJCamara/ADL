@@ -80,8 +80,14 @@ import {
   interpolateCommandEnv,
   interpolateReadyProbe,
   parseDuration,
+  type ResolvedReadyProbe,
 } from '@adl/core/config';
-import type { ExecResult, LogChunk, Workspace } from '@adl/core/stage';
+import type {
+  AppFailureKind,
+  ExecResult,
+  LogChunk,
+  Workspace,
+} from '@adl/core/stage';
 import { join } from 'node:path';
 import { startTimeoutMsFor, timeoutMsFor } from '../command-timeout.js';
 import { allocatePort } from './port.js';
@@ -111,9 +117,12 @@ const DEFAULT_READY_TIMEOUT_MS = 30_000;
  * Why an app could not be brought to a state in which the gate's judgement would
  * mean anything.
  *
- * Deliberately *facts*, not verdicts. See the module docblock: step 8.3 owns the
- * mapping onto `StageError` kinds, and a `kind` here that already read
- * `'inconclusive'` would have made that step a rename.
+ * Deliberately *facts*, not verdicts — which is what let M08 step 8.3 map them
+ * without renaming anything here. `@adl/core/stage`'s `answerForAppFailure` is
+ * that map, and the two assertions at the foot of this union are what keep the
+ * two lists from drifting: a failure added here with no row there fails the
+ * **build**, and a row there with no failure here does too unless it is
+ * deliberately excused.
  */
 export type AppFailure =
   /** No loopback port could be allocated. */
@@ -144,6 +153,32 @@ export type AppFailure =
       readonly detail: string;
     };
 
+/**
+ * Every failure this module can report is one `answerForAppFailure` has decided
+ * about (convention 7, door 1).
+ */
+type _EveryFailureAnswered =
+  Exclude<AppFailure['kind'], AppFailureKind> extends never ? true : never;
+const _everyFailureAnswered: _EveryFailureAnswered = true;
+void _everyFailureAnswered;
+
+/**
+ * And the other direction, with one deliberate excusal.
+ *
+ * `teardown-failed` is in the taxonomy and is **not** an {@link AppFailure},
+ * because by the time `commands.teardown` runs the gate has already judged — so it
+ * cannot make the app un-judgeable and must not be able to change a verdict. It
+ * travels on {@link AppTeardown} instead, and {@link teardownFailed} is the
+ * predicate. Naming it here rather than omitting it silently is what makes the
+ * excusal a decision a reader can find.
+ */
+type _EveryAnswerHasAFailure =
+  Exclude<AppFailureKind, AppFailure['kind'] | 'teardown-failed'> extends never
+    ? true
+    : never;
+const _everyAnswerHasAFailure: _EveryAnswerHasAFailure = true;
+void _everyAnswerHasAFailure;
+
 /** What teardown managed to do, reported rather than discarded. */
 export interface AppTeardown {
   /** `commands.teardown`'s exit code, or `null` when it was killed or never ran. */
@@ -172,6 +207,26 @@ export interface AppTeardown {
   readonly appError?: string;
 }
 
+/**
+ * Did `commands.teardown` fail?
+ *
+ * A predicate rather than a field, so "what counts as a failed teardown" has one
+ * definition rather than one per reader. Both halves matter: `teardownError` means
+ * it could not be run at all, and a `teardownExitCode` that is not zero means it
+ * ran and refused — including `null`, which is `ExecResult`'s "killed rather than
+ * exited" and is the shape a teardown that hit its own timeout arrives in.
+ *
+ * `answerForAppFailure('teardown-failed')` is `report_only`, and that is the whole
+ * point: the gate had already judged by the time this could happen, so a failed
+ * teardown must not be able to overturn a correct approval. It is recorded and
+ * surfaced, never converted into a verdict.
+ */
+export function teardownFailed(teardown: AppTeardown): boolean {
+  return (
+    teardown.teardownError !== undefined || teardown.teardownExitCode !== 0
+  );
+}
+
 /** What {@link withAppUnderTest} answers. */
 export type AppLifecycleResult<T> =
   | {
@@ -182,10 +237,12 @@ export type AppLifecycleResult<T> =
       readonly port: number;
       readonly readiness: ReadinessOutcome | 'no-probe-declared';
       readonly teardown: AppTeardown;
+      readonly warnings: readonly string[];
     }
   | {
       readonly kind: 'not-judgeable';
       readonly failure: AppFailure;
+      readonly warnings: readonly string[];
       /**
        * Present whenever the app was started before the failure, so a caller can
        * report that teardown ran even on the failure path. `undefined` means
@@ -224,6 +281,23 @@ export interface AppLifecycleDeps {
   readonly signal?: AbortSignal;
   /** Overridable for tests. */
   readonly probeIntervalMs?: number;
+  /**
+   * The ceiling the gate's own command will run under, when the caller knows it
+   * (M08 step 8.3, closing `DEBT.md`'s D-8-02-2).
+   *
+   * Supplied so this module can notice the one configuration that fails silently:
+   * a declared `commands.start.timeout` shorter than the gate it has to survive
+   * kills the app **mid-suite**, and the gate then reports a failure that is
+   * entirely ADL's doing. `adl-yml.ts`'s own worked example used to declare
+   * `start: 2m` beside `test: 15m`.
+   *
+   * A **warning, not a refusal**, on the `reviewer-model-warning.ts` precedent:
+   * refusing would reject a legitimate configuration whose gate is not
+   * `commands.test` at all, and the numbers being comparable does not make them
+   * wrong. The debt proposed warning at boot; here is better, because at boot
+   * there is no gate yet and therefore no number to compare against.
+   */
+  readonly gateCommandTimeoutMs?: number;
 }
 
 /** `commands.*.cwd` is repo-relative by schema; this is where it resolves to. */
@@ -256,6 +330,9 @@ export async function withAppUnderTest<T>(
     return {
       kind: 'not-judgeable',
       failure: { kind: 'port-unavailable', detail: allocation.reason },
+      // Before the warnings could be computed: `${ADL_PORT}` had no value yet, so
+      // nothing had been interpolated and no ceiling had been read.
+      warnings: [],
     };
   }
   const { port } = allocation;
@@ -268,7 +345,10 @@ export async function withAppUnderTest<T>(
   let build: CommandSpec;
   let start: EffectiveConfig['commands']['start'];
   let teardown: CommandSpec;
-  let readyProbe: EffectiveConfig['commands']['start']['ready'];
+  // `ResolvedReadyProbe`, not the declared shape: `interpolateReadyProbe` turns a
+  // `tcp` probe's `${ADL_PORT}` back into a number, and the type is what stops an
+  // unresolved reference reaching a socket (M08 step 8.3, D-8-02-1).
+  let readyProbe: ResolvedReadyProbe | undefined;
   try {
     build = interpolateCommandEnv(commands.build, values);
     start = interpolateCommandEnv(commands.start, values);
@@ -286,7 +366,28 @@ export async function withAppUnderTest<T>(
           error instanceof Error ? error.message : String(error)
         }`,
       },
+      warnings: [],
     };
+  }
+
+  // D-8-02-2: the one configuration that fails silently. Computed here rather
+  // than at each `return` so every path reports the same list, and computed from a
+  // number the CALLER knows — see `AppLifecycleDeps.gateCommandTimeoutMs`.
+  const warnings: string[] = [];
+  const startCeilingMs = startTimeoutMsFor(start);
+  if (
+    startCeilingMs !== undefined &&
+    deps.gateCommandTimeoutMs !== undefined &&
+    startCeilingMs < deps.gateCommandTimeoutMs
+  ) {
+    warnings.push(
+      `commands.start.timeout is ${String(startCeilingMs)}ms, which is shorter than the ` +
+        `${String(deps.gateCommandTimeoutMs)}ms this gate's own command may run for. ` +
+        "`start.timeout` is a ceiling on the APP'S WHOLE LIFETIME, not on the time it " +
+        'may take to become ready — that is `ready_timeout` — so ADL will kill the app ' +
+        'while the gate is still running and the gate will report a failure that is ' +
+        "ADL's doing. Raise it past the gate's timeout, or omit it for no ceiling.",
+    );
   }
 
   // -- build ---------------------------------------------------------------
@@ -321,6 +422,7 @@ export async function withAppUnderTest<T>(
           error instanceof Error ? error.message : String(error)
         }`,
       },
+      warnings,
     };
   }
   if (buildResult.exitCode !== 0) {
@@ -335,6 +437,7 @@ export async function withAppUnderTest<T>(
             : String(buildResult.exitCode)
         } after ${String(buildResult.durationMs)}ms`,
       },
+      warnings,
     };
   }
 
@@ -533,6 +636,7 @@ export async function withAppUnderTest<T>(
                   detail: `\`${start.argv.join(' ')}\` could not be run: ${appError}`,
                 },
           teardown: await finish(),
+          warnings,
         };
       }
       if (readiness.kind === 'not-ready') {
@@ -544,6 +648,7 @@ export async function withAppUnderTest<T>(
             detail: `the ${readyProbe.kind} readiness probe was not satisfied within ${String(readyTimeoutMs)}ms: ${readiness.detail}`,
           },
           teardown: await finish(),
+          warnings,
         };
       }
     }
@@ -561,12 +666,20 @@ export async function withAppUnderTest<T>(
           detail: `\`${start.argv.join(' ')}\` could not be run: ${appError}`,
         },
         teardown: await finish(),
+        warnings,
       };
     }
 
     // -- the gate ----------------------------------------------------------
     const value = await body({ port });
-    return { kind: 'ran', value, port, readiness, teardown: await finish() };
+    return {
+      kind: 'ran',
+      value,
+      port,
+      readiness,
+      teardown: await finish(),
+      warnings,
+    };
   } finally {
     // Runs on the throw path too, and is idempotent so the success path above
     // does not tear down twice. The body's own error is what the caller needs to

@@ -128,19 +128,94 @@ describe('interpolateReadyProbe', () => {
     });
   });
 
-  it('returns every other kind by identity', () => {
+  it('returns log and exec by identity', () => {
     // Not a `default` branch that happens to pass them through: each is returned
-    // unchanged because the schema documents exactly one interpolatable probe
-    // field, so a fifth kind cannot silently acquire interpolation it was never
-    // given. `tcp.port` is an `int` and cannot express `${ADL_PORT}` at all —
-    // `DEBT.md`'s D-8-02-1.
+    // unchanged because the schema documents exactly two interpolatable probe
+    // fields, so a fifth kind cannot silently acquire interpolation it was never
+    // given.
     const others: readonly ReadyProbe[] = [
-      { kind: 'tcp', port: 8080 },
       { kind: 'log', pattern: 'listening on ${ADL_PORT}' },
       { kind: 'exec', argv: ['pg_isready'] },
     ];
     for (const probe of others) {
       expect(interpolateReadyProbe(probe, VALUES)).toBe(probe);
+    }
+  });
+
+  it('resolves a tcp probe declaring ${ADL_PORT} to a number', () => {
+    // D-8-02-1, closed by M08 step 8.3. Before this, `TcpReadyProbeSchema.port`
+    // was an `int`, so an app with no HTTP surface could not be probed on the port
+    // ADL allocated at all — it had to hardcode one, which defeats the allocation.
+    expect(
+      interpolateReadyProbe({ kind: 'tcp', port: '${ADL_PORT}' }, VALUES),
+    ).toEqual({ kind: 'tcp', port: 41234 });
+  });
+
+  it('passes a literal tcp port through unchanged', () => {
+    expect(interpolateReadyProbe({ kind: 'tcp', port: 8080 }, VALUES)).toEqual({
+      kind: 'tcp',
+      port: 8080,
+    });
+  });
+
+  it('refuses a variable that does not resolve to a port, naming it', () => {
+    // The whole reason the resolved form is a distinct type: a caller typed
+    // against `ResolvedReadyProbe` cannot be handed a feature id to connect to.
+    // `${ADL_FEATURE_ID}` is a legitimate ADL variable and is still an error here.
+    expect(() =>
+      interpolateReadyProbe({ kind: 'tcp', port: '${ADL_FEATURE_ID}' }, VALUES),
+    ).toThrow(/not a port in 1–65535/);
+    expect(() =>
+      interpolateReadyProbe({ kind: 'tcp', port: '${ADL_FEATURE_ID}' }, VALUES),
+    ).toThrow(LoadError);
+  });
+
+  it('refuses an unknown variable in a tcp port', () => {
+    expect(() =>
+      interpolateReadyProbe({ kind: 'tcp', port: '${PORT}' }, VALUES),
+    ).toThrow(/PORT/);
+  });
+});
+
+describe('the tcp probe schema (D-8-02-1)', () => {
+  function parse(port: unknown): boolean {
+    return AdlYmlSchema.safeParse({
+      version: 1,
+      // `pipeline` is required, and omitting it made an earlier draft of this
+      // block pass vacuously: every case failed, including the ones asserting
+      // success, and only the positive case noticed.
+      pipeline: ['develop'],
+      commands: {
+        build: { argv: ['true'] },
+        test: { argv: ['true'] },
+        teardown: { argv: ['true'] },
+        start: {
+          argv: ['true'],
+          ready: { kind: 'tcp', port },
+          ready_timeout: '30s',
+        },
+      },
+    }).success;
+  }
+
+  it('accepts a literal and a bare variable reference', () => {
+    expect(parse(8080)).toBe(true);
+    expect(parse('${ADL_PORT}')).toBe(true);
+  });
+
+  it('refuses anything else, including concatenation', () => {
+    // Deliberately only a BARE reference. A port is a number, and the one
+    // legitimate thing to say is "the port ADL allocated" — admitting
+    // concatenation would turn a numeric field into a small expression language.
+    for (const bad of [
+      '8080',
+      '${ADL_PORT}1',
+      'port-${ADL_PORT}',
+      '${ADL PORT}',
+      0,
+      70_000,
+    ]) {
+      expect(parse(bad), `${JSON.stringify(bad)} must be refused`).toBe(false);
     }
   });
 });

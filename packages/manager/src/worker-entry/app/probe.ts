@@ -39,7 +39,7 @@
  */
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ReadyProbe } from '@adl/core/config';
+import type { ResolvedReadyProbe } from '@adl/core/config';
 
 /** How often a probe is retried while it is not yet satisfied. */
 export const DEFAULT_PROBE_INTERVAL_MS = 100;
@@ -83,8 +83,15 @@ export type ReadinessOutcome =
 
 /** Everything {@link awaitReady} needs, and nothing it could obtain itself. */
 export interface ReadinessDeps {
-  /** The probe, with `${ADL_PORT}` already substituted (`interpolateReadyProbe`). */
-  readonly probe: ReadyProbe;
+  /**
+   * The probe, with every variable already resolved.
+   *
+   * `ResolvedReadyProbe` and not `ReadyProbe`, which is a real distinction rather
+   * than a synonym as of M08 step 8.3: a *declared* `tcp` probe's port may be a
+   * bare `${ADL_PORT}` reference, and a resolved one is a number. A consumer typed
+   * against the declared form could be handed a string to connect to.
+   */
+  readonly probe: ResolvedReadyProbe;
   /** `commands.start.ready_timeout`, in milliseconds. Bounds the whole wait. */
   readonly timeoutMs: number;
   /** See the module docblock: the start command's accumulated output. */
@@ -106,7 +113,7 @@ export interface ReadinessDeps {
 
 /** One `http` attempt: reachable, and the expected status when one was declared. */
 async function attemptHttp(
-  probe: Extract<ReadyProbe, { kind: 'http' }>,
+  probe: Extract<ResolvedReadyProbe, { kind: 'http' }>,
 ): Promise<AttemptResult> {
   try {
     const response = await fetch(probe.url, {
@@ -133,7 +140,7 @@ async function attemptHttp(
 
 /** One `tcp` attempt: does anything accept a connection on that port? */
 async function attemptTcp(
-  probe: Extract<ReadyProbe, { kind: 'tcp' }>,
+  probe: Extract<ResolvedReadyProbe, { kind: 'tcp' }>,
 ): Promise<AttemptResult> {
   return await new Promise<AttemptResult>((resolve) => {
     const socket = connect({ port: probe.port, host: '127.0.0.1' });
@@ -223,7 +230,7 @@ export async function awaitReady(
  * never-ready.
  */
 async function attemptFor(
-  probe: ReadyProbe,
+  probe: ResolvedReadyProbe,
   output: () => string,
   execProbe: (argv: readonly string[]) => Promise<number | null>,
 ): Promise<AttemptResult> {

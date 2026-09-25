@@ -22,11 +22,15 @@
  *   to be told its port can be told through its environment. Widening the
  *   substitution to argv would be additive and irreversible, and nothing needs
  *   it.
- * - **Not the `tcp` probe's `port`.** `TcpReadyProbeSchema.port` is `z.int()`,
- *   so `${ADL_PORT}` is not even expressible there. That is a real gap rather
- *   than a decision — `DEBT.md`'s **D-8-02-1** records it with a reproduction —
- *   and inventing a string form for the field here would be a schema change
- *   made from an interpolation module.
+ * - **The `tcp` probe's `port`** — added by M08 step 8.3, closing `DEBT.md`'s
+ *   **D-8-02-1**. `TcpReadyProbeSchema.port` was an integer, so `${ADL_PORT}` was
+ *   not *expressible* there at all, and an app with no HTTP surface could not be
+ *   probed on the port ADL allocated. It now accepts a bare variable reference,
+ *   and {@link interpolateReadyProbe} is what turns that back into a number —
+ *   which is why it answers with a {@link ResolvedReadyProbe} rather than with a
+ *   {@link ReadyProbe}. The two types differ in exactly one field, and the
+ *   difference is the whole point: a *declared* probe may carry a variable, and a
+ *   *resolved* one cannot.
  *
  * ## Why the variable list is derived rather than written out
  *
@@ -48,6 +52,7 @@
  *   (HARN-02), not to the app lifecycle, and supplying it from here would put
  *   one variable's meaning in two modules.
  */
+import { LoadError } from '../errors.js';
 import type { CommandSpec, ReadyProbe } from './adl-yml.js';
 import { interpolate, type AdlVariableName } from './interpolate.js';
 
@@ -120,20 +125,64 @@ export function interpolateCommandEnv<T extends CommandSpec>(
 }
 
 /**
- * Substitute into the one probe field the schema documents as interpolatable.
+ * A readiness probe with every variable already resolved.
  *
- * The `http` probe's `url` is the site `adl-yml.ts` names in promise 2 and the
- * reason `InterpolatableUrlSchema` exists at all (it deliberately does not use
- * `z.url()`, which rejects `${ADL_PORT}` as an invalid host). Every other kind
- * is returned by identity rather than by a default branch, so adding a fifth
- * probe kind cannot silently acquire interpolation it was never given.
+ * Derived from {@link ReadyProbe} rather than restated (rule 8): every kind is
+ * carried through by `Extract`, and only the `tcp` member is narrowed — its
+ * `port` is a `number` here and `number | string` there. A consumer typed against
+ * this cannot be handed an unresolved `${ADL_PORT}` to connect to.
+ */
+export type ResolvedReadyProbe =
+  | Extract<ReadyProbe, { kind: 'http' | 'log' | 'exec' }>
+  | { readonly kind: 'tcp'; readonly port: number };
+
+/** Ports are 1–65535; 0 ("any free port") is not a probe target. */
+function asPort(value: string, raw: string): number {
+  // `Number.parseInt` would accept `"8080abc"`; `Number()` is exact, which is
+  // what a field that has to become a socket argument needs.
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new LoadError(
+      `the tcp readiness probe's port is ${JSON.stringify(raw)}, which resolved to ` +
+        `${JSON.stringify(value)} — not a port in 1–65535. Only \${ADL_PORT} carries a ` +
+        'port; the other ADL variables carry a feature id, a round number and a file path.',
+    );
+  }
+  return port;
+}
+
+/**
+ * Substitute into the two probe fields the schema documents as interpolatable.
  *
- * @throws {LoadError} naming the first unrecognised variable.
+ * The `http` probe's `url` is the site `adl-yml.ts` names first, and the reason
+ * `InterpolatableUrlSchema` exists at all (it deliberately does not use
+ * `z.url()`, which rejects `${ADL_PORT}` as an invalid host). The `tcp` probe's
+ * `port` is the second, and it is *resolved* rather than merely substituted — see
+ * {@link ResolvedReadyProbe}.
+ *
+ * `log` and `exec` are returned by identity rather than by a default branch, so
+ * adding a fifth probe kind cannot silently acquire interpolation it was never
+ * given.
+ *
+ * @throws {LoadError} naming the first unrecognised variable, or naming a
+ *   resolved port that is not a port.
  */
 export function interpolateReadyProbe(
   probe: ReadyProbe,
   values: AppVariableValues,
-): ReadyProbe {
-  if (probe.kind !== 'http') return probe;
-  return { ...probe, url: interpolate(probe.url, values) };
+): ResolvedReadyProbe {
+  switch (probe.kind) {
+    case 'http':
+      return { ...probe, url: interpolate(probe.url, values) };
+    case 'tcp':
+      return typeof probe.port === 'number'
+        ? { kind: 'tcp', port: probe.port }
+        : {
+            kind: 'tcp',
+            port: asPort(interpolate(probe.port, values), probe.port),
+          };
+    case 'log':
+    case 'exec':
+      return probe;
+  }
 }

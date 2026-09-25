@@ -74,6 +74,15 @@ export {
 // happens. `visible-paths.ts` carries why this is a declaration rather than a
 // detection, and why the key names a property rather than a mechanism.
 export { selectVisiblePaths, type VisibleSelection } from './visible-paths.js';
+// ROLE-07 (M08 step 8.3): the failure-mode table, in `@adl/core` for
+// `transient-retry.ts`'s reason — it is pure policy over a `StageErrorKind`, and
+// `app-failure.ts` carries why its answer type cannot express `pass`.
+export {
+  answerForAppFailure,
+  APP_FAILURE_KINDS,
+  type AppFailureAnswer,
+  type AppFailureKind,
+} from './app-failure.js';
 
 // The AgentRunner port — the only way a stage calls a model (BACK-01). Real
 // interfaces and schemas live in `./agent.ts`; declared here (not in

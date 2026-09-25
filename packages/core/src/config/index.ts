@@ -90,6 +90,7 @@ export {
   type AppLifecycleVariable,
   type AppVariableInputs,
   type AppVariableValues,
+  type ResolvedReadyProbe,
 } from './app-variables.js';
 export {
   CONTEXT_FILE_CASCADE,

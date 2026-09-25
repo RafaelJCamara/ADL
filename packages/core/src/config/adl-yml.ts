@@ -44,11 +44,15 @@ import { parseYamlDocument } from './yaml-parse.js';
  * 2. **Interpolation is a closed set of ADL-provided variables, never general
  *    shell expansion.** The variables are `ADL_PORT`, `ADL_FEATURE_ID`,
  *    `ADL_ROUND`, and `ADL_VERDICT_FILE`, substituted only where this schema
- *    documents an interpolatable string — currently the `http` readiness
- *    probe's `url` field. An unknown variable name is a **validation error**,
- *    never an empty-string substitution (D-21, 01-RESEARCH.md § Pitfall 10).
- *    Plan 01-08 implements the substitution; this promise is the contract it
- *    implements against.
+ *    documents an interpolatable string. There are **three** such places, and
+ *    the list is closed: a command's `env` values, the `http` readiness probe's
+ *    `url`, and the `tcp` readiness probe's `port` (M08 step 8.3, which added the
+ *    third — `DEBT.md`'s D-8-02-1). Notably **not** `argv`, which is the
+ *    injection-sensitive surface the no-shell rule exists to protect (T-1-01).
+ *    An unknown variable name is a **validation error**, never an empty-string
+ *    substitution (D-21, 01-RESEARCH.md § Pitfall 10).
+ *    `@adl/core/config`'s `app-variables.ts` is the one caller that performs
+ *    the substitution, and its own docblock says why there is only one.
  * 3. **`limits` may only be lowered from the daemon's ceiling, and backend
  *    and credential selection is daemon-only (D-22).** A budget the watched
  *    repository can raise is not a budget, and a backend it can choose is a
@@ -82,7 +86,12 @@ import { parseYamlDocument } from './yaml-parse.js';
  *     timeout: 10m
  *   start:
  *     argv: [npm, run, dev]
- *     timeout: 2m
+ *     # A ceiling on the APP'S WHOLE LIFETIME, not on the time it may take to
+ *     # become ready — that is `ready_timeout` below. It therefore has to outlast
+ *     # every gate that runs against the app: this example previously said `2m`
+ *     # beside a 15m `test`, which would have killed the app thirteen minutes
+ *     # into the suite (DEBT.md's D-8-02-2). Omit it entirely for no ceiling.
+ *     timeout: 20m
  *     ready:
  *       kind: http
  *       url: "http://127.0.0.1:${ADL_PORT}/health"
@@ -198,6 +207,25 @@ const HttpStatusSchema = z.int().min(100).max(599);
 /** TCP ports are 1–65535; port 0 ("any free port") is not a probe target. */
 const TcpPortSchema = z.int().min(1).max(65_535);
 
+/**
+ * A bare `${VAR}` reference and nothing else — the interpolatable form of a port
+ * (M08 step 8.3, closing `DEBT.md`'s D-8-02-1).
+ *
+ * `TcpPortSchema` is an integer, so before this existed `${ADL_PORT}` was not
+ * *expressible* in a `tcp` probe at all: an app with no HTTP surface — the case
+ * `ExecReadyProbeSchema`'s own docblock names, a database or a queue worker — had
+ * to hardcode a fixed port, which defeats the allocation, or fall back to the
+ * `exec` kind. That was a real capability gap rather than a decision.
+ *
+ * Deliberately **only** a bare reference: no `${ADL_PORT}1`, no `1${ADL_PORT}`, no
+ * surrounding text. A port is a number, and the one legitimate thing to say here
+ * is "the port ADL allocated". Admitting concatenation would turn a numeric field
+ * into a small expression language for no gain.
+ */
+const InterpolatablePortSchema = z
+  .string()
+  .regex(/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/);
+
 const HttpReadyProbeSchema = z
   .strictObject({
     kind: z.literal('http'),
@@ -215,9 +243,15 @@ const HttpReadyProbeSchema = z
 const TcpReadyProbeSchema = z
   .strictObject({
     kind: z.literal('tcp'),
-    port: TcpPortSchema.describe(
-      'The port to poll until it accepts a connection. Bounded 1–65535.',
-    ),
+    port: z
+      .union([TcpPortSchema, InterpolatablePortSchema])
+      .describe(
+        'The port to poll until it accepts a connection. Either a literal, bounded 1–65535, ' +
+          'or a bare ${ADL_PORT} reference — the second interpolation site this schema ' +
+          'documents (promise 2), and the only way to tcp-probe an app on the port ADL ' +
+          'allocated. A variable that does not resolve to a valid port is a configuration ' +
+          'error reported as such, never a silent fallback.',
+      ),
   })
   .meta({ id: 'TcpReadyProbe' });
 
@@ -290,6 +324,25 @@ export const GROUP_SYNTAX_REJECTION =
  * layer), so the emission hazard Pattern 1 warns about does not apply here.
  */
 export const StartCommandSpecSchema = CommandSpecSchema.extend({
+  /**
+   * Restated here because `start` is the one command where the inherited wording
+   * is easy to read backwards (M08 step 8.3, D-8-02-2).
+   *
+   * `CommandSpecSchema.timeout` is *"how long this command may run before ADL
+   * kills it"*, and for `start` the command **is the app** — so a declared value
+   * is a ceiling on the app's whole lifetime and must outlast every gate that
+   * runs against it. `ready_timeout` is the separate, much shorter bound on
+   * reaching readiness. ADL warns when a declared `start.timeout` is shorter
+   * than the gate command it has to survive, rather than refusing: a warning is
+   * reversible and a refusal would reject a legitimate configuration whose gate
+   * is not `commands.test` at all.
+   */
+  timeout: DurationSchema.optional().describe(
+    "How long the APP may run before ADL kills it — the app's whole lifetime, not " +
+      'the time it may take to become ready (that is ready_timeout). It must outlast ' +
+      'every gate that runs against the app; ADL warns when it does not. ' +
+      'Default: no ceiling — ADL kills the app when the round is done.',
+  ),
   ready: ReadyProbeSchema.optional().describe(
     'A readiness probe — one of four kinds. Default: no probe (the tester races the server; ' +
       'prefer declaring one). Required together with ready_timeout: both or neither.',

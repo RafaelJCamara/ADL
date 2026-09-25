@@ -97,7 +97,13 @@ import {
 import { composeBranchFeatureId } from '../branch-identity.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
 import { parseSendBackBriefJson } from '../loop/send-back-brief.js';
-import { withAppUnderTest, type AppUnderTest } from './app/lifecycle.js';
+import { timeoutMsFor } from './command-timeout.js';
+import { appFailureOutcome } from './app/failure-outcome.js';
+import {
+  teardownFailed,
+  withAppUnderTest,
+  type AppUnderTest,
+} from './app/lifecycle.js';
 import { buildGateContext } from './gate-context.js';
 import { runCommandGate } from './gates/command-gate.js';
 import { runReviewerGate } from './gates/reviewer-gate.js';
@@ -349,6 +355,42 @@ export function reportingAgentRunner(
     },
     probe: () => inner.probe(),
   };
+}
+
+/**
+ * Surface one app-lifecycle warning where an operator will actually see it
+ * (ROLE-07, M08 step 8.3).
+ *
+ * **Two destinations, because neither alone reaches the reader.** The transcript
+ * is where `adl logs` points and where the record is permanent, but nobody reads a
+ * transcript unless something already went wrong — and the configuration hazards
+ * this reports (`DEBT.md`'s D-8-02-2) are the kind that produce a *plausible*
+ * failure rather than an obvious one. Standard error is the second destination
+ * because the manager already logs every worker stderr chunk as a daemon log line,
+ * which is `warnPrivilegeModeOnce`'s own route out of a worker and the reason this
+ * function does not need a `Logger` the worker has no way to hold.
+ *
+ * The `[ADL][ROLE-07]` prefix is greppable and names the requirement, matching
+ * `test/helpers/platform.ts`'s `[ADL][SKIPPED][<id>]` discipline: a reader who
+ * greps a log for the requirement finds either the line or nothing.
+ */
+function reportAppWarning(
+  stageId: string,
+  warning: string,
+  emit: (event: AgentEvent) => void,
+): void {
+  const line = `[ADL][ROLE-07] ${stageId}: ${warning}`;
+  process.stderr.write(`${line}
+`);
+  // `text` and not `error`: `AgentErrorEvent` means the stage failed, and this is
+  // a stage that is about to run perfectly well under a configuration somebody
+  // should look at. `messageId` carries the grouping, as `AgentTextEvent` says.
+  emit({
+    kind: 'text',
+    messageId: 'app:warning',
+    delta: `${line}
+`,
+  });
 }
 
 /**
@@ -864,6 +906,19 @@ export function createProductionStageRunner(
          * this function's result. `stageErrorVerdict` is where that envelope
          * comes from, and `stageErrorResult` is derived from the same function.
          */
+        //
+        // Resolved ONCE, out here, rather than inside the callback (M08 step 8.3).
+        // Two consumers need it and they need the same answer: the callback runs
+        // the program, and the app lifecycle needs its timeout to notice a
+        // `commands.start.timeout` shorter than the gate it has to survive
+        // (D-8-02-2). Resolving twice would be two pure calls that could not
+        // disagree today and would be a real trap the first time either grew a
+        // side condition.
+        const resolvedGateCommand =
+          role.kind === 'agent'
+            ? undefined
+            : resolveGateCommand(built.gate, effectiveConfig);
+
         const runGate = async (
           app: AppUnderTest | undefined,
         ): Promise<StageRunnerVerdict> => {
@@ -882,7 +937,16 @@ export function createProductionStageRunner(
             return await implementation(built.gate);
           }
 
-          const gateCommand = resolveGateCommand(built.gate, effectiveConfig);
+          const gateCommand = resolvedGateCommand;
+          if (gateCommand === undefined) {
+            // Unreachable: `role.kind === 'agent'` returned above, and that is the
+            // only case that leaves this undefined. Handled rather than asserted
+            // so nothing here overrules the compiler.
+            return stageErrorVerdict(
+              'binary_missing',
+              `pipeline stage "${assign.stageId}" resolved no command to run`,
+            );
+          }
           if (!gateCommand.ok) {
             return stageErrorVerdict('unparseable', gateCommand.detail);
           }
@@ -974,27 +1038,89 @@ export function createProductionStageRunner(
               ...(built.gate.signal !== undefined
                 ? { signal: built.gate.signal }
                 : {}),
+              // D-8-02-2: so the lifecycle can warn when the app would be killed
+              // out from under this very command. `undefined` for an agent gate,
+              // which has no command and therefore no number to compare against.
+              ...(resolvedGateCommand?.ok === true
+                ? {
+                    gateCommandTimeoutMs: timeoutMsFor(
+                      resolvedGateCommand.command,
+                    ),
+                  }
+                : {}),
             },
             (app) => runGate(app),
           );
 
+          // ROLE-07 (M08 step 8.3): the failure-mode table, applied.
+          //
+          // `answerForAppFailure` in `@adl/core/stage` is the table and carries
+          // the argument for every row; `app/failure-outcome.ts` dresses one row
+          // in the failure's own words. What 8.2 shipped here was a single
+          // conservative `provider_error` with a comment saying this step
+          // replaces it, and it did two things wrong: a build that will not
+          // compile is the DEVELOPER's round rather than the provider's, and a
+          // missing `commands.start` binary is the operator's rather than
+          // anybody's to retry eight times.
+          //
+          // Nothing here restates `retryable`, `consumesRound` or
+          // `consumesBudget`: `stageErrorResult` derives the first from
+          // `stageErrorPolicy`, and the other two are `false` for every kind,
+          // which is CORE-06's whole promise (rule 8).
+          for (const warning of lifecycle.warnings) {
+            reportAppWarning(assign.stageId, warning, (event) => {
+              appendPromises.push(appendRecord(event));
+            });
+          }
+
           if (lifecycle.kind === 'not-judgeable') {
-            // **A deliberately conservative mapping, and step 8.3 owns the real
-            // one.** M08's audit finding 6 is that `inconclusive` completes the
-            // feature as `unrecoverable`, so a port race must not escalate — and
-            // that no single mapping serves "the developer's code crashes", "the
-            // operator's `commands.start` is wrong" and "a port was taken".
-            // `provider_error` is retryable and costs no round, which is the
-            // honest first answer for everything here except a configuration
-            // error that will fail identically next time.
             await Promise.all(appendPromises);
-            const { failure } = lifecycle;
-            return stageErrorResult(
-              failure.kind === 'config-invalid'
-                ? 'unparseable'
-                : 'provider_error',
-              `the app under test could not be brought up for the ${assign.stageId} gate ` +
-                `(${failure.kind}): ${failure.detail}`,
+            const outcome = appFailureOutcome(
+              assign.stageId,
+              lifecycle.failure,
+            );
+            if (outcome.kind === 'stage_error') {
+              return stageErrorResult(
+                outcome.errorKind,
+                `the app under test could not be brought up for the ${assign.stageId} gate ` +
+                  `(${lifecycle.failure.kind}): ${lifecycle.failure.detail}`,
+              );
+            }
+            // A `send_back`, and it is this stage's verdict rather than a
+            // `StageError`: the app is part of what the branch has to get right,
+            // and a build that does not build is exactly what a round exists to
+            // fix. It reaches the same round loop, the same send-back brief and
+            // the same pull request as a gate's own findings.
+            //
+            // The `kind: 'verdict'` ENVELOPE, not the bare verdict. A first draft
+            // serialised `outcome.verdict` directly and the round came out
+            // `escalate` rather than `send_back`, because the supervisor could not
+            // recognise it — `StageRunnerVerdict` is a discriminated union and the
+            // discriminant is not optional.
+            return {
+              verdictJson: JSON.stringify({
+                kind: 'verdict',
+                verdict: outcome.verdict,
+              } satisfies StageRunnerVerdict),
+            };
+          }
+
+          // `report_only`, the table's third channel: the gate has already
+          // judged, so a failed teardown must not be able to overturn it. It is
+          // recorded where an operator will find it and changes nothing.
+          if (teardownFailed(lifecycle.teardown)) {
+            reportAppWarning(
+              assign.stageId,
+              `commands.teardown did not succeed (${
+                lifecycle.teardown.teardownError ??
+                `exit ${lifecycle.teardown.teardownExitCode === null ? 'none' : String(lifecycle.teardown.teardownExitCode)}`
+              }). The app's own process tree was reaped before it ran, so nothing ` +
+                "is leaking on ADL's side — but whatever the repository builds for " +
+                'itself (containers, volumes, a temp database) may be. This does not ' +
+                "change the gate's verdict, because the gate had already judged.",
+              (event) => {
+                appendPromises.push(appendRecord(event));
+              },
             );
           }
           verdict = lifecycle.value;

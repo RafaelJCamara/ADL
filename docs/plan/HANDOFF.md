@@ -24,28 +24,38 @@ as of the last commit and says exactly where things stand.
 
 CONTEXT: You were asked to take every remaining item up to and including M10, build
 a work queue, and implement them one by one. M06 and M07 are both closed and
-code-complete. Eighteen items are done and committed to main: 6.10, 6.11, the M06
+code-complete. Nineteen items are done and committed to main: 6.10, 6.11, the M06
 close-out, an M07 step-sketch refinement, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, the 7.7
-deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, 8.1, and 8.2.
+deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, 8.1, 8.2, and 8.3.
 
-REMAINING QUEUE — 23 items, in order. Rebuild this as a task list, then work
+REMAINING QUEUE — 22 items, in order. Rebuild this as a task list, then work
 through it one at a time:
 
-  8.3 — every way the app can fail to be judgeable, mapped once  <- NEXT
-  8.4–8.9, M08 close-out
+  8.4 — the tester agent (ROLE-05)  <- NEXT
+  8.5–8.9, M08 close-out
   M09 step refinement, 9.1–9.8, M09 close-out
   M10 step refinement, 10.1–10.6, M10 close-out
 
 M08's sketch HAS been refined — ten steps, 8.0 through 8.9, with the audit's ten
-findings in the milestone file's own header. 8.0, 8.1 and 8.2 are done. Before
-starting 8.3, read the milestone's 8.2 note: it owns the failure-mode map, and 8.2
-handed it three things — a deliberately conservative `provider_error` mapping in
-`stage-runner.ts` that says in a comment that 8.3 replaces it, the `AppFailure`
-union in `worker-entry/app/lifecycle.ts` (facts, never verdicts, so 8.3 is not a
-rename), and two debts it owns: D-8-02-1 (a `tcp` probe's port is an `int`, so an
-app on an ADL-allocated port cannot be tcp-probed) and D-8-02-2 (a declared
-`start.timeout` is a ceiling on the app's whole lifetime, and `adl-yml.ts`'s own
-worked example sets it shorter than its own test timeout). M09 and M10 still ship as
+findings in the milestone file's own header. 8.0 through 8.3 are done. Before
+starting 8.4, read the milestone's notes for 8.1 and 8.2, because 8.4 inherits two
+things from them:
+
+  - 8.1's carried finding: the tester still receives `diff.changedPaths`, which
+    NAMES the implementation files without containing them. 8.4 is told to decide
+    about that bounded disclosure deliberately rather than inherit it.
+  - 8.2's decision that a gate learns the port through `${ADL_PORT}` in its own
+    command's `env`, and NOT through a `GateContext` member. An agent gate has no
+    command, so 8.4 is the first consumer that actually needs one — adding it means
+    moving `GATE_CONTEXT_MEMBERS`, which 8.1 deliberately did not, so it is a
+    decision to make out loud rather than a line to slip in.
+
+Finding 8 is the sharp part of 8.4: `BUILT_IN_COST_CLASSES` and
+`BUILT_IN_JUDGEMENT_KINDS` each carry an `Exclude<>` assertion, so the fourth
+built-in FAILS THE BUILD until it declares both. The milestone recommends the stage
+id `behaviour` (`test` is taken by `GATE_IMPLEMENTATIONS`), cost class `expensive`,
+and judgement kind `deterministic` — with 8.6's committed tests as what makes
+`deterministic` honest. M09 and M10 still ship as
 step *sketches* and each says "refine into small steps when this milestone starts"
 — do that refinement as its own docs commit, after a pre-implementation audit, the
 way M06 and M07 were opened. The audits have been high-value: M07's found seven
@@ -114,6 +124,12 @@ FOUR TRAPS THESE SESSIONS HIT, all worth knowing before you start:
    which is realistic and takes no exemption; that `node:cluster` and
    `node:worker_threads` are missing from the ban's specifier list is now recorded
    in DEBT.md § 4 as a real hole.
+
+7. Do not write a fixture that reproduces a defect without watching it FAIL. Two
+   injections in 8.2 and 8.3 passed against the very defect they were written for —
+   one because a regex closed earlier than expected, one because the assertion had
+   no coverage of the code path at all. Both were found only by running the
+   injection, and both changed the test rather than the fix.
 
 KNOWN ENVIRONMENT ISSUE: the manager suite flakes on this Windows dev machine, and
 so does the workspace suite. DEBT.md § 4 records it. Run both with

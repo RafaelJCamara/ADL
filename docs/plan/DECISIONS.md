@@ -178,6 +178,33 @@ repository-supplied teardown command a world that is already stopped — and it 
 command _witness_ the reap from outside ADL's bookkeeping.
 (M08 step 8.2, ROLE-07.)
 
+**Every way the app can fail to be judgeable has one answer, and neither `pass` nor
+`inconclusive` is ever it.**
+M08's step sketch said an app that never becomes ready yields `inconclusive`. That is wrong in
+a way the requirement's own wording hides: `aggregate` maps an `inconclusive` with no
+`send_back` anywhere to `unverified`, and `round-step.ts` turns `unverified` into `complete`
+plus an `unrecoverable` event — so it wakes a human **immediately and irrecoverably**, for a
+lost port race as readily as for a genuinely wedged app. The requirement's load-bearing half
+is _"never `pass`"_, and `@adl/core/stage`'s `answerForAppFailure` makes that **structurally
+impossible** rather than merely true: `AppFailureAnswer` has three channels — `send_back`,
+`stage_error`, `report_only` — and no member through which any `Outcome` can travel.
+**Exactly two failures are the developer's round**, and they are the two that are evidence
+about the _work_: a build that will not build, and an app that boots and dies. Everything else
+is evidence about the machine, the configuration or the operator, and rides a `StageError`,
+which `stageErrorPolicy` already promises costs neither a round nor budget. Neither send-back
+is certain of its attribution — a `build` command that is itself wrong produces the same
+failure — and the asymmetry is deliberate: a wrong send-back costs one round and produces a
+finding a human reads on the pull request, while a wrong `StageError` escalates to a human
+instead of to the agent that could have fixed it. Prefer the cheap mistake.
+**A never-ready app rides `timeout`, which is retryable**, so `planTransientRetry` spends a
+real backoff budget before anybody is woken and then escalates _naming what was tried_ — which
+is strictly more than a bare `inconclusive` verdict carries. That is why the `inconclusive`
+column is empty too.
+**A failed `commands.teardown` changes no verdict.** The gate had already judged by the time it
+ran, so converting it into a failure would let a cleanup command overturn a correct approval.
+It is `report_only`: recorded on the transcript and on the daemon log, and acting on nothing.
+(M08 step 8.3, ROLE-07.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.

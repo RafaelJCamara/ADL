@@ -76,7 +76,8 @@ request; the record of why is in the milestone file.
 been refined into ten steps (8.0–8.9) after a pre-implementation audit, the way M06 and M07
 were opened; the audit found ten things, four of which changed what the steps are. See
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
-**8.0 (the spike), 8.1 (the one-way decision) and 8.2 (the tracer slice) are done.**
+**8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice) and 8.3 (the
+failure-mode map) are done.**
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -86,7 +87,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.2 done; 8.3–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.3 done; 8.4–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -751,6 +752,47 @@ the app's whole lifetime, and the schema's own worked example sets it shorter th
 test timeout) — both owner 8.3 — and `D-8-02-3` (`killDescendants: true` cannot be watched
 failing on win32, because the platform reaps the subtree without it; it is the deferred
 batch's new check 1.9, for Linux CI).
+
+**8.3 is done (2026-09-25): every way the app can fail to be judgeable, mapped once.** 8.2
+deliberately stopped at the facts and left one conservative `provider_error` behind with a
+comment naming this step as its replacement. The table is now `answerForAppFailure` in
+`@adl/core/stage`, with its seven rows and the argument for each in the module's own docblock.
+
+**The `pass` column is empty structurally rather than by assertion.** `AppFailureAnswer` has
+three channels — `send_back`, `stage_error`, `report_only` — and **no member through which any
+`Outcome` can travel**, so criterion 2's load-bearing half is convention 9 rather than a test
+over a mapping a later edit could get wrong. The `inconclusive` column is empty too, and that
+one needed an argument rather than a type: the escalation the sketch wanted `inconclusive` for
+already exists, and `planTransientRetry` escalates _naming what was tried_, which a bare
+verdict does not.
+
+**Exactly two rows charge the developer a round**, and they are the two that are evidence about
+the work — a build that will not build, and an app that boots and dies. Everything else is the
+machine, the configuration or the operator, and rides a `StageError` that costs neither a round
+nor budget. Neither send-back is certain of its attribution and the code says so: a wrong
+send-back costs one round and produces a finding a human reads, while a wrong `StageError`
+escalates to a human instead of to the agent that could have fixed it.
+
+**A failed `commands.teardown` changes no verdict** — the gate had already judged, so a cleanup
+command must not be able to overturn a correct approval. It is `report_only`: on the transcript
+and on the daemon log, acting on nothing.
+
+**A test caught a real bug in this step's own code.** The `send_back` path serialised the bare
+`Verdict` rather than the `kind: 'verdict'` envelope, and the round came out `escalate` because
+the supervisor could not recognise it.
+
+**Watched failing seven ways, and the seventh found a gap rather than confirming a fix.**
+Deleting the loop that emits the lifecycle's warnings left every case green — so that loop had
+no end-to-end coverage at all, and the build-failure scenario now declares a short
+`start.timeout` and asserts the warning reaches the transcript.
+
+**Two debts closed, one opened.** `D-8-02-1` (a `tcp` probe can now be told `${ADL_PORT}`, and
+`interpolateReadyProbe` answers with a `ResolvedReadyProbe` — a declared probe may carry a
+variable, a resolved one cannot). `D-8-02-2` closed but **not in the shape it proposed**: the
+semantics were kept and the warning went into the lifecycle rather than at boot, because at
+boot there is no gate yet and therefore no number to compare against. `D-8-03-1` opened —
+`gracefulShutdown` destroys the database without awaiting an in-flight dispatch, surfaced as an
+intermittent unhandled rejection by the first test to stop a daemon mid-retry; owner M09.
 
 **And a correction to this file's own claim.** `D-7-05-1` is **intermittently** red on
 `main`, not deterministically. Telling a suite failure apart from a regression required
