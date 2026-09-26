@@ -130,24 +130,23 @@ export type AppFailureAnswer =
  * `AGENT_GATE_IMPLEMENTATIONS` and `STAGE_ERROR_POLICIES` are each written as
  * records for.
  */
-const APP_FAILURE_ANSWERS: Readonly<Record<AppFailureKind, AppFailureAnswer>> =
-  Object.freeze({
-    'port-unavailable': { channel: 'stage_error', errorKind: 'provider_error' },
-    'config-invalid': { channel: 'stage_error', errorKind: 'unparseable' },
-    'build-failed': {
-      channel: 'send_back',
-      severity: 'blocker',
-      category: 'build',
-    },
-    'start-failed': { channel: 'stage_error', errorKind: 'binary_missing' },
-    'app-exited-before-ready': {
-      channel: 'send_back',
-      severity: 'blocker',
-      category: 'build',
-    },
-    'never-ready': { channel: 'stage_error', errorKind: 'timeout' },
-    'teardown-failed': { channel: 'report_only' },
-  });
+const APP_FAILURE_ANSWERS = Object.freeze({
+  'port-unavailable': { channel: 'stage_error', errorKind: 'provider_error' },
+  'config-invalid': { channel: 'stage_error', errorKind: 'unparseable' },
+  'build-failed': {
+    channel: 'send_back',
+    severity: 'blocker',
+    category: 'build',
+  },
+  'start-failed': { channel: 'stage_error', errorKind: 'binary_missing' },
+  'app-exited-before-ready': {
+    channel: 'send_back',
+    severity: 'blocker',
+    category: 'build',
+  },
+  'never-ready': { channel: 'stage_error', errorKind: 'timeout' },
+  'teardown-failed': { channel: 'report_only' },
+} satisfies Record<AppFailureKind, AppFailureAnswer>);
 
 /**
  * What ADL does about `kind`.
@@ -166,6 +165,14 @@ export function answerForAppFailure(kind: AppFailureKind): AppFailureAnswer {
  * `Record<AppFailureKind, …>` already refuses a missing key; this is the other
  * direction — a key in the record that is not a real failure kind, which a rename
  * would otherwise leave behind as a row nothing can ever reach.
+ *
+ * **It only works because the table is checked with `satisfies`, not annotated**
+ * (fixed in M08 step 8.5, when a stale key was injected and the build stayed
+ * green). Annotated as `Readonly<Record<AppFailureKind, …>>`, the table's
+ * `keyof` is the annotation's keys, never the literal's, so this `Exclude` was
+ * `never` whatever the literal held — and an `Object.freeze` argument gets no
+ * excess-property check. `satisfies` keeps the literal's own type, so a stale key
+ * is refused twice: as an excess property, and here.
  */
 type _EveryAppFailureAnswered =
   Exclude<keyof typeof APP_FAILURE_ANSWERS, AppFailureKind> extends never
