@@ -16,15 +16,16 @@ otherwise be lost.
 
 ## After 8.5 — read this before the prompt below (2026-09-26)
 
-**An incident on `main` that is the maintainer's to resolve.** Three commits titled
-`agent: implement the feature` (`151f59b`, `102a399`, `9a2c62a`, 2026-09-25 19:21:57)
-sit under `fix(08-05)`: a replay double committed `agent-output.txt` and a root `adl.yml`
-into the REAL checkout. The source was not identified — no transcript in that session ran a
-test at 19:21, and the serial baseline before it (19:11–19:14, from `packages/manager`) logs
-no daemon rooted at the real repo. Rewriting `main` was left to the maintainer; to drop the
-three and keep everything since: `git rebase --onto 1d5ae39 9a2c62a main`. `test(manager)`
-(`1bb6e45`) makes every committing double refuse to write inside its own source checkout,
-watched failing in a throwaway copy of the checkout. `DEBT.md` D-8-05-13.
+**An incident on `main`, resolved.** Three commits titled `agent: implement the feature`
+(2026-09-25 19:21:57) landed under `fix(08-05)`: a replay double committed
+`agent-output.txt` and a root `adl.yml` into the REAL checkout. The source was not
+identified — no transcript in that session ran a test at 19:21, and the serial baseline
+before it (19:11–19:14, from `packages/manager`) logs no daemon rooted at the real repo.
+They were dropped before the first push, at the maintainer's request, with
+`git rebase --onto 1d5ae39 9a2c62a main` (2026-09-26); the rebased tip differs from the
+pre-rebase one by exactly those two files. The `test(manager)` commit makes every
+committing double refuse to write inside its own source checkout, watched failing in a
+throwaway copy of the checkout. `DEBT.md` D-8-05-13 keeps the unexplained cause.
 
 **Three things 8.5 learned that the next steps inherit:**
 

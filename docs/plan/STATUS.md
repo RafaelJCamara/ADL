@@ -78,8 +78,8 @@ were opened; the audit found ten things, four of which changed what the steps ar
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
 **8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice), 8.3 (the
 failure-mode map), 8.4 (the tester agent) and 8.5 (outcomes from structured runner output) are
-done.** `main` carries three stray commits a replay double made on 2026-09-25, left for the
-maintainer to remove — [`HANDOFF.md`](./HANDOFF.md) has the evidence and the one command.
+done.** Three stray commits a replay double made on `main` on 2026-09-25 were dropped by a
+rebase before the first push — [`HANDOFF.md`](./HANDOFF.md) has the evidence.
 
 ```
 M01 Core Contracts .................. ✅ done
