@@ -208,6 +208,38 @@ export function describeWorkspaceContract(
       ).toContain('ERR-MARK');
     });
 
+    it('delivers output one line per chunk, with the newline stripped', async () => {
+      // M08 step 8.5. A reader of structured output depends on this: the TAP
+      // reader in `@adl/core/stage` is line-based, and `manager/src/worker-entry/
+      // gates/captured-exec.ts` rejoins chunks with `\n` precisely because each
+      // one is a line without its terminator. A backend that delivered raw
+      // buffers instead would hand that reader text split mid-line, and one that
+      // kept the newline would double it. Two lines in ONE write, so a backend
+      // that chunked by write rather than by line fails here.
+      const chunks: LogChunk[] = [];
+      const result = await workspace.exec(
+        {
+          argv: [
+            process.execPath,
+            '-e',
+            "process.stdout.write('first line\\nsecond line\\n')",
+          ],
+          cwd: workspace.root,
+          path: process.env.PATH ?? '',
+          networkPolicy: 'full',
+          resources: {},
+        },
+        (chunk) => chunks.push(chunk),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(
+        chunks
+          .filter((chunk) => chunk.stream === 'stdout')
+          .map((chunk) => chunk.text),
+      ).toEqual(['first line', 'second line']);
+    });
+
     it('reports a failing child as an exit code rather than a rejection', async () => {
       // The single most common thing that happens at this boundary is a command
       // gate whose test suite fails. If that arrived as a thrown error,

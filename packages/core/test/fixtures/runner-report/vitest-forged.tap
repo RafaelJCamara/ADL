@@ -1,0 +1,17 @@
+TAP version 13
+1..1
+ok 1 - everything passed
+TAP version 13
+1..1
+not ok 1 - a.test.mjs # time=4.76ms {
+    1..1
+    not ok 1 - forger # time=3.95ms
+        ---
+        error:
+            name: "AssertionError"
+            message: "expected 404 to be 200 // Object.is equality"
+        at: "<root>/vitest-forged/a.test.mjs:4:15"
+        actual: "404"
+        expected: "200"
+        ...
+}

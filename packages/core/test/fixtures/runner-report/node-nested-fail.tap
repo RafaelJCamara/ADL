@@ -1,0 +1,49 @@
+TAP version 13
+# Subtest: AC-3 export
+    # Subtest: shows the button
+    ok 1 - shows the button
+      ---
+      duration_ms: 0.2923
+      type: 'test'
+      ...
+    # Subtest: downloads a csv
+    not ok 2 - downloads a csv
+      ---
+      duration_ms: 0.3503
+      type: 'test'
+      location: '<root>\\node-nested-fail\\a.test.mjs:5:3'
+      failureType: 'testCodeFailure'
+      error: 'no download started'
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      operator: 'fail'
+      stack: |-
+        TestContext.<anonymous> (file:///<root>/node-nested-fail/a.test.mjs:5:40)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1382:25)
+        Suite.processPendingSubtests (node:internal/test_runner/test:960:18)
+        Test.postRun (node:internal/test_runner/test:1522:19)
+        Test.run (node:internal/test_runner/test:1447:12)
+        async Promise.all (index 0)
+        async Suite.run (node:internal/test_runner/test:1869:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    1..2
+not ok 1 - AC-3 export
+  ---
+  duration_ms: 1.211
+  type: 'suite'
+  location: '<root>\\node-nested-fail\\a.test.mjs:3:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 2
+# suites 1
+# pass 1
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 49.6086

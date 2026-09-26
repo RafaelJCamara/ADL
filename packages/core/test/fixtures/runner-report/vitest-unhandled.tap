@@ -1,0 +1,7 @@
+TAP version 13
+1..1
+ok 1 - a.test.mjs # time=32.80ms {
+    1..2
+    ok 1 - passes but leaks a rejection # time=0.74ms
+    ok 2 - a second pass # time=31.27ms
+}

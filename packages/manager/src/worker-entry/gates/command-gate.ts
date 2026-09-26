@@ -1,16 +1,16 @@
 /**
  * The command gate — ADL's first real gate (LOOP-01, M05 step 5.14).
  *
- * It runs one `adl.yml` command through `workspace.exec` and turns the exit
- * code into a {@link Verdict}. That is the whole of it, and the smallness is
- * the point: M05's own notes say *"the first gate is a command gate, not the
- * reviewer"* precisely because it is **deterministic and forceable to fail on
- * demand**, so the send-back plumbing this milestone exists to prove is
- * exercised with no agent nondeterminism anywhere in the signal. A reviewer
- * agent that sometimes passes and sometimes sends back cannot tell you whether
- * the loop works.
+ * It runs one `adl.yml` command through `workspace.exec` and turns what the
+ * command reported into a {@link Verdict}. That is the whole of it, and the
+ * smallness is the point: M05's own notes say *"the first gate is a command
+ * gate, not the reviewer"* precisely because it is **deterministic and
+ * forceable to fail on demand**, so the send-back plumbing this milestone
+ * exists to prove is exercised with no agent nondeterminism anywhere in the
+ * signal. A reviewer agent that sometimes passes and sometimes sends back cannot
+ * tell you whether the loop works.
  *
- * ## The three answers, and why the third is not a verdict
+ * ## The three answers in `exit_code` mode, and why the third is not a verdict
  *
  * | The child | Verdict | Why |
  * |---|---|---|
@@ -28,6 +28,23 @@
  * inventing one would widen a published one-way type for a distinction the
  * exit code already carries.
  *
+ * ## Every mode has a row, and a mode without one does not compile (M08 step 8.5)
+ *
+ * The gate reads its stdout as its pipeline entry declares — `exit_code`,
+ * `verdict` (M07 step 7.3), or `tap` (M08 step 8.5; `@adl/core/config`'s
+ * `command-gate.ts` carries why each exists). Until step 8.5 this module told
+ * the modes apart with two `emits === 'verdict'` comparisons, and **that was a
+ * hole measured, not guessed at**: with `'tap'` added to the mode list and
+ * nothing else changed, the build stayed green and a real zero-test
+ * `node --test --test-reporter=tap` declared `emits: tap` came back `pass`,
+ * because every mode that was not `verdict` fell through to exit-code judging —
+ * 7.3's sniff, arriving by omission.
+ *
+ * So the modes are dispatched through {@link OUTPUT_MODE_JUDGES}, a `Record`
+ * over the mode union with an `Exclude` pairing: a mode with no row is a
+ * missing-property error, a row for no mode is an `Exclude` error, and there is
+ * no default for a new mode to fall into.
+ *
  * ## `pass` cites a global category, never a criterion
  *
  * `PassVerdictSchema.checked` is non-empty by schema (ROLE-04: *"an approval
@@ -37,21 +54,21 @@
  * green `npm test` is evidence that the suite passed; it is **not** evidence
  * that acceptance criterion AC-3 was verified, and citing one would put
  * fabricated coverage into the pull-request table that exists to answer exactly
- * that question.
+ * that question. A `tap` pass cites the same thing, from the same judge the
+ * behaviour tester's suite uses.
  *
  * ## What this module deliberately does not do
  *
  * - **It does not run `build`, `start` or `teardown`.** ADL owning an app's
- *   whole lifecycle is ROLE-07, and the behaviour tester (M08) is what owns it.
- *   A gate that quietly ran three more commands would be reporting on something
- *   other than what its stage id names.
+ *   whole lifecycle is ROLE-07, and it belongs to the gate that declares
+ *   `needs_app` — `stage-runner.ts` runs it around this gate, never inside it.
  * - **It reads no spec.** It is handed one — `GateContext.spec`, M05 step 5.17
- *   — and ignores it, along with `GateContext.diff`, because an exit code is
- *   the whole of what it judges on. That a gate may ignore its context is the
- *   point: what it *cannot* do is reach for context it was not given, and
- *   {@link GateContext} has no member naming the developer's session,
- *   transcript, or rendered prompt (ROLE-03). This function's parameter list is
- *   the whole of what it can see.
+ *   — and ignores it, along with `GateContext.diff`, because what the command
+ *   reported is the whole of what it judges on. That a gate may ignore its
+ *   context is the point: what it *cannot* do is reach for context it was not
+ *   given, and {@link GateContext} has no member naming the developer's
+ *   session, transcript, or rendered prompt (ROLE-03). This function's
+ *   parameter list is the whole of what it can see.
  *
  * ## Where this file lives, and why that is load-bearing
  *
@@ -66,138 +83,26 @@
  * A new gate belongs in this directory so it inherits both layers on the day
  * it is created (D-27).
  */
-import {
-  parseDuration,
-  type CommandGateOutputMode,
-  type CommandSpec,
-} from '@adl/core/config';
 import type {
-  AgentEvent,
-  ExecResult,
-  GateContext,
-  LogChunk,
+  CommandGateOutputMode,
+  CommandSpec,
+  RunnerReportFormat,
+} from '@adl/core/config';
+import {
+  judgeRunnerReport,
+  MAX_RUNNER_REPORT_CHARS,
+  readRunnerReport,
+  stageErrorPolicy,
+  type GateContext,
+  type RunnerEvidence,
 } from '@adl/core/stage';
-import { stageErrorPolicy } from '@adl/core/stage';
-import { join } from 'node:path';
 import {
   fingerprintFinding,
   VerdictSchema,
   type Verdict,
 } from '@adl/core/verdict';
 import type { StageRunnerVerdict } from '../../ipc/stage-verdict.js';
-
-/**
- * How much of the command's output travels on the finding.
- *
- * A `Finding` is persisted to a database row and rendered into a **public**
- * pull-request comment (threat T-1-21, T-1-02), so unbounded child output
- * cannot go on one. The complete output is not lost: every chunk is streamed
- * to this attempt's NDJSON transcript as it arrives, which is where `adl logs`
- * points and what the artifact-store `rawRef` contract exists for.
- *
- * A rolling **tail** rather than `capRawOutput`'s head-and-tail elision, and
- * that is a memory decision rather than a stylistic one: `capRawOutput` takes
- * the whole string, which means holding the whole string, which is the thing
- * being avoided for a test suite that prints megabytes. A failing suite's
- * actionable lines are at the end.
- */
-const OUTPUT_TAIL_CHARS = 4_000;
-
-/**
- * The ceiling applied when the command declares no `timeout` of its own.
- *
- * The same constant and the same reasoning as `stage-runner.ts`'s
- * `DEFAULT_MAX_WALL_CLOCK_MS`: `EffectiveConfig.limits` has no per-invocation
- * wall-clock field, so this is a conservative placeholder rather than an
- * unbounded run. `CommandSpecSchema.timeout` is how an operator overrides it
- * today, and Phase 6's budget enforcement is where a configured default
- * belongs.
- */
-const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** A bounded tail of everything the child printed, in arrival order. */
-interface OutputTail {
-  /** The last {@link OUTPUT_TAIL_CHARS} characters, or all of them if fewer. */
-  readonly text: string;
-  /** How many characters were dropped off the front. */
-  readonly elided: number;
-}
-
-/**
- * Accumulate `chunk` into a tail that never exceeds {@link OUTPUT_TAIL_CHARS}.
- *
- * Both streams into one buffer, interleaved as they arrived, because that is
- * how a human reads a failing test run — a build tool's error line on stderr
- * makes sense beside the stdout line before it, and separating them would
- * reorder the story. The `stream` tag is preserved on the transcript, which is
- * where a consumer that wants to distinguish them looks.
- */
-function appendTail(tail: OutputTail, chunk: LogChunk): OutputTail {
-  const combined = tail.text + chunk.text;
-  if (combined.length <= OUTPUT_TAIL_CHARS) {
-    return { text: combined, elided: tail.elided };
-  }
-  const dropped = combined.length - OUTPUT_TAIL_CHARS;
-  return {
-    text: combined.slice(dropped),
-    elided: tail.elided + dropped,
-  };
-}
-
-/** The tail as it belongs on a finding — with the elision stated, never silent. */
-function renderTail(tail: OutputTail): string {
-  const body = tail.text.trim();
-  if (tail.elided === 0) {
-    return body === '' ? '(the command produced no output)' : body;
-  }
-  return `…(${String(tail.elided)} earlier characters elided — the full output is in this attempt's transcript)…\n${body}`;
-}
-
-/**
- * The timeout to enforce, in milliseconds.
- *
- * `command.timeout` reached this process as a field on a JSON blob that
- * `stage-runner.ts` casts rather than validates, so a value `DurationSchema`
- * would have rejected can arrive here even though `adl.yml` parsing could never
- * have produced one. `parseDuration` throws on those; falling back to the
- * default is the right answer rather than failing the stage, because a
- * malformed ceiling is a configuration problem and running under a conservative
- * one is strictly better than not running.
- */
-function timeoutMsFor(command: CommandSpec): number {
-  if (command.timeout === undefined) return DEFAULT_COMMAND_TIMEOUT_MS;
-  try {
-    return parseDuration(command.timeout);
-  } catch {
-    return DEFAULT_COMMAND_TIMEOUT_MS;
-  }
-}
-
-/**
- * How a {@link LogChunk} becomes a transcript record.
- *
- * The transcript's vocabulary is `AgentEvent`, because it was built for the one
- * thing that produced transcripts until now (M04's Claude Code adapter). A
- * command gate has no agent, so the mapping has to be made deliberately rather
- * than assumed, and it is made **here** — beside the code that knows what the
- * events mean — rather than in the stage runner, which would have to
- * reconstruct the same knowledge.
- *
- * Three deliberate choices:
- *
- * - `text`, not `tool_result`. The command's output *is* the assistant-visible
- *   content of this stage; there is no tool and no call id to invent.
- * - `messageId` carries the **stream name**. `AgentTextEvent`'s own docblock
- *   says the field "carries no meaning beyond grouping", and grouping stdout
- *   apart from stderr is exactly what a reader of a failing test run wants.
- * - **No `started` event.** It requires `capabilities: AgentCapabilities`, and
- *   there is no agent here whose capabilities those would be. Fabricating a
- *   set would put a false claim about tool access and cost reporting into the
- *   permanent record of an attempt.
- */
-function chunkEvent(chunk: LogChunk): AgentEvent {
-  return { kind: 'text', messageId: chunk.stream, delta: chunk.text };
-}
+import { runCaptured } from './captured-exec.js';
 
 /**
  * This gate's own configuration — the second and last parameter.
@@ -217,10 +122,10 @@ export interface CommandGateConfig {
   /** The child's `PATH`. Required by `ExecSpec`, and required here for the same reason. */
   readonly path: string;
   /**
-   * What this gate's stdout means (HARN-02, M07 step 7.3). Defaults to
-   * `exit_code`, which is 5.14's behaviour exactly — see
-   * `@adl/core/config`'s `command-gate.ts` for why the mode is declared
-   * rather than sniffed.
+   * What this gate's stdout means (HARN-02, M07 step 7.3; ROLE-08, M08 step
+   * 8.5). Defaults to `exit_code`, which is 5.14's behaviour exactly — see
+   * `@adl/core/config`'s `command-gate.ts` for why the mode is declared rather
+   * than sniffed.
    */
   readonly emits?: CommandGateOutputMode;
 }
@@ -237,78 +142,84 @@ export interface CommandGateConfig {
  */
 const MALFORMED_VERDICT_EXCERPT_CHARS = 500;
 
+/** A command that ran to completion, as a judge sees it. */
+interface ExitedRun {
+  readonly stageId: string;
+  readonly argv: readonly string[];
+  readonly exitCode: number;
+  readonly durationMs: number;
+  /** stdout's lines joined by `\n` — empty for a mode that does not read it. */
+  readonly stdout: string;
+  /** A bounded, elision-stated tail of both streams, for findings and errors. */
+  readonly tail: string;
+}
+
+/** How one output mode is read. */
+interface OutputModeJudge {
+  /** Whether stdout is captured at all — `exit_code` never pays for a buffer. */
+  readonly readsStdout: boolean;
+  readonly judge: (run: ExitedRun) => StageRunnerVerdict;
+}
+
+/**
+ * Every output mode, and how it is judged — see the module docblock for why a
+ * table and not a comparison.
+ */
+const OUTPUT_MODE_JUDGES = Object.freeze({
+  exit_code: { readsStdout: false, judge: verdictFromExitCode },
+  verdict: {
+    readsStdout: true,
+    judge: (run: ExitedRun) =>
+      verdictFromStdout(run.stageId, run.stdout, run.exitCode),
+  },
+  tap: {
+    readsStdout: true,
+    judge: (run: ExitedRun) => verdictFromRunnerReport('tap', run),
+  },
+} satisfies Record<CommandGateOutputMode, OutputModeJudge>);
+
+/**
+ * A row for no mode fails the build, and so does a missing one — through
+ * `satisfies`, never a type annotation. Written first with the annotation, this
+ * pairing asserted nothing: a stale `junit` row compiled, because an annotated
+ * table's `keyof` is the annotation's keys. The watched-failing pass caught it
+ * (and the same defect in `app-failure.ts`, the precedent it was copied from).
+ */
+type _EveryJudgeIsAMode =
+  Exclude<keyof typeof OUTPUT_MODE_JUDGES, CommandGateOutputMode> extends never
+    ? true
+    : never;
+const _everyJudgeIsAMode: _EveryJudgeIsAMode = true;
+void _everyJudgeIsAMode;
+
 /**
  * Run the command and report what it decided.
  *
  * Never throws for a failing command — that is the whole distinction
  * `ExecResult.exitCode` exists to carry, and the workspace contract suite
  * pins it (*"reports a failing child as an exit code rather than a rejection"*).
- * A `cwd` outside the workspace root, or a workspace that refuses the exec,
- * still rejects; the caller classifies that.
+ * A command the workspace refused or could not spawn is a `provider_error`: the
+ * child never ran, so nothing was judged (D-12).
  */
 export async function runCommandGate(
   gate: GateContext,
   config: CommandGateConfig,
 ): Promise<StageRunnerVerdict> {
-  const { workspace, stageId } = gate;
-  const { command } = config;
-
-  // `command.cwd` is repo-relative by schema (`RepoRelativePathSchema`), and
-  // the containment check is `exec`'s own: every backend calls
-  // `assertCwdWithinRoot(root, spec.cwd)` **first and unconditionally**, before
-  // anything reaches the process table (D-02, WR-01, and the contract suite's
-  // "refuses an exec whose cwd is …" cases pin it on both backends).
-  //
-  // So this deliberately does not re-guard, and that is not WR-02's defect
-  // repeating: WR-02 was a path handed to a *direct filesystem read* with no
-  // guard anywhere in the chain. Here the only thing this path is ever passed
-  // to is the call that guards it, so a second check would be a second
-  // implementation to keep in agreement — and `assertWithinRoot`, the one this
-  // package can reach, is the wrong guard anyway: it rejects the workspace root
-  // itself, which is the normal and correct value here.
-  const cwd = join(workspace.root, command.cwd ?? '.');
-
-  let tail: OutputTail = { text: '', elided: 0 };
-  // Accumulated SEPARATELY from the interleaved tail above, and only in
-  // `verdict` mode (M07 step 7.3). The tail deliberately merges both streams
-  // because that is how a human reads a failing run; a verdict is a document,
-  // and interleaving a progress line from stderr into the middle of it would
-  // corrupt the very thing being parsed. Not accumulated at all in
-  // `exit_code` mode, so an ordinary test suite printing megabytes does not
-  // pay for a buffer nothing reads.
+  const { stageId } = gate;
   const emits: CommandGateOutputMode = config.emits ?? 'exit_code';
-  let stdout = '';
+  const mode = OUTPUT_MODE_JUDGES[emits];
 
-  let result: ExecResult;
-  try {
-    result = await workspace.exec(
-      {
-        argv: command.argv,
-        cwd,
-        path: config.path,
-        ...(command.env !== undefined ? { env: command.env } : {}),
-        timeoutMs: timeoutMsFor(command),
-        ...(gate.signal !== undefined ? { signal: gate.signal } : {}),
-        // v1's only values, at the one call site that could have hardcoded
-        // them invisibly. See `NetworkPolicy`'s docblock for why the field
-        // exists before any backend can enforce it.
-        networkPolicy: 'full',
-        resources: {},
-      },
-      (chunk) => {
-        tail = appendTail(tail, chunk);
-        if (emits === 'verdict' && chunk.stream === 'stdout') {
-          stdout += chunk.text;
-        }
-        gate.onEvent(chunkEvent(chunk));
-      },
-    );
-  } catch (error) {
-    // The child never ran: the binary could not be spawned, or the workspace
-    // refused. Not a verdict — nothing was judged (D-12).
+  const run = await runCaptured(gate, {
+    command: config.command,
+    path: config.path,
+    readStdout: mode.readsStdout,
+    transcriptPrefix: '',
+  });
+
+  if (run.kind === 'spawn_failed') {
     return stageError(
       'provider_error',
-      `the ${stageId} command could not be run: ${error instanceof Error ? error.message : String(error)}`,
+      `the ${stageId} command could not be run: ${run.detail}`,
     );
   }
 
@@ -319,38 +230,50 @@ export async function runCommandGate(
   // `turn_limit_reached` is meaningless here, so these are the two honest ones.
   gate.onEvent({
     kind: 'result',
-    outcome: result.exitCode === null ? 'cancelled' : 'completed',
-    durationMs: result.durationMs,
+    outcome: run.kind === 'killed' ? 'cancelled' : 'completed',
+    durationMs: run.durationMs,
   });
 
-  if (result.exitCode === null) {
-    // Killed rather than exited — the timeout above, or a cancellation. There
-    // is no exit code, so there is no judgement, so this is not a verdict.
+  if (run.kind === 'killed') {
+    // Killed rather than exited — the timeout, or a cancellation. There is no
+    // exit code, so there is no judgement, so this is not a verdict.
     return stageError(
       'timeout',
-      `the ${stageId} command was killed after ${String(result.durationMs)}ms without exiting` +
-        `${result.signal === undefined ? '' : ` (signal ${result.signal})`}: ${renderTail(tail)}`,
+      `the ${stageId} command was killed after ${String(run.durationMs)}ms without exiting` +
+        `${run.signal === undefined ? '' : ` (signal ${run.signal})`}: ${run.tail}`,
     );
   }
 
-  // HARN-02 (M07 step 7.3): a gate that promised a verdict is judged on the
-  // verdict, whatever its exit code was.
-  //
-  // The exit code is deliberately not consulted here, in EITHER direction. A
-  // linter that exits 1 to mean "I found things" and prints an accurate
-  // `send_back` is reporting correctly, and a gate that exits 0 while printing
-  // a `fail` is too. Mixing the two signals would make the contract "emit a
-  // verdict AND get the exit code right", which is two contracts.
-  if (emits === 'verdict') {
-    return verdictFromStdout(stageId, stdout, result.exitCode);
+  if (mode.readsStdout && run.stdoutOverflowed) {
+    // Refused rather than read in part: a report cut at the bound reads as
+    // truncated at best, and at worst loses a failure that came after the cut.
+    return stageError(
+      'unparseable',
+      `the ${stageId} gate declares \`emits: ${emits}\` and printed more than ` +
+        `${String(MAX_RUNNER_REPORT_CHARS)} characters to stdout, so ADL did not read it — ` +
+        'the whole of it is in this attempt’s transcript',
+    );
   }
 
-  if (result.exitCode === 0) {
+  return mode.judge({
+    stageId,
+    argv: config.command.argv,
+    exitCode: run.exitCode,
+    durationMs: run.durationMs,
+    stdout: run.stdout,
+    tail: run.tail,
+  });
+}
+
+/** `exit_code` mode — 5.14's behaviour, exactly. */
+function verdictFromExitCode(run: ExitedRun): StageRunnerVerdict {
+  const { stageId, argv, exitCode, durationMs, tail } = run;
+  if (exitCode === 0) {
     return {
       kind: 'verdict',
       verdict: {
         outcome: 'pass',
-        summary: `\`${command.argv.join(' ')}\` exited 0 in ${String(result.durationMs)}ms`,
+        summary: `\`${argv.join(' ')}\` exited 0 in ${String(durationMs)}ms`,
         // See the module docblock: a green command is evidence about the
         // build, never about a named acceptance criterion.
         checked: [{ kind: 'global', category: 'build' }],
@@ -363,21 +286,53 @@ export async function runCommandGate(
   // duration, not the output. That is what makes the same failure recurring
   // across rounds recognisable as the same finding, which is what
   // `limits.repeat_finding_threshold`'s stall detection (M06) reads.
-  const title = `the ${stageId} command failed (exit ${String(result.exitCode)})`;
+  const title = `the ${stageId} command failed (exit ${String(exitCode)})`;
   const verdict: Verdict = {
     outcome: 'send_back',
-    summary: `\`${command.argv.join(' ')}\` exited ${String(result.exitCode)}`,
+    summary: `\`${argv.join(' ')}\` exited ${String(exitCode)}`,
     findings: [
       {
         fingerprint: fingerprintFinding({ stageId, title }),
         severity: 'blocker',
         title,
-        detail: renderTail(tail),
+        detail: tail,
         criterionRef: { kind: 'global', category: 'build' },
       },
     ],
   };
   return { kind: 'verdict', verdict };
+}
+
+/**
+ * A runner-report mode (ROLE-08, M08 step 8.5): read the declared format and
+ * judge it with `@adl/core/stage`'s `judgeRunnerReport` — the one judgement a
+ * behaviour tester's suite gets too, so the two cannot drift.
+ */
+function verdictFromRunnerReport(
+  format: RunnerReportFormat,
+  run: ExitedRun,
+): StageRunnerVerdict {
+  return runnerEvidenceVerdict(
+    judgeRunnerReport({
+      stageId: run.stageId,
+      runLabel: run.argv.join(' '),
+      exitCode: run.exitCode,
+      read: readRunnerReport(format, run.stdout),
+      outputTail: run.tail,
+    }),
+  );
+}
+
+/**
+ * Evidence as a command gate reports it: a report that cannot be judged is
+ * `unparseable` (D-12), and every other answer is the verdict the evidence
+ * already carries.
+ */
+function runnerEvidenceVerdict(evidence: RunnerEvidence): StageRunnerVerdict {
+  if (evidence.kind === 'unjudgeable') {
+    return stageError(evidence.errorKind, evidence.detail);
+  }
+  return { kind: 'verdict', verdict: evidence.verdict };
 }
 
 /**
@@ -396,6 +351,14 @@ export async function runCommandGate(
  * a gate author checking their output against the published contract and ADL
  * checking it here are checking the same thing — not two implementations of
  * one idea (D-25's reasoning, one layer down).
+ *
+ * The exit code is deliberately not consulted, in EITHER direction. A linter
+ * that exits 1 to mean "I found things" and prints an accurate `send_back` is
+ * reporting correctly, and a gate that exits 0 while printing a `fail` is too.
+ * Mixing the two signals would make the contract "emit a verdict AND get the
+ * exit code right", which is two contracts. (`tap` differs, and its judge says
+ * why: a runner's stdout reports tests, and a failure outside every test shows
+ * up only in the exit status.)
  */
 function verdictFromStdout(
   stageId: string,

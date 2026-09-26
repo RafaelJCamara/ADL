@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: AC-1: GET /health answers 200
+not ok 1 - AC-1: GET /health answers 200
+  ---
+  duration_ms: 0.8259
+  type: 'test'
+  location: '<root>\\node-fail\\a.test.mjs:3:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    GET /health answered 404
+    
+    404 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 404
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///<root>/node-fail/a.test.mjs:3:54)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: AC-2: the body is JSON
+ok 2 - AC-2: the body is JSON
+  ---
+  duration_ms: 0.0906
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 1
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.6741

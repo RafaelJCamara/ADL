@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: suite with failing before hook
+    # Subtest: never gets to run
+    not ok 1 - never gets to run
+      ---
+      duration_ms: 0
+      type: 'test'
+      location: '<root>\\node-before-hook\\a.test.mjs:4:3'
+      failureType: 'cancelledByParent'
+      error: 'test did not finish before its parent and was cancelled'
+      code: 'ERR_TEST_FAILURE'
+      ...
+    1..1
+not ok 1 - suite with failing before hook
+  ---
+  duration_ms: 0.4695
+  type: 'suite'
+  location: '<root>\\node-before-hook\\a.test.mjs:2:1'
+  failureType: 'hookFailed'
+  error: 'setup hook broke'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    SuiteContext.<anonymous> (file:///<root>/node-before-hook/a.test.mjs:3:24)
+    TestHook.runInAsyncScope (node:async_hooks:227:14)
+    TestHook.run (node:internal/test_runner/test:1382:25)
+    TestHook.run (node:internal/test_runner/test:1726:18)
+    TestHook.run (node:internal/util:581:20)
+    Suite.runHook (node:internal/test_runner/test:1269:20)
+    Suite.run (node:internal/test_runner/test:1863:18)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+1..1
+# tests 1
+# suites 1
+# pass 0
+# fail 0
+# cancelled 1
+# skipped 0
+# todo 0
+# duration_ms 52.2577

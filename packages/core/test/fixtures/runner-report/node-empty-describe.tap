@@ -1,0 +1,22 @@
+TAP version 13
+# Subtest: empty group
+ok 1 - empty group
+  ---
+  duration_ms: 0.2879
+  type: 'suite'
+  ...
+# Subtest: a real test
+ok 2 - a real test
+  ---
+  duration_ms: 0.1801
+  type: 'test'
+  ...
+1..2
+# tests 1
+# suites 1
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 53.3449

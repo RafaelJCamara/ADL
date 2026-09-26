@@ -1,0 +1,36 @@
+TAP version 13
+# Subtest: outer
+    # Subtest: inner
+        # Subtest: deep leaf passes
+        ok 1 - deep leaf passes
+          ---
+          duration_ms: 0.2988
+          type: 'test'
+          ...
+        1..1
+    ok 1 - inner
+      ---
+      duration_ms: 0.6855
+      type: 'suite'
+      ...
+    # Subtest: shallow leaf passes
+    ok 2 - shallow leaf passes
+      ---
+      duration_ms: 0.0609
+      type: 'test'
+      ...
+    1..2
+ok 1 - outer
+  ---
+  duration_ms: 0.9907
+  type: 'suite'
+  ...
+1..1
+# tests 2
+# suites 2
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 52.7752

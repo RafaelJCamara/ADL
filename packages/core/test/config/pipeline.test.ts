@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { GROUP_SYNTAX_REJECTION } from '../../src/config/adl-yml.js';
+import { judgementKindOf } from '../../src/loop/follow-up-policy.js';
+import { costClassOf } from '../../src/loop/send-back-policy.js';
 import {
   BUILT_IN_STAGE_IDS,
   HarnessResolutionError,
@@ -246,5 +248,44 @@ describe('resolvePipeline — a gate that carries its own command', () => {
       registry(),
     );
     expect(stage?.source).toBe('command');
+  });
+});
+
+describe('resolvePipeline — a test run declared as a report stays the built-in it is (M08 step 8.5)', () => {
+  it('`- harness: test` with `with: { emits: tap }` keeps its built-in source, cost class and judgement kind', () => {
+    // The point of `BuiltInCommandGateWithSchema`: reading `commands.test` as a
+    // report must not require restating its argv under `with.command`, which
+    // would make it a third-party gate — `expensive`, so `on_send_back`
+    // defaulting to `stop` instead of the built-in's `continue`.
+    const [stage] = resolvePipeline(
+      [{ harness: 'test', with: { emits: 'tap' } }],
+      registry(),
+    );
+    expect(stage?.source).toBe('built-in');
+    expect(costClassOf(stage!)).toBe('cheap');
+    expect(judgementKindOf(stage!)).toBe('deterministic');
+  });
+
+  it('a behaviour entry declaring `with.suite` stays the built-in tester — a nested `command` is not a command gate', () => {
+    // `declaresCommand` reads only a TOP-LEVEL `with.command`. If it looked
+    // deeper, declaring the suite would silently dispatch the tester as a plain
+    // program — the trap the key's name `suite` exists to avoid.
+    const [stage] = resolvePipeline(
+      [
+        {
+          harness: 'behaviour',
+          with: {
+            suite: {
+              command: { argv: ['node', '--test', '--test-reporter=tap'] },
+              emits: 'tap',
+            },
+          },
+        },
+      ],
+      registry(),
+    );
+    expect(stage?.source).toBe('built-in');
+    expect(costClassOf(stage!)).toBe('expensive');
+    expect(judgementKindOf(stage!)).toBe('deterministic');
   });
 });

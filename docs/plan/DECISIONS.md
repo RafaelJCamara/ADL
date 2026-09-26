@@ -247,6 +247,38 @@ and passed" and "AC-3 was verified" are different claims, and enforcing citation
 cannot support.
 (M08 step 8.4, ROLE-05, HARN-04.)
 
+**Test outcomes are read from a declared TAP report and judged by one pure function; a run
+that executed no test is `inconclusive` — for a command gate and for the behaviour tester
+alike.** A third `emits:` mode, `tap`, not `verdict` plus a declared adapter: an adapter
+either launches the runner itself (a launcher outside `packages/workspace`) or sits in a shell
+pipe `argv` does not have, it puts ROLE-08's rule in code ADL cannot see, and it does nothing
+for the tester, which has no `emits`. TAP because node and vitest both print it with no plugin
+and it parses line by line in `@adl/core` with no dependency; JUnit would need an XML parser
+behind a supply-chain gate, and node's puts its counts in comments. The report is judged from
+test points — never from summary comments (node prints `# fail 0` beside a failed hook), never
+validating point numbers (node repeats them) — and a point that owns a subtest block, or that
+node declares `type: 'suite'`, is never an executed test. A missing, malformed, truncated or
+bailed-without-failure report is `unparseable` (D-12). **The exit code can veto a pass and never
+create one** — vitest prints a fully green report and exits 1 when a test leaks an unhandled
+rejection.
+**The tester runs its declared `with.suite` itself** — through `workspace.exec` on its blind
+copy, while the app is still up — and that run decides: the agent's claim can only turn a green
+run `inconclusive` or attach `warn` notes, is checked against the spec's criteria (ROLE-04)
+before the suite is paid for, and is not recorded as coverage until step 8.7 links tests to
+criteria. A runner-derived pass cites `{ global: build }`. The key is `suite` and never
+`command`, because `declaresCommand` reads a top-level `with.command` as "this entry is a
+program". **Agent gates receive a second parameter, an `AgentGateHost`** (`path`, and the
+same single `appVariables` record a command gate's `env` is interpolated with), on
+`CommandGateConfig`'s "what a gate is told about itself" precedent — no published surface and
+one allowlist of variables. Two of three design reviewers preferred otherwise; the
+alternatives were the gate reading `process.env` itself (an ambient channel, and it cannot
+compute the variables — `GateContext` carries no feature id) and a `GateContext` member (a
+one-way change to the published contract). M13 owes module gates the same channel. **Forward
+seam:** when steps 8.7–8.9 need ADL itself to re-run the suite, `with.suite` becomes a
+pipeline-entry key under `visible_paths`' principle. **What no report can tell ADL:** node
+reports a test-less file, or one whose test calls `process.exit(0)`, as one passing test;
+step 8.8's must-fail-at-base guardrail is what rejects it. (M08 step 8.5, ROLE-08, HARN-04.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.

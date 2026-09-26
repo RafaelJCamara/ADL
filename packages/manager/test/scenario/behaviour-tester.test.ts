@@ -59,6 +59,8 @@ interface TesterReport {
   readonly toldSourceIsAbsent: boolean;
   readonly fetched: { readonly status: number; readonly body: string } | null;
   readonly fetchError: string | null;
+  /** Whether the instructions carried the suite ADL runs (M08 step 8.5). */
+  readonly sawSuiteCommand: boolean;
 }
 
 async function waitUntil(
@@ -146,6 +148,20 @@ describe('scenario: a code-blind tester verifies a running app', () => {
                 harness: 'behaviour',
                 visible_paths: ['tests/**'],
                 needs_app: true,
+                // ROLE-08 (M08 step 8.5): the suite ADL runs after the agent, whose
+                // report — not the agent's claim — decides the stage. The double
+                // writes no test here, so what executes is the repository's own
+                // `tests/existing.test.mjs`: the tester is credited with a test it
+                // did not write, which is DEBT.md's D-8-05-3, reproduced (owner
+                // 8.6, which is what identifies the tester's own files).
+                with: {
+                  suite: {
+                    command: {
+                      argv: [process.execPath, '--test', '--test-reporter=tap'],
+                    },
+                    emits: 'tap',
+                  },
+                },
               },
             ],
           });
@@ -269,10 +285,15 @@ describe('scenario: a code-blind tester verifies a running app', () => {
             expect(rounds).toHaveLength(1);
             expect(rounds[0]?.outcome).toBe('green');
 
-            // ── 7. And the criterion it cited was recorded as covered ──
-            // `verdict_checked_criteria` is the table M09's coverage section is
-            // drawn from, and a citation naming a criterion the spec lacks would
-            // have been refused as `unparseable` by ROLE-04's check instead.
+            // ── 7. The pass cites the SUITE, not the criterion claimed ──
+            // Changed by M08 step 8.5, deliberately. The double claims AC-1, and
+            // until 8.5 that claim went straight into `verdict_checked_criteria` —
+            // the table M09's coverage section is drawn from — on the model's word
+            // alone. Now the suite ADL ran decides, and "every executed test
+            // passed" is evidence about the suite, not about AC-1: which test
+            // covers which criterion is step 8.7's link. The claim is still
+            // checked (ROLE-04, on the claim, inside the gate) and named in the
+            // verdict's summary; it is not recorded as coverage.
             const covered = await db
               .selectFrom('verdict_checked_criteria')
               .innerJoin(
@@ -285,10 +306,21 @@ describe('scenario: a code-blind tester verifies a running app', () => {
                 'stage_attempts.id',
                 'verdicts.stage_attempt_id',
               )
-              .select('verdict_checked_criteria.criterion_id as id')
+              .select([
+                'verdict_checked_criteria.ref_kind as refKind',
+                'verdict_checked_criteria.criterion_id as criterionId',
+                'verdict_checked_criteria.global_category as category',
+              ])
               .where('stage_attempts.stage_id', '=', 'behaviour')
               .execute();
-            expect(covered.map((row) => row.id)).toEqual(['AC-1']);
+            expect(covered).toEqual([
+              { refKind: 'global', criterionId: null, category: 'build' },
+            ]);
+
+            // ── 8. And it was told how ADL would run its tests ─────────
+            // The command that runs the suite, which step 8.0's spike said the
+            // tester is given and which, until 8.5, its prompt did not contain.
+            expect(report.sawSuiteCommand).toBe(true);
           } finally {
             await handle.stop();
             // D-8-03-1's settle window; see `app-failure-modes.test.ts`.

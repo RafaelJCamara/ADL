@@ -315,7 +315,15 @@ export interface Workspace {
    * {@link Workspace.write}, which are scoped to {@link Workspace.root}.
    */
   readonly scratchHome: string;
-  /** Run one process inside this workspace, streaming its output as it arrives. */
+  /**
+   * Run one process inside this workspace, streaming its output as it arrives.
+   *
+   * `log` receives the output **one line per chunk, with the newline stripped**
+   * (M08 step 8.5 made this part of the contract, and the workspace contract
+   * suite pins it for every backend): a reader of structured output — a TAP
+   * report, a verdict — rejoins the chunks with `\n`, and a backend that
+   * delivered raw buffers would split lines where a reader could not tell.
+   */
   exec(spec: ExecSpec, log: (chunk: LogChunk) => void): Promise<ExecResult>;
   /**
    * Read a file, by a path relative to {@link Workspace.root}.

@@ -83,6 +83,35 @@ export {
   type AppFailureAnswer,
   type AppFailureKind,
 } from './app-failure.js';
+// ROLE-08 (M08 step 8.5): test outcomes read from the runner's own report, and
+// zero executed tests is `inconclusive`, never a `pass`. Here for the same
+// reason as the table above — pure policy that produces a `Verdict` or an
+// `unparseable` — and `runner-report.ts` carries why its answer type cannot
+// express a pass built from nothing. Used by a command gate declaring
+// `emits: tap` and by the behaviour tester's own suite run, so one judgement
+// serves both.
+export {
+  readRunnerReport,
+  judgeRunnerReport,
+  flattenReport,
+  isExecuted,
+  REPORTED_TEST_STATUSES,
+  type ReportedTestStatus,
+  type ReportedTest,
+  type ReportedTestResult,
+  type RunnerReport,
+  RUNNER_REPORT_DEFECTS,
+  type RunnerReportDefect,
+  type RunnerReportRead,
+  type RunnerReportInput,
+  RUNNER_EVIDENCE_KINDS,
+  type RunnerEvidenceKind,
+  type RunnerEvidence,
+  MAX_RUNNER_REPORT_CHARS,
+  MAX_RUNNER_FINDINGS,
+  MAX_RUNNER_FINDING_DETAIL_CHARS,
+} from './runner-report.js';
+export { readTapReport } from './tap.js';
 
 // The AgentRunner port — the only way a stage calls a model (BACK-01). Real
 // interfaces and schemas live in `./agent.ts`; declared here (not in

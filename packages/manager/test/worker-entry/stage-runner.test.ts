@@ -1430,3 +1430,344 @@ describe('the plain-command gate (HARN-02, M07 step 7.3)', () => {
     });
   }, 30_000);
 });
+
+/**
+ * Test outcomes read from the runner's own report (ROLE-08, M08 step 8.5).
+ *
+ * Every case runs a REAL `node --test` (or a node one-liner printing a runner's
+ * real output) through the REAL launcher, because two of the facts this step
+ * rests on live below the gate: `Workspace.exec` delivers stdout one line per
+ * chunk with the newline stripped, and node exits 0 when it ran nothing. A
+ * double would encode both as assumptions.
+ *
+ * The case that carries the weight is the first: the same zero-test program is
+ * `inconclusive` under `emits: tap` and `pass` under `exit_code`.
+ */
+describe('a declared runner report (ROLE-08, M08 step 8.5)', () => {
+  /** `commands.test` is the control, exactly as in the block above: it exits 9. */
+  function pipelineWith(
+    entry: Record<string, unknown>,
+    testCommand: Record<string, unknown> = {
+      argv: [process.execPath, '-e', 'process.exit(9)'],
+    },
+  ): string {
+    const daemon = DaemonConfigSchema.parse({});
+    const repo = AdlYmlSchema.parse({
+      version: 1,
+      commands: {
+        build: { argv: ['npm', 'ci'] },
+        start: { argv: ['npm', 'run', 'dev'] },
+        test: testCommand,
+        teardown: { argv: ['docker', 'compose', 'down'] },
+      },
+      pipeline: ['develop', entry],
+    });
+    const { config } = mergeConfig(DEFAULT_CONFIG, daemon, repo);
+    return JSON.stringify(config);
+  }
+
+  async function runGateAt(
+    repo: TempRepo,
+    stageId: string,
+    effectiveConfigJson: string,
+  ): Promise<StageRunnerVerdict> {
+    const { assign: developer } = await runDeveloperStage({
+      mainRepo: repo.mainRepo,
+      scratchRoot: repo.scratchRoot,
+      git: repo.git,
+    });
+    const result = await createProductionStageRunner()(
+      buildAssign({
+        featureId: developer.featureId,
+        mainRepo: repo.mainRepo,
+        scratchRoot: repo.scratchRoot,
+        baseRef: developer.baseRef,
+        stageId,
+        stageIndex: 1,
+        roundId: developer.roundId,
+        effectiveConfigJson,
+      }),
+    );
+    return JSON.parse(result.verdictJson) as StageRunnerVerdict;
+  }
+
+  /** A plain command gate named `suite`, running `argv`, reading stdout as `emits`. */
+  function suiteGate(repo: TempRepo, argv: readonly string[], emits: string) {
+    return runGateAt(
+      repo,
+      'suite',
+      pipelineWith({ harness: 'suite', with: { command: { argv }, emits } }),
+    );
+  }
+
+  /** A test file outside every workspace, so node runs exactly it and nothing it discovers. */
+  async function testFile(
+    repo: TempRepo,
+    name: string,
+    body: string,
+  ): Promise<string> {
+    const path = join(dirname(repo.mainRepo), name);
+    await writeFile(path, body, 'utf8');
+    return path;
+  }
+
+  const NODE_TAP = [process.execPath, '--test', '--test-reporter=tap'];
+
+  it('the same zero-test run is inconclusive under emits: tap and a pass under exit_code', async () => {
+    await withTempRepo(async (repo) => {
+      // node discovers no test file in the worktree, runs nothing, and exits 0.
+      const asReport = await suiteGate(repo, NODE_TAP, 'tap');
+      expect(asReport.kind).toBe('verdict');
+      if (asReport.kind !== 'verdict') return;
+      expect(asReport.verdict.outcome).toBe('inconclusive');
+      if (asReport.verdict.outcome !== 'inconclusive') return;
+      expect(asReport.verdict.reason).toContain('exited 0');
+      expect(asReport.verdict.reason).toContain('no test executed');
+    });
+    await withTempRepo(async (repo) => {
+      // The contrast the step exists for: the identical program, judged by its
+      // exit code, is a pass that verified nothing.
+      const asExitCode = await suiteGate(repo, NODE_TAP, 'exit_code');
+      expect(asExitCode.kind === 'verdict' && asExitCode.verdict.outcome).toBe(
+        'pass',
+      );
+    });
+  }, 60_000);
+
+  it('a suite that ran and passed is a pass citing the suite, with the count in its summary', async () => {
+    await withTempRepo(async (repo) => {
+      const file = await testFile(
+        repo,
+        'passing.test.mjs',
+        "import { test } from 'node:test';\ntest('AC-1: it exports', () => {});\n",
+      );
+      const verdict = await suiteGate(repo, [...NODE_TAP, file], 'tap');
+      expect(verdict.kind).toBe('verdict');
+      if (verdict.kind !== 'verdict' || verdict.verdict.outcome !== 'pass') {
+        throw new Error(`expected a pass, got ${JSON.stringify(verdict)}`);
+      }
+      expect(verdict.verdict.summary).toContain('exited 0');
+      expect(verdict.verdict.summary).toContain('1 executed test');
+      expect(verdict.verdict.checked).toEqual([
+        { kind: 'global', category: 'build' },
+      ]);
+    });
+  }, 30_000);
+
+  it('a failing test is a send_back whose fingerprint does not move between workspaces', async () => {
+    const BODY =
+      "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n" +
+      "test('AC-1: GET /export answers 200', () => { assert.equal(404, 200, 'GET /export answered 404'); });\n";
+    const fingerprints: string[] = [];
+    for (let run = 0; run < 2; run += 1) {
+      await withTempRepo(async (repo) => {
+        const file = await testFile(repo, 'failing.test.mjs', BODY);
+        const verdict = await suiteGate(repo, [...NODE_TAP, file], 'tap');
+        expect(verdict.kind).toBe('verdict');
+        if (
+          verdict.kind !== 'verdict' ||
+          verdict.verdict.outcome !== 'send_back'
+        ) {
+          throw new Error(
+            `expected a send_back, got ${JSON.stringify(verdict)}`,
+          );
+        }
+        const [finding] = verdict.verdict.findings;
+        expect(finding?.title).toBe(
+          'test failed: AC-1: GET /export answers 200',
+        );
+        // The diagnostic survived as lines — `captured-exec.ts` rejoins them.
+        expect(finding?.detail).toContain('GET /export answered 404');
+        fingerprints.push(finding?.fingerprint ?? '');
+      });
+    }
+    // Two temp repositories, two absolute paths in the diagnostics, two
+    // durations — one fingerprint, or stall detection never sees it twice.
+    expect(fingerprints[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprints[1]).toBe(fingerprints[0]);
+  }, 60_000);
+
+  it('a forgotten reporter flag is unparseable and says which flag, never a pass', async () => {
+    await withTempRepo(async (repo) => {
+      const file = await testFile(
+        repo,
+        'passing.test.mjs',
+        "import { test } from 'node:test';\ntest('passes', () => {});\n",
+      );
+      const verdict = await suiteGate(
+        repo,
+        [process.execPath, '--test', '--test-reporter=spec', file],
+        'tap',
+      );
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('--test-reporter=tap');
+    });
+  }, 30_000);
+
+  it('a runner that exits 0 having printed nothing is unparseable — under exit_code it would pass', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await suiteGate(
+        repo,
+        [process.execPath, '-e', 'process.exit(0)'],
+        'tap',
+      );
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+    });
+  }, 30_000);
+
+  it('a report that stops before its plan is unparseable, not a pass', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await suiteGate(
+        repo,
+        [
+          process.execPath,
+          '-e',
+          "console.log('TAP version 13'); console.log('ok 1 - the only test so far');",
+        ],
+        'tap',
+      );
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('no plan');
+    });
+  }, 30_000);
+
+  it('a green report from a runner that exited 1 is sent back — the exit code may veto a pass', async () => {
+    // vitest's own output for a test that leaks an unhandled rejection
+    // (M08 step 8.5's probe): every test green, exit 1.
+    await withTempRepo(async (repo) => {
+      const verdict = await suiteGate(
+        repo,
+        [
+          process.execPath,
+          '-e',
+          "console.log(['TAP version 13','1..1','ok 1 - a.test.mjs {','    1..1','    ok 1 - leaks # time=0.7ms','}'].join('\\n')); process.exitCode = 1;",
+        ],
+        'tap',
+      );
+      expect(verdict.kind).toBe('verdict');
+      if (
+        verdict.kind !== 'verdict' ||
+        verdict.verdict.outcome !== 'send_back'
+      ) {
+        throw new Error(`expected a send_back, got ${JSON.stringify(verdict)}`);
+      }
+      expect(verdict.verdict.findings[0]?.title).toBe(
+        'the suite runner exited 1 although every test it reported passed',
+      );
+    });
+  }, 30_000);
+
+  it('a runner ADL had to kill is never a pass', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runGateAt(
+        repo,
+        'suite',
+        pipelineWith({
+          harness: 'suite',
+          with: {
+            command: {
+              argv: [
+                process.execPath,
+                '-e',
+                "console.log('TAP version 13'); setTimeout(() => {}, 60000);",
+              ],
+              timeout: '1s',
+            },
+            emits: 'tap',
+          },
+        }),
+      );
+      // `timeout` where the platform reports the kill as one, and `unparseable`
+      // where it surfaces as exit 1 (win32 — `lifecycle.ts` documents it): a
+      // report that never reached its plan. Both are StageErrors; neither is a
+      // verdict, so neither is a pass.
+      expect(verdict.kind).toBe('stage_error');
+    });
+  }, 30_000);
+
+  it('a report larger than ADL reads is refused, not judged in part', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await suiteGate(
+        repo,
+        [
+          process.execPath,
+          '-e',
+          "process.stdout.write('x'.repeat(9 * 1024 * 1024))",
+        ],
+        'tap',
+      );
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('did not read it');
+    });
+  }, 60_000);
+
+  it('the built-in test gate reads commands.test as a report with `with: { emits: tap }`, and stays the built-in', async () => {
+    await withTempRepo(async (repo) => {
+      // `commands.test` IS the zero-test node run here, so `inconclusive` can
+      // only come from running commands.test in tap mode.
+      const verdict = await runGateAt(
+        repo,
+        'test',
+        pipelineWith(
+          { harness: 'test', with: { emits: 'tap' } },
+          { argv: NODE_TAP },
+        ),
+      );
+      expect(verdict.kind).toBe('verdict');
+      if (verdict.kind !== 'verdict') return;
+      expect(verdict.verdict.outcome).toBe('inconclusive');
+    });
+  }, 30_000);
+
+  it('the built-in test gate refuses any other key in its with: block', async () => {
+    await withTempRepo(async (repo) => {
+      const verdict = await runGateAt(
+        repo,
+        'test',
+        pipelineWith(
+          { harness: 'test', with: { emits: 'tap', reporter: 'tap' } },
+          { argv: NODE_TAP },
+        ),
+      );
+      expect(verdict.kind).toBe('stage_error');
+      if (verdict.kind !== 'stage_error') return;
+      expect(verdict.error.kind).toBe('unparseable');
+      expect(verdict.error.detail).toContain('commands.test');
+    });
+  }, 30_000);
+
+  it('an exit-code failure keeps its output’s line breaks on the finding', async () => {
+    // `captured-exec.ts` rejoins the launcher's lines. Before step 8.5 the
+    // command gate concatenated them, and a failing suite's output reached the
+    // pull request as one run-together line.
+    await withTempRepo(async (repo) => {
+      const verdict = await suiteGate(
+        repo,
+        [
+          process.execPath,
+          '-e',
+          "console.error('first line'); console.error('second line'); process.exit(3);",
+        ],
+        'exit_code',
+      );
+      expect(verdict.kind).toBe('verdict');
+      if (
+        verdict.kind !== 'verdict' ||
+        verdict.verdict.outcome !== 'send_back'
+      ) {
+        throw new Error(`expected a send_back, got ${JSON.stringify(verdict)}`);
+      }
+      expect(verdict.verdict.findings[0]?.detail).toContain(
+        'first line\nsecond line',
+      );
+    });
+  }, 30_000);
+});

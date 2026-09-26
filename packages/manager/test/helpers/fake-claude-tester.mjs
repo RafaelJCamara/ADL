@@ -20,6 +20,20 @@
 // 8.1's pattern. If ADL believed it had composed a blind workspace and had not,
 // that file says so.
 //
+// ── What M08 step 8.5 added, both opt-in ─────────────────────────────────
+//
+// `--adl-tester-writes by-title` makes it WRITE A REAL TEST into its blind workspace
+// (`tests/health.test.mjs`, node:test), the way a real tester would — and it never
+// runs that test itself. ADL runs it, as the suite the pipeline entry declares. The
+// test's body appends a line to the file named by `ADL_85_WITNESS` before it
+// fetches the app, and that variable exists only in the SUITE's declared env: so a
+// line in the witness file is proof that ADL's run executed the test, from outside
+// ADL. When the feature's title contains `(nothing executes)` the test is written
+// `test.skip` — a suite that runs and executes nothing, which is ROLE-08's case.
+//
+// `--adl-tester-report-dir <dir>` writes one report per feature, named after the
+// feature's title, so two features in one daemon do not overwrite each other's.
+//
 // eslint-disable-next-line no-restricted-imports -- this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
@@ -94,7 +108,17 @@ function walk(dir, acc = []) {
   return acc;
 }
 
-const reportPath = flag('--adl-tester-report');
+const reportDir = flag('--adl-tester-report-dir');
+const writes = flag('--adl-tester-writes');
+const title = /^# Behaviour test: (.+)$/m.exec(instructions)?.[1] ?? 'untitled';
+const slug = title
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-|-$/g, '');
+const reportPath =
+  reportDir !== undefined
+    ? join(reportDir, `${slug}.json`)
+    : flag('--adl-tester-report');
 const baseUrlMatch = /^Base URL: (\S+)$/m.exec(instructions);
 // Case-insensitive, because the reviewer's prompt says "Then write your verdict"
 // and the tester's says "3. Write your verdict" — a case-sensitive regex here cost
@@ -110,6 +134,11 @@ const report = {
   instructionsMentionSrc: /\bsrc\//.test(instructions),
   /** Whether the instructions said the source is absent rather than off-limits. */
   toldSourceIsAbsent: instructions.includes('is **not** there'),
+  /** Whether the instructions carried the suite ADL will run (M08 step 8.5). */
+  sawSuiteCommand: instructions.includes('--test-reporter=tap'),
+  title,
+  wrote: [],
+  skip: false,
   fetched: null,
   fetchError: null,
 };
@@ -123,6 +152,28 @@ if (baseUrlMatch !== null) {
   } catch (error) {
     report.fetchError = error instanceof Error ? error.message : String(error);
   }
+}
+
+if (writes === 'by-title') {
+  // A real node:test file, written and NOT run: ADL runs it. The witness line is
+  // appended before the fetch, so it proves the test executed even if the app
+  // then failed to answer.
+  report.skip = title.includes('(nothing executes)');
+  const testName = 'AC-1: GET /health answers 200';
+  const body = [
+    "import { test } from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { appendFileSync } from 'node:fs';",
+    `test${report.skip ? '.skip' : ''}(${JSON.stringify(testName)}, async () => {`,
+    `  appendFileSync(process.env.ADL_85_WITNESS, ${JSON.stringify(`executed: ${title}\n`)});`,
+    '  const response = await fetch(`${process.env.APP_URL}/health`);',
+    '  assert.equal(response.status, 200, `GET /health answered ${String(response.status)}`);',
+    '});',
+    '',
+  ].join('\n');
+  mkdirSync(join(cwd, 'tests'), { recursive: true });
+  writeFileSync(join(cwd, 'tests', 'health.test.mjs'), body, 'utf8');
+  report.wrote.push('tests/health.test.mjs');
 }
 
 if (reportPath !== undefined) {

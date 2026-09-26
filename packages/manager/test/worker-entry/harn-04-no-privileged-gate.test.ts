@@ -49,8 +49,10 @@ describe('both gate kinds are handed the same context object', () => {
   it('passes gateForRun to the agent implementation AND to the command gate', async () => {
     const code = await stageRunnerCode();
 
+    // With its host (M08 step 8.5) — the second parameter every agent gate
+    // gets, built once beside `gateForRun`.
     expect(code, 'the agent gate must receive the composed context').toContain(
-      'implementation(gateForRun)',
+      'implementation(gateForRun, host)',
     );
     expect(
       code,
@@ -64,7 +66,8 @@ describe('both gate kinds are handed the same context object', () => {
     // `built.gate` alongside the two above would satisfy them both.
     const code = await stageRunnerCode();
 
-    expect(code).not.toContain('implementation(built.gate)');
+    // A prefix, so it catches the call with or without a host after it.
+    expect(code).not.toContain('implementation(built.gate');
     expect(code).not.toContain('runCommandGate(built.gate,');
   });
 
@@ -86,6 +89,24 @@ describe('both gate kinds are handed the same context object', () => {
         `${forbidden} would make the lifecycle a property of the tester's NAME`,
       ).not.toContain(forbidden);
     }
+  });
+});
+
+describe('both gate kinds are told the same things about the host (M08 step 8.5)', () => {
+  it('calls appVariables exactly once, so both kinds interpolate from one record', async () => {
+    // The agent gate's host and the command gate's `env` interpolation have to
+    // come from the same `appVariables` record. A second call site is how the two
+    // would drift — one path supplying a variable the other does not, which is a
+    // command that interpolates for a third party's gate and not for the
+    // built-in tester, or the other way round.
+    const code = await stageRunnerCode();
+    const calls = code.split('appVariables(').length - 1;
+    expect(
+      calls,
+      `stage-runner.ts calls appVariables ${String(calls)} times; one record must serve both gate kinds`,
+    ).toBe(1);
+    // And the command gate's PATH is the host's, not a second read of the env.
+    expect(code).toContain('path: host.path');
   });
 });
 

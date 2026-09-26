@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BuiltInCommandGateWithSchema,
   COMMAND_GATE_OUTPUT_MODES,
   CommandGateWithSchema,
+  RUNNER_REPORT_FORMATS,
+  TestSuiteSchema,
 } from '../../src/config/command-gate.js';
 
 /**
@@ -71,5 +74,80 @@ describe('CommandGateWithSchema', () => {
       ).toBe(true);
     }
     expect(Object.isFrozen(COMMAND_GATE_OUTPUT_MODES)).toBe(true);
+  });
+});
+
+/**
+ * The report modes (ROLE-08, M08 step 8.5). The load-bearing property is that
+ * the formats are DERIVED into the mode list — so a format added for the tester's
+ * suite is a mode a command gate can declare, and the other way round — and that a
+ * suite cannot declare anything that cannot say "nothing ran".
+ */
+describe('the runner-report modes', () => {
+  it('derives the report formats into the command-gate modes, rather than restating them', () => {
+    expect(COMMAND_GATE_OUTPUT_MODES).toEqual(['exit_code', 'verdict', 'tap']);
+    for (const format of RUNNER_REPORT_FORMATS) {
+      expect(COMMAND_GATE_OUTPUT_MODES).toContain(format);
+    }
+    expect(Object.isFrozen(RUNNER_REPORT_FORMATS)).toBe(true);
+  });
+
+  it('accepts `emits: tap` on a command gate', () => {
+    expect(
+      CommandGateWithSchema.parse({
+        command: { argv: ['node', '--test'] },
+        emits: 'tap',
+      }).emits,
+    ).toBe('tap');
+  });
+});
+
+describe('BuiltInCommandGateWithSchema — the built-in `test` gate’s own block', () => {
+  it('is the command-gate block without its command: `{}` still means exit_code', () => {
+    expect(BuiltInCommandGateWithSchema.parse({}).emits).toBe('exit_code');
+    expect(BuiltInCommandGateWithSchema.parse({ emits: 'tap' }).emits).toBe(
+      'tap',
+    );
+  });
+
+  it('refuses a command — naming one makes the entry a command gate instead', () => {
+    expect(
+      BuiltInCommandGateWithSchema.safeParse({ command: { argv: ['x'] } })
+        .success,
+    ).toBe(false);
+  });
+
+  it('is strict, like the block it is derived from', () => {
+    expect(
+      BuiltInCommandGateWithSchema.safeParse({ emits: 'tap', emmits: 'tap' })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('TestSuiteSchema — the suite a tester asks ADL to run', () => {
+  const COMMAND = { argv: ['node', '--test', '--test-reporter=tap'] };
+
+  it('requires emits — a suite ADL cannot count cannot tell "all passed" from "none ran"', () => {
+    expect(TestSuiteSchema.safeParse({ command: COMMAND }).success).toBe(false);
+    expect(
+      TestSuiteSchema.parse({ command: COMMAND, emits: 'tap' }).emits,
+    ).toBe('tap');
+  });
+
+  it('makes exit_code and verdict unrepresentable for a suite', () => {
+    for (const emits of ['exit_code', 'verdict']) {
+      expect(
+        TestSuiteSchema.safeParse({ command: COMMAND, emits }).success,
+        `a suite was allowed to declare ${emits}`,
+      ).toBe(false);
+    }
+  });
+
+  it('is strict', () => {
+    expect(
+      TestSuiteSchema.safeParse({ command: COMMAND, emits: 'tap', extra: 1 })
+        .success,
+    ).toBe(false);
   });
 });

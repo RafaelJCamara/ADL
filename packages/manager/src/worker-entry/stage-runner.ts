@@ -61,6 +61,7 @@ import {
   AGENT_ROLES,
   appVariables,
   BACKEND_DEFAULT_MODEL,
+  BuiltInCommandGateWithSchema,
   CommandGateWithSchema,
   interpolateCommandEnv,
   type AgentRole,
@@ -105,6 +106,7 @@ import {
   type AppUnderTest,
 } from './app/lifecycle.js';
 import { buildGateContext } from './gate-context.js';
+import type { AgentGateHost } from './gates/agent-gate-host.js';
 import { runCommandGate } from './gates/command-gate.js';
 import { runReviewerGate } from './gates/reviewer-gate.js';
 import { runTesterGate } from './gates/tester-gate.js';
@@ -283,11 +285,17 @@ type GateCommandResult =
  *
  * Two sources, and the gate's own is the more specific one:
  *
- * 1. **The stage's `with:` block**, validated against `CommandGateWithSchema`.
- *    A third party's gate carries its own program, and `adl.yml`'s
- *    `commands.test` is none of its business.
- * 2. **`commands.test`**, for the built-in `test` stage, which declares no
- *    `with:` block. 5.14's behaviour, unchanged.
+ * 1. **The stage's `with:` block, when it names a `command`**, validated
+ *    against `CommandGateWithSchema`. A third party's gate carries its own
+ *    program, and `adl.yml`'s `commands.test` is none of its business.
+ * 2. **`commands.test`**, for the built-in `test` stage — whose `with:` block,
+ *    when it has one, may say only how to read that command's output
+ *    (`BuiltInCommandGateWithSchema`, M08 step 8.5: `with: { emits: tap }`).
+ *    An absent block is `exit_code`, which is 5.14's behaviour unchanged.
+ *
+ * Only the built-in `test` stage can reach the second branch: an entry whose
+ * `with.command` is an object resolves as `source: 'command'`
+ * (`declaresCommand`), so no branch here turns on a stage's name.
  *
  * A `with:` block that is present but will not validate is refused by name
  * rather than silently falling through to `commands.test` — a gate that ran
@@ -298,8 +306,21 @@ function resolveGateCommand(
   gate: GateContext,
   effectiveConfig: EffectiveConfig,
 ): GateCommandResult {
-  if (Object.keys(gate.config).length === 0) {
-    return { ok: true, command: effectiveConfig.commands.test };
+  if (!Object.hasOwn(gate.config, 'command')) {
+    const builtIn = BuiltInCommandGateWithSchema.safeParse(gate.config);
+    if (!builtIn.success) {
+      return {
+        ok: false,
+        detail:
+          `the ${gate.stageId} gate runs \`commands.test\`, and its \`with:\` block may only ` +
+          `declare how to read that command's output (\`emits\`): ${builtIn.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+      };
+    }
+    return {
+      ok: true,
+      command: effectiveConfig.commands.test,
+      emits: builtIn.data.emits,
+    };
   }
 
   const parsed = CommandGateWithSchema.safeParse(gate.config);
@@ -468,9 +489,19 @@ function withSelectedModel(
  * this role"; this answers "what runs when it does". A role with a producer and
  * no implementation here is refused by name rather than dispatched into
  * nothing — the honest state of `tester` until M08.
+ *
+ * Every implementation takes the same two parameters (M08 step 8.5): the
+ * composed `GateContext`, and an {@link AgentGateHost} — what the gate is told
+ * about the host it runs on, on `CommandGateConfig`'s precedent. The reviewer
+ * ignores the second; the tester needs it to run its declared suite.
  */
 const AGENT_GATE_IMPLEMENTATIONS: Readonly<
-  Partial<Record<AgentRole, (gate: GateContext) => Promise<StageRunnerVerdict>>>
+  Partial<
+    Record<
+      AgentRole,
+      (gate: GateContext, host: AgentGateHost) => Promise<StageRunnerVerdict>
+    >
+  >
 > = Object.freeze({ reviewer: runReviewerGate, tester: runTesterGate });
 
 const GATE_IMPLEMENTATIONS: Readonly<Record<string, 'command'>> = Object.freeze(
@@ -967,6 +998,27 @@ export function createProductionStageRunner(
           const gateForRun: GateContext =
             app === undefined ? built.gate : { ...built.gate, app };
 
+          // What every gate is told about the host (M08 step 8.5), built ONCE
+          // and handed to both kinds: the worker's `PATH`, and — when an app was
+          // started — the one `appVariables` record ADL supplies. The command
+          // gate's `env` is interpolated with it below; an agent gate receives
+          // it as its second parameter, because the behaviour tester now runs a
+          // suite of its own. One record, one call site: "which variables may a
+          // command reference?" has a single answer for every gate kind, and
+          // `harn-04-no-privileged-gate.test.ts` holds this file to exactly one
+          // `appVariables` call.
+          const host: AgentGateHost = {
+            path: process.env['PATH'] ?? '',
+            ...(app === undefined
+              ? {}
+              : {
+                  variables: appVariables({
+                    port: app.port,
+                    featureId: assign.featureId,
+                  }),
+                }),
+          };
+
           if (role.kind === 'agent') {
             // ROLE-02 (M07 step 7.4). A role with a producer but no
             // implementation is refused by name rather than dispatched into
@@ -979,7 +1031,7 @@ export function createProductionStageRunner(
                   'build ships no implementation for it — the behaviour tester is M08.',
               );
             }
-            return await implementation(gateForRun);
+            return await implementation(gateForRun, host);
           }
 
           const gateCommand = resolvedGateCommand;
@@ -1010,12 +1062,9 @@ export function createProductionStageRunner(
           // `unparseable`, not an empty string (D-21) — and non-retryable,
           // because it will not parse on a retry either.
           let command = gateCommand.command;
-          if (app !== undefined) {
+          if (host.variables !== undefined) {
             try {
-              command = interpolateCommandEnv(
-                command,
-                appVariables({ port: app.port, featureId: assign.featureId }),
-              );
+              command = interpolateCommandEnv(command, host.variables);
             } catch (error) {
               return stageErrorVerdict(
                 'unparseable',
@@ -1028,7 +1077,7 @@ export function createProductionStageRunner(
 
           return await runCommandGate(gateForRun, {
             command,
-            path: process.env['PATH'] ?? '',
+            path: host.path,
             ...(gateCommand.emits !== undefined
               ? { emits: gateCommand.emits }
               : {}),
@@ -1084,8 +1133,11 @@ export function createProductionStageRunner(
                 ? { signal: built.gate.signal }
                 : {}),
               // D-8-02-2: so the lifecycle can warn when the app would be killed
-              // out from under this very command. `undefined` for an agent gate,
-              // which has no command and therefore no number to compare against.
+              // out from under this very command. `undefined` for an agent gate —
+              // not because it has no number: since M08 step 8.5 the tester runs
+              // `with.suite.command` after its agent, so its agent ceiling plus
+              // that suite's timeout is the number, and comparing it is DEBT.md's
+              // D-8-05-5, owned by 8.7.
               ...(resolvedGateCommand?.ok === true
                 ? {
                     gateCommandTimeoutMs: timeoutMsFor(

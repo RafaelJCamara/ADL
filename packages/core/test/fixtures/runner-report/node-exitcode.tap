@@ -1,0 +1,34 @@
+TAP version 13
+# Subtest: passes but sets exitCode
+ok 1 - passes but sets exitCode
+  ---
+  duration_ms: 0.3548
+  type: 'test'
+  ...
+# Subtest: second passes
+ok 2 - second passes
+  ---
+  duration_ms: 0.0625
+  type: 'test'
+  ...
+# Subtest: a.test.mjs
+not ok 1 - a.test.mjs
+  ---
+  duration_ms: 44.2623
+  type: 'test'
+  location: '<root>\\node-exitcode\\a.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 2
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 50.7236

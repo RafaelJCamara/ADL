@@ -77,10 +77,9 @@ been refined into ten steps (8.0–8.9) after a pre-implementation audit, the wa
 were opened; the audit found ten things, four of which changed what the steps are. See
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
 **8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice), 8.3 (the
-failure-mode map) and 8.4 (the tester agent) are done. 8.5 is in flight (2026-09-25):
-its preceding `fix(08-05)` is committed and the `@adl/core` half of its feature commit
-is written, green and uncommitted — [`HANDOFF.md`](./HANDOFF.md) carries the design,
-what remains, and an incident on `main` the maintainer needs to see.**
+failure-mode map), 8.4 (the tester agent) and 8.5 (outcomes from structured runner output) are
+done.** `main` carries three stray commits a replay double made on 2026-09-25, left for the
+maintainer to remove — [`HANDOFF.md`](./HANDOFF.md) has the evidence and the one command.
 
 ```
 M01 Core Contracts .................. ✅ done
@@ -90,7 +89,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.4 done; 8.5 in flight; 8.6–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.5 done; 8.6–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -849,6 +848,38 @@ because ADL does not infer it from a stage's name.
 measuring it: four full-suite runs on a clean `main` failed once, four with 8.1 applied
 failed twice, and at n=4 those are not distinguishable. What matters is that it reproduces
 with no local changes at all. `DEBT.md`'s row is corrected too.
+
+**8.5 is done (2026-09-26): test outcomes are read from the runner's own report, and a run in
+which no test executed is `inconclusive`, never a `pass` (ROLE-08).** The step's explicit
+question has an answer: **a third `emits:` mode, `tap`, not `verdict` plus a declared
+adapter** — an adapter puts the rule in code ADL cannot see and does nothing for the tester,
+which has no `emits`. The parser and the judge are pure and live in `@adl/core/stage`
+(`tap.ts`, `runner-report.ts`), set against 27 fixtures captured from real node and vitest
+rather than against the specification, and the answer type makes a pass built from zero executed
+tests unwritable. The real runners overturned four assumptions: node exits 0 on an empty run and
+vitest exits 1; node prints `# fail 0` beside a failed hook; node repeats point numbers; and
+vitest prints a fully green report and exits 1 when a test leaks a rejection — so the exit code
+may veto a pass and never make one.
+
+**The tester's outcome now comes from a run, not from its word.** Its entry declares
+`with.suite`, and after the agent finishes the gate runs that suite itself, on its blind copy with
+the app still up, judged by the same function as a command gate's `emits: tap`. The claim can
+only make a green run stricter; a tester's pass cites the suite, and the criteria it claims wait
+for 8.7's link. Proven end to end by `scenario/runner-outcomes.test.ts`: two testers both claim
+`pass`, and only the report separates the one whose suite executed nothing — `inconclusive`,
+`gate_inconclusive` mid-pipeline, escalated — from the one that ran and passed.
+
+**An adversarial review of the diff then verified ten more findings, all acted on** — three reader/judge fixes (vitest `annotate()` notes before a YAML block; a node test named with a trailing ` {`; a `before`-hook's error missing from its findings), vitest's `passWithNoTests` stated as the same residual as node's (D-8-05-2), and five overstated comments and tests corrected.
+
+**Watched failing 33 ways before that, and one stayed green, which was the finding.** A stale row in the
+command gate's mode table compiled, because an annotated table's `keyof` is the annotation's, so
+its `Exclude` pairing asserted nothing — the same defect as in 8.3's `app-failure.ts`, which it
+was copied from. Both fixed with `satisfies` (`fix(08-03)` for the older one). Three more
+commits landed alongside: `fix(08-05)` (an inconclusive gate is `gate_inconclusive`, never
+`gate_passed`), and `test(manager)` (replay doubles refuse to commit inside the source checkout,
+after the incident above). **Found and not fixed:** `D-8-05-1` to `D-8-05-14`, the two that
+matter most being node's synthetic file-level pass (owner 8.8) and pre-existing visible tests
+being credited to the tester (owner 8.6, reproduced by `behaviour-tester.test.ts`).
 
 ---
 

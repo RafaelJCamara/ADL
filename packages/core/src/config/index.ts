@@ -114,9 +114,19 @@ export {
 // just a program, declared entirely in a pipeline entry's own `with:` block.
 // The only harness tier that needs no loader, which is what makes it the
 // extension point available before M13's.
+//
+// ROLE-08 (M08 step 8.5) adds the report formats a test run may declare, the
+// built-in `test` gate's own `with:` block, and the suite a gate that is not a
+// program asks ADL to run.
 export {
   COMMAND_GATE_OUTPUT_MODES,
   CommandGateWithSchema,
   type CommandGateOutputMode,
   type CommandGateWith,
+  RUNNER_REPORT_FORMATS,
+  type RunnerReportFormat,
+  BuiltInCommandGateWithSchema,
+  type BuiltInCommandGateWith,
+  TestSuiteSchema,
+  type TestSuite,
 } from './command-gate.js';

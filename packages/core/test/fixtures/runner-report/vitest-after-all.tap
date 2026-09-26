@@ -1,0 +1,9 @@
+TAP version 13
+1..1
+not ok 1 - a.test.mjs # time=2.99ms {
+    1..1
+    not ok 1 - grp # time=2.47ms {
+        1..1
+        ok 1 - inner passes # time=0.65ms
+    }
+}

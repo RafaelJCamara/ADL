@@ -1,0 +1,8 @@
+TAP version 13
+1..1
+not ok 1 - a.test.mjs
+    ---
+    error:
+        name: "Error"
+        message: "No test suite found in file <root>/vitest-empty-file/a.test.mjs"
+    ...

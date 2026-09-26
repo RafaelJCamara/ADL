@@ -56,7 +56,7 @@ and operates the daemon, and the **reviewer** who receives its pull requests.
 - ⬜ **ROLE-05** _(M08)_ Behaviour tester designs and runs tests, judging behaviour only
 - ⬜ **ROLE-06** _(M08)_ Tester structurally cannot read implementation source — enforced by workspace composition, not instruction
 - ⬜ **ROLE-07** _(M08)_ ADL starts, probes and tears down the app itself, allocating a port and reaping the process group
-- ⬜ **ROLE-08** _(M08)_ Results read from structured runner output; zero tests executed reports `inconclusive`
+- ⬜ **ROLE-08** _(M08)_ Results read from structured runner output; zero tests executed reports `inconclusive`, never `pass`
 - ⬜ **ROLE-09** _(M08)_ Tester's tests are committed as permanent regression coverage
 - ⬜ **ROLE-10** _(M08)_ Committed tests meet an assertion floor, link a spec clause, pass stability runs, and fail against the pre-feature commit
 - ✅ **ROLE-11** _(M05)_ The developer cannot modify specs, gate config, or the tests that judge it — enforced by diffing, not by asking
