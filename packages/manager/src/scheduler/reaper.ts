@@ -13,6 +13,7 @@ import {
   type TransitionCtx,
 } from '@adl/core/state';
 import { planRecovery, type RecoveryDecision } from '../recovery/policy.js';
+import { createInFlightTracker, type SettleOutcome } from '../in-flight.js';
 
 /**
  * The lease-expiry backstop (D-03), the child-exit fast path's shared
@@ -294,17 +295,18 @@ export async function reapExpiredLeases(
  */
 export function createFastPathRecovery(
   deps: ReaperDeps,
-): (featureId: string, leaseToken: string) => void {
-  return (featureId, leaseToken) => {
-    void (async () => {
-      try {
-        const row = await featuresRepository(deps.db).findById(featureId);
-        if (row === undefined) return;
-        await reapOne(deps, row, nowIso(), leaseToken);
-      } catch (error) {
-        deps.logger.error({ err: error, featureId }, 'fast-path reap failed');
-      }
-    })();
+): (featureId: string, leaseToken: string) => Promise<void> {
+  // Returns the promise (and never rejects) so the supervisor can track it and
+  // `gracefulShutdown` can wait for it before destroying the database
+  // (D-8-03-1) -- it used to be `void`ed here, invisible to shutdown.
+  return async (featureId, leaseToken) => {
+    try {
+      const row = await featuresRepository(deps.db).findById(featureId);
+      if (row === undefined) return;
+      await reapOne(deps, row, nowIso(), leaseToken);
+    } catch (error) {
+      deps.logger.error({ err: error, featureId }, 'fast-path reap failed');
+    }
   };
 }
 
@@ -315,6 +317,8 @@ export interface StartReaperDeps extends ReaperDeps {
 
 export interface ReaperHandle {
   stop(): void;
+  /** Resolves when no tick is in flight, or after `timeoutMs` (D-8-03-1). */
+  settled(timeoutMs: number): Promise<SettleOutcome>;
 }
 
 /**
@@ -331,14 +335,18 @@ export interface ReaperHandle {
  * tick, one `now`" true rather than aspirational.
  */
 export function startReaper(deps: StartReaperDeps): ReaperHandle {
+  const inFlight = createInFlightTracker();
   const timer = setInterval(() => {
-    void reapExpiredLeases(deps, nowIso()).catch((error: unknown) => {
-      deps.logger.error({ err: error }, 'reaper tick failed');
-    });
+    void inFlight.track(
+      reapExpiredLeases(deps, nowIso()).catch((error: unknown) => {
+        deps.logger.error({ err: error }, 'reaper tick failed');
+      }),
+    );
   }, deps.intervalMs);
   timer.unref?.();
 
   return {
     stop: () => clearInterval(timer),
+    settled: (timeoutMs) => inFlight.settled(timeoutMs),
   };
 }

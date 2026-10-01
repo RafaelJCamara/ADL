@@ -9,6 +9,7 @@ import {
 } from '../ipc/protocol.js';
 import { checkFence, type StaleRejectionCounter } from '../fencing.js';
 import { parseStageRunnerVerdict } from '../ipc/stage-verdict.js';
+import { createInFlightTracker, type SettleOutcome } from '../in-flight.js';
 
 /**
  * The real commit sha, when a fence-matched `stage_result`'s `verdictJson`
@@ -169,7 +170,7 @@ export interface SupervisorDeps {
   /** Called whenever a lease-scoped message's token no longer matches the lease (D-09). */
   readonly onStaleMessage?: (message: StaleMessage) => void;
   /** Called once a forked worker reports `ready` — the pid it started as. */
-  readonly onReady?: (ready: WorkerReady) => void;
+  readonly onReady?: (ready: WorkerReady) => void | Promise<void>;
   /**
    * Called once a fence-matched `stage_result` is accepted — the feature's
    * current round is done (D-26's round boundary), before the worker's exit
@@ -185,7 +186,7 @@ export interface SupervisorDeps {
     readonly featureId: string;
     readonly leaseToken: string;
     readonly repoId: string;
-  }) => void;
+  }) => void | Promise<void>;
   /**
    * Called once a fence-matched `stage_result` reports a real commit
    * (`developer_outcome: committed` — never `blocked`, never a
@@ -212,7 +213,7 @@ export interface SupervisorDeps {
     readonly roundId: string;
     readonly stageId: string;
     readonly sha: string;
-  }) => void;
+  }) => void | Promise<void>;
   /**
    * The round loop (M05 step 5.13) — called for **every** fence-matched
    * `stage_result`, not only a committed one, and `await`ed so the round's
@@ -233,10 +234,11 @@ export interface SupervisorDeps {
    * `onDeveloperCommitted` already follow. A worker cannot name the round or
    * stage attempt it is reporting against.
    *
-   * Rejections are the caller's to handle: this is `await`ed inside the
-   * supervisor's own fire-and-forget message task, so an unhandled rejection
-   * here would take the daemon down. `daemon.ts` wires a runner that catches
-   * its own failures.
+   * A rejection is caught by the supervisor's own message task, which logs
+   * it at `error` and drops it (see the `.catch` on that task): the daemon
+   * survives, but the round loop did NOT run for this result, so it is lost
+   * state and not a shutdown race. `daemon.ts` wires a runner that catches and
+   * classifies its own failures; this is the backstop behind it, not the plan.
    */
   readonly onStageCompleted?: (params: {
     readonly feature: FeaturesTable;
@@ -256,7 +258,10 @@ export interface SupervisorDeps {
    * own `expectedLeaseToken` guard for why a late-arriving exit from an
    * already-superseded lease is safe to report here unconditionally.
    */
-  readonly onUnexpectedExit?: (featureId: string, leaseToken: string) => void;
+  readonly onUnexpectedExit?: (
+    featureId: string,
+    leaseToken: string,
+  ) => void | Promise<void>;
 }
 
 export interface WorkerSupervisor {
@@ -280,6 +285,22 @@ export interface WorkerSupervisor {
    * own `db.destroy()`.
    */
   markExpectedExit(featureId: string): void;
+  /**
+   * Wait for every message-handling task and every callback promise this
+   * supervisor has started to settle, bounded by `timeoutMs`, and then stop
+   * accepting new ones (D-8-03-1).
+   *
+   * `gracefulShutdown` calls this after every worker has been told to stop and
+   * has exited, and strictly BEFORE it destroys the database: each of those
+   * tasks reads or writes the database, so one still running at `db.destroy()`
+   * rejects with `driver has already been destroyed`. Once this returns -- on
+   * time or not -- the supervisor is closed: a message or an exit observed
+   * afterwards is dropped with a log line rather than touching the database,
+   * so a straggler cannot reopen the race this exists to close. A timed-out
+   * outcome is reported, not thrown; the stragglers' own `.catch` still keeps
+   * them from becoming unhandled rejections.
+   */
+  drain(timeoutMs: number): Promise<SettleOutcome>;
 }
 
 /**
@@ -307,6 +328,45 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
    * `active.delete()` has already run.
    */
   const expectingExit = new Map<string, boolean>();
+  /**
+   * Every fire-and-forget task this supervisor starts -- the message handler's
+   * async body and any promise a `deps.on*` callback hands back -- so
+   * {@link WorkerSupervisor.drain} can wait for them (D-8-03-1).
+   */
+  const inFlight = createInFlightTracker();
+  /** Flipped by `drain` once nothing is pending; from then on nothing new starts. */
+  let closed = false;
+
+  /**
+   * Run a `deps.on*` callback and track the promise it returns, if any. A
+   * callback that rejects is logged, never left unhandled -- callers used to
+   * `void` these, which made a rejection an unhandled one.
+   */
+  function runCallback(
+    log: Logger,
+    name: string,
+    invoke: () => void | Promise<void>,
+  ): void {
+    const result = invoke();
+    if (result instanceof Promise) {
+      void inFlight.track(
+        result.catch((error: unknown) => {
+          log.warn(
+            { err: error },
+            `the supervisor's ${name} callback rejected`,
+          );
+        }),
+      );
+    }
+  }
+
+  async function drain(timeoutMs: number): Promise<SettleOutcome> {
+    const outcome = await inFlight.settled(timeoutMs);
+    // Flipped synchronously with the last "nothing is pending" observation
+    // inside `settled`'s continuation, so no message can slip in between.
+    closed = true;
+    return outcome;
+  }
 
   function spawn(
     feature: FeaturesTable,
@@ -336,14 +396,31 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
       active.delete(feature.id);
       expectingExit.delete(feature.id);
       if (!expected) {
+        if (closed) {
+          log.debug(
+            'forked worker exited after the supervisor was drained -- not applying the fast-path recovery; the reaper will see the lease',
+          );
+          return;
+        }
         log.warn(
           'forked worker exited without an accepted result — applying the fast-path lease_expired recovery',
         );
-        deps.onUnexpectedExit?.(feature.id, leaseToken);
+        runCallback(log, 'onUnexpectedExit', () =>
+          deps.onUnexpectedExit?.(feature.id, leaseToken),
+        );
       }
     });
 
     worker.child.on('message', (raw: unknown) => {
+      if (closed) {
+        // The supervisor was drained for shutdown: the database may already be
+        // gone, and whatever this message would have written is recovered by
+        // the next boot's reaper (the lease is simply not renewed/closed).
+        log.debug(
+          'dropped a worker message received after the supervisor was drained',
+        );
+        return;
+      }
       const parsed = parseWorkerMessage(raw);
       if (!parsed.ok) {
         // An unparseable message from a crashed or malicious worker is an
@@ -359,11 +436,13 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
       log.debug({ kind: message.t }, 'worker message');
 
       if (message.t === 'ready') {
-        deps.onReady?.({
-          featureId: feature.id,
-          leaseToken: message.leaseToken,
-          pid: message.pid,
-        });
+        runCallback(log, 'onReady', () =>
+          deps.onReady?.({
+            featureId: feature.id,
+            leaseToken: message.leaseToken,
+            pid: message.pid,
+          }),
+        );
       }
 
       if (
@@ -391,7 +470,7 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
           // already treats that case as a no-op.
           expectingExit.set(feature.id, true);
         }
-        void (async () => {
+        const task = (async () => {
           // D-06's message-level fence, run before any repository write, for
           // every lease-scoped kind — not only `stage_result`.
           const current = deps.getCurrentLeaseToken
@@ -492,23 +571,27 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
             // already marked synchronously above (WR-02), before this
             // async fence check even started, so the fast path cannot race
             // the child's own exit here.
-            deps.onRoundBoundary?.({
-              featureId: feature.id,
-              leaseToken,
-              repoId: feature.repo_id,
-            });
+            runCallback(log, 'onRoundBoundary', () =>
+              deps.onRoundBoundary?.({
+                featureId: feature.id,
+                leaseToken,
+                repoId: feature.repo_id,
+              }),
+            );
             // M05 step 5.10: fire only for a real, committed developer
             // outcome — never for `blocked` or a `stage_error`, and never
             // for an unparseable `verdictJson` (treated as "nothing to
             // publish", not thrown).
             const committedSha = committedShaFromVerdict(message.verdictJson);
             if (committedSha !== undefined) {
-              deps.onDeveloperCommitted?.({
-                feature,
-                roundId: assign.roundId,
-                stageId: assign.stageId,
-                sha: committedSha,
-              });
+              runCallback(log, 'onDeveloperCommitted', () =>
+                deps.onDeveloperCommitted?.({
+                  feature,
+                  roundId: assign.roundId,
+                  stageId: assign.stageId,
+                  sha: committedSha,
+                }),
+              );
             }
             // M05 step 5.13: the round loop, before `closeAttempt` below —
             // see `SupervisorDeps.onStageCompleted` for why that order is
@@ -547,7 +630,34 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
               status: 'error',
             });
           }
-        })();
+        })().catch((error: unknown) => {
+          // D-8-03-1: this task is fire-and-forget, so a rejection here would
+          // be an unhandled one -- which fails the whole vitest run and, in
+          // production, is logged by Node as an unexplained driver error with
+          // no feature attached. It is caught and logged WITH the message kind
+          // and the error, and the level says what was lost:
+          //
+          // - `heartbeat`: a lease renewal that did not land. The next one
+          //   will, and the reaper only acts on a lease that stays unrenewed.
+          // - everything else (`usage`, `stage_result`, `fatal`): state the
+          //   worker will not send again. A `usage` is spend the budget gate
+          //   never sees; a `stage_result` is a round that was never closed
+          //   (its attempt's `ended_at` stays null). Those are errors an
+          //   operator must be able to find, not a shutdown race -- whatever
+          //   the cause (the error is attached; this message does not guess).
+          if (kind === 'heartbeat') {
+            log.warn(
+              { err: error, kind },
+              `could not process a '${kind}' message from the worker`,
+            );
+          } else {
+            log.error(
+              { err: error, kind },
+              `could not process a '${kind}' message from the worker -- its effect on the database was lost`,
+            );
+          }
+        });
+        void inFlight.track(task);
       }
       // 'ready' is handled above.
     });
@@ -566,5 +676,6 @@ export function createSupervisor(deps: SupervisorDeps): WorkerSupervisor {
     markExpectedExit: (featureId) => {
       expectingExit.set(featureId, true);
     },
+    drain,
   };
 }

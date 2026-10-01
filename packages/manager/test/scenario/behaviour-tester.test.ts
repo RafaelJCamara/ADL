@@ -358,8 +358,6 @@ describe('scenario: a code-blind tester verifies a running app', () => {
             expect(report.sawSuiteCommand).toBe(true);
           } finally {
             await handle.stop();
-            // D-8-03-1's settle window; see `app-failure-modes.test.ts`.
-            await delay(250);
           }
         });
       });

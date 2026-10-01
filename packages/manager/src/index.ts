@@ -262,6 +262,13 @@ export {
   type ProcessStartTimeResult,
 } from './boot/orphans.js';
 
+// The in-flight task registry shutdown waits on (D-8-03-1).
+export {
+  createInFlightTracker,
+  type InFlightTracker,
+  type SettleOutcome,
+} from './in-flight.js';
+
 // Graceful shutdown (D-37, D-28).
 export { gracefulShutdown, type ShutdownDeps } from './boot/shutdown.js';
 

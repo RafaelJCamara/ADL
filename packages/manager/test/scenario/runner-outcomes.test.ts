@@ -427,8 +427,6 @@ describe('scenario: two testers claim pass; the one whose suite executed nothing
             ).toContain('gate_passed:behaviour');
           } finally {
             await handle.stop();
-            // D-8-03-1's settle window; see `app-failure-modes.test.ts`.
-            await delay(250);
           }
         });
       });

@@ -176,15 +176,6 @@ async function withFailingApp<T>(
         return await body({ db, featureId, reportPath, dbFilePath: filePath });
       } finally {
         await handle.stop();
-        // A settle window, and it is a MITIGATION for a real defect rather than
-        // tidiness: `gracefulShutdown` clears the dispatch interval and destroys
-        // the database, but does not await a dispatch already in flight — so a
-        // daemon stopped while the round loop is mid-retry can reject with
-        // `driver has already been destroyed` after the test has finished.
-        // Observed intermittently against the never-ready case here, which is the
-        // first test to stop a daemon during a transient-retry backoff. Recorded
-        // as `DEBT.md`'s D-8-03-1.
-        await delay(250);
       }
     });
   });

@@ -57,6 +57,7 @@ import { publishOnDeveloperCommitted } from './publish/on-developer-committed.js
 import { dispatchOnce } from './scheduler/dispatcher.js';
 import { startGcSchedule } from './scheduler/gc-schedule.js';
 import { startPollSchedule } from './scheduler/poll-schedule.js';
+import { createInFlightTracker } from './in-flight.js';
 import {
   createFastPathRecovery,
   reapOne,
@@ -474,9 +475,12 @@ export async function startDaemon(
       return row?.lease_token ?? null;
     },
     staleRejectionCounter,
+    // Returned (not `void`ed) so the supervisor tracks it and shutdown waits
+    // for the write before destroying the database (D-8-03-1).
     onReady: (ready) => {
-      void recordLeaseOwnerOnReady(db, ready, logger);
+      const recorded = recordLeaseOwnerOnReady(db, ready, logger);
       options.onWorkerReady?.(ready);
+      return recorded;
     },
     // D-04's fast path: a forked worker exited without an accepted result.
     // `createFastPathRecovery` re-reads the row (it may have moved since the
@@ -488,15 +492,14 @@ export async function startDaemon(
     // D-26's round boundary: an accepted stage_result means the round is
     // done; if dispatch is paused for this feature's repository right now,
     // park it there rather than mid-round.
-    onRoundBoundary: (params) => {
-      void parkOnRoundBoundary(
+    onRoundBoundary: (params) =>
+      parkOnRoundBoundary(
         db,
         controlState,
         params.featureId,
         params.repoId,
         'pause-park',
-      );
-    },
+      ),
     // M05 steps 5.10 and 5.11: a real commit reported for a feature, with a
     // forge configured — open (or confirm already-open) its draft change
     // request, then republish the developer's sticky comment against it.
@@ -511,7 +514,7 @@ export async function startDaemon(
             stageId: string;
             sha: string;
           }) => {
-            void publishOnDeveloperCommitted(
+            return publishOnDeveloperCommitted(
               {
                 db,
                 logger,
@@ -714,7 +717,14 @@ export async function startDaemon(
   // 04-06: one dispatch attempt, built once so `tick()`'s background timer
   // and `POST /dev-run/:featureId`'s synchronous call are the SAME function
   // — never two assemblies of `DispatcherDeps` that could drift apart.
-  async function runDispatchOnce() {
+  // Every dispatch in flight -- a background tick or a `POST /dev-run` -- is
+  // registered here so `gracefulShutdown` can wait for it (D-8-03-1) instead of
+  // destroying the database under a lease write or a transient-retry backoff.
+  const dispatchInFlight = createInFlightTracker();
+  function runDispatchOnce() {
+    return dispatchInFlight.track(dispatchOnceNow());
+  }
+  async function dispatchOnceNow() {
     return dispatchOnce({
       db,
       leaseTtlMs: options.leaseTtlMs,
@@ -799,6 +809,7 @@ export async function startDaemon(
       supervisor,
       reaper,
       dispatchTimer,
+      dispatch: dispatchInFlight,
       server,
       db,
       workerStopGraceMs: options.daemonConfig.worker_stop_grace_ms,
