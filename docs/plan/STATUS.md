@@ -45,14 +45,18 @@ goalposts cannot move mid-feature (7.8, LOOP-09); and the removal proof — dele
 reviewer from `adl.yml` removes it from the pipeline, with no code change (7.9, HARN-04's
 negative half).
 
-**One test is INTERMITTENTLY red on `main`, and it is not M07's.**
-`test/tracer/draft-cr-wiring.test.ts` fails under the full manager suite — two sticky
-comments where it expects one — and passes alone in 3.3 s. It was reproduced on a clean
-tree, with this milestone's work stashed, before being believed: `upsertComment` is
-check-then-act, so two concurrent publishes both find no prior comment and both create one.
-It is `DEBT.md` § 3's **D-7-05-1**, owner M09. Every other suite is green:
-`@adl/core` 648, `@adl/db` 101, `@adl/workspace` 243, `@adl/cli` 42,
-`@adl/agent-claude-code` 68, `@adl/forge-github` 24, `@adl/plugin-sdk` 30, root 85.
+**CI on `main` was red from 2026-08-20 (no fully green run since) and has been repaired — verify the
+first run after the push before believing this.** Four independent causes, each reproduced locally in a Docker replica of
+the Linux leg before any fix: the privilege-dropped `adl-worker` could not traverse the checkout or commit into the shared
+`.git` (DEBT D-6-CI-1/2/3, plus causes the register had not listed, D-6-CI-4/5/8); a non-atomic prompt-artifact write that
+failed `determinism.test.ts` on the Windows leg; a shutdown race that destroyed the database under in-flight work
+(D-8-03-1); and a "duplicate sticky comment" flake whose recorded diagnosis was wrong (D-7-05-1 — the two comments were the
+developer's and a legitimate escalation; a sibling race that could open two draft change requests was real, and is closed
+as D-7-05-2). The privilege-drop fix was adversarially reviewed twice and **hardened against reproduced exploits** (a
+symlink swap redirecting the daemon's chown, a symlink ref redirecting its commit) before it was committed. What it still
+does not close is recorded as D-6-CI-6/7/15–19 — **D-6-CI-15 (a worker-writable worktree admin dir lets a worker run a
+program as the daemon) is pre-existing, reproduced, and still open.** A push to `main` is not done until CI is green
+(`.claude/CLAUDE.md` convention 22).
 
 Two decisions the milestone owed answers to are answered, both recorded in `DEBT.md`:
 **D-5-18-1** closed in 7.1 in a better shape than the debt proposed — the spend-reporting
