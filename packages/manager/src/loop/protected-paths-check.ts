@@ -28,19 +28,30 @@
  * the round's own head — are already reachable from `mainRepo` alone: no
  * second workspace, no worker round-trip, no new `AssignMessage` field.
  *
- * ## The diff base
+ * ## The diff base: the tip ADL vouches for (M08 step 8.6)
  *
- * Round 1 has no prior closed round, so its base is the watched repository's
- * own `default_branch` (`ReposTable.default_branch`) — the same field
- * `dispatcher.ts` reads to compute `AssignMessage.baseRef` for the very same
- * feature, just re-read here rather than threaded through. Every later round
- * diffs against the *previous* round's `head_sha` (`FeaturesRepository
- * .latestClosedRound`, the same method 5.15's send-back brief already reads
- * for an adjacent reason) — this round's own delta, not the feature's whole
- * history, so a repo-wide `default_branch` that has moved on for unrelated
- * reasons can never widen what a round is judged against.
- * `ManagerGitClient.diffNameOnly`'s own docblock explains why one `A...B`
- * expression is correct for both cases without branching on which one this is.
+ * The base is the newest `rounds.vouched_sha` on this feature, the open round
+ * included — a clean developer commit, or the final tip of a gate stage that
+ * started on one (`0006_rounds_vouched_sha.ts`). The diff is two-dot,
+ * `ManagerGitClient.diffTreesNameOnly`: "what is different now from the tree
+ * ADL vouched for", which still sees a vouched commit the developer reset
+ * past and so no longer has in its history.
+ *
+ * **It used to be the previous round's `head_sha`, and that was `DEBT.md`
+ * D-8-A-1.** `head_sha` is the developer's commit, recorded before any gate
+ * runs, so a commit a gate made afterwards fell inside the NEXT round's diff
+ * and was judged as the developer's work. It also silently laundered a
+ * violation: `head_sha` is written before this check runs, so a feature
+ * ROLE-11 escalated and a human resumed was diffed against the violating
+ * commit itself. `vouched_sha` is written only for a commit that passed.
+ *
+ * With nothing vouched for yet — round 1, a round whose developer reported
+ * `blocked`, or a feature in flight across the upgrade — the base is the
+ * watched repository's own `default_branch`, three-dot, as before: the same
+ * field `dispatcher.ts` reads for `AssignMessage.baseRef`, and the merge base
+ * keeps a default branch that moved on for unrelated reasons out of the diff.
+ * There is deliberately no `head_sha` fallback in between. Without a vouched
+ * tip the whole branch is judged, which can only ever find more, never less.
  */
 import type { Kysely } from 'kysely';
 import {
@@ -91,13 +102,16 @@ export async function checkProtectedPaths(
   params: CheckProtectedPathsParams,
 ): Promise<ProtectedPathCheckResult> {
   let base: string;
+  let vouched: boolean;
   try {
-    const priorRound = await featuresRepository(deps.db).latestClosedRound(
+    const vouchedSha = await featuresRepository(deps.db).latestVouchedSha(
       params.feature.id,
     );
-    if (priorRound?.head_sha !== null && priorRound?.head_sha !== undefined) {
-      base = priorRound.head_sha;
+    if (vouchedSha !== undefined) {
+      base = vouchedSha;
+      vouched = true;
     } else {
+      vouched = false;
       const repoRow = await reposRepository(deps.db).findById(
         params.feature.repo_id,
       );
@@ -118,11 +132,13 @@ export async function checkProtectedPaths(
 
   let changedPaths: readonly string[];
   try {
-    changedPaths = await deps.git.diffNameOnly(base, params.headSha);
+    changedPaths = vouched
+      ? await deps.git.diffTreesNameOnly(base, params.headSha)
+      : await deps.git.diffNameOnly(base, params.headSha);
   } catch (error) {
     return {
       kind: 'error',
-      detail: `could not diff ${base}...${params.headSha}: ${error instanceof Error ? error.message : String(error)}`,
+      detail: `could not diff ${base}${vouched ? '..' : '...'}${params.headSha}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 

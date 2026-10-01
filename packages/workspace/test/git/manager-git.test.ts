@@ -97,6 +97,7 @@ describe('the neutralisation cannot be reached around', () => {
     effectiveConfig: (client) => client.effectiveConfig('user.name'),
     listFiles: (client) => client.listFiles('HEAD'),
     diffNameOnly: (client) => client.diffNameOnly('HEAD', 'HEAD'),
+    diffTreesNameOnly: (client) => client.diffTreesNameOnly('HEAD', 'HEAD'),
     push: (client) =>
       client.push(
         'https://example.invalid/repo.git',
@@ -608,6 +609,54 @@ describe('diffNameOnly', () => {
           featureHead,
         );
         expect(changed).toEqual(['feature-only.txt']);
+      } finally {
+        await host.destroy();
+      }
+    });
+  });
+});
+
+describe('diffTreesNameOnly', () => {
+  it('sees what a reset past a vouched commit removed, which three-dot cannot (M08 step 8.6)', async () => {
+    await withTempRepo(async (ctx) => {
+      // ROLE-11's case exactly: ADL vouched for a commit carrying a test, and
+      // the developer reset past it and committed something else. The trees
+      // differ by the test; the merge base predates it, so `base...head`
+      // reports only the developer's own file.
+      const forkPoint = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+      await mkdir(join(ctx.mainRepo, 'tests'), { recursive: true });
+      await writeFile(join(ctx.mainRepo, 'tests', 'carried.test.mjs'), 'x\n');
+      await ctx.git.add('tests/carried.test.mjs');
+      await ctx.git.raw(['commit', '-m', 'ADL carries a test back']);
+      const vouched = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      await ctx.git.raw(['reset', '--hard', forkPoint]);
+      await writeFile(join(ctx.mainRepo, 'dev.txt'), 'developer\n');
+      await ctx.git.add('dev.txt');
+      await ctx.git.raw(['commit', '-m', 'developer, after a reset']);
+      const head = (await ctx.git.raw(['rev-parse', 'HEAD'])).trim();
+
+      const host = await workspaceRegistry({
+        hostGit: {
+          configHome: join(ctx.scratchRoot, '..', 'adl-home-diff-trees'),
+        },
+      })
+        .resolve('host-git')
+        .create({
+          featureId: 'adl-diff-trees',
+          mainRepo: ctx.mainRepo,
+          scratchRoot: ctx.scratchRoot,
+          baseRef: 'HEAD',
+        });
+
+      try {
+        const client = managerGitClient(host);
+        await expect(client.diffNameOnly(vouched, head)).resolves.toEqual([
+          'dev.txt',
+        ]);
+        expect((await client.diffTreesNameOnly(vouched, head)).sort()).toEqual(
+          ['dev.txt', 'tests/carried.test.mjs'].sort(),
+        );
       } finally {
         await host.destroy();
       }

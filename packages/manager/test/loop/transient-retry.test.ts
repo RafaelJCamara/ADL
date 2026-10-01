@@ -94,6 +94,7 @@ async function seedAttempts(
       outcome: 'escalate',
       outcome_json: null,
       head_sha: null,
+      vouched_sha: null,
       started_at: at,
       ended_at: at,
     })

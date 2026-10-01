@@ -104,6 +104,18 @@ export interface RoundsTable {
    * about verdicts and has no field for a commit.
    */
   head_sha: string | null;
+  /**
+   * The branch tip ADL vouches for as of this round (M08 step 8.6,
+   * `0006_rounds_vouched_sha.ts`) — ROLE-11's diff base for the next
+   * developer commit.
+   *
+   * A clean developer commit's sha, or the final sha of a gate stage that
+   * started on the vouched tip and moved HEAD. Never a commit ROLE-11 found
+   * violating. Distinct from `head_sha`, which keeps meaning "what the
+   * developer produced" for the pull request's sake; the migration carries
+   * the argument.
+   */
+  vouched_sha: string | null;
   started_at: string;
   ended_at: string | null;
 }
@@ -370,6 +382,7 @@ export const TABLE_COLUMNS = {
     'outcome',
     'outcome_json',
     'head_sha',
+    'vouched_sha',
     'started_at',
     'ended_at',
   ],

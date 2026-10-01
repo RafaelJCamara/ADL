@@ -236,6 +236,23 @@ export interface ManagerGitClient {
    */
   diffNameOnly(base: string, head: string): Promise<readonly string[]>;
   /**
+   * Every path whose content differs between the TREES at `base` and `head`,
+   * repo-relative — `base..head`, two dots (M08 step 8.6, ROLE-11's diff
+   * against the tip ADL vouches for).
+   *
+   * The deliberate opposite of {@link ManagerGitClient.diffNameOnly}'s choice,
+   * for the opposite case. There, `base` may be a default branch that moved on
+   * after the feature diverged, and the merge base is what keeps unrelated
+   * commits out. Here `base` is a tip ADL itself vouched for on THIS branch,
+   * and the question is "what is different now from what ADL vouched for" —
+   * including a vouched commit that is no longer in `head`'s history at all.
+   * A developer that resets past ADL's commit and commits again leaves a merge
+   * base older than that commit, so three dots would show nothing of what the
+   * reset removed; two dots compare the trees and show every file of it.
+   * Probed against git 2.49 before this was written.
+   */
+  diffTreesNameOnly(base: string, head: string): Promise<readonly string[]>;
+  /**
    * Push `refspec` to `remoteUrl` (M05's forge publish step).
    *
    * **Deliberately no credential parameter.** `NEUTRALISE_ARGS` already
@@ -477,6 +494,21 @@ export function managerGitClient(
         '-z',
         '--end-of-options',
         `${base}...${head}`,
+      ]);
+      return raw.split('\0').filter((path) => path !== '');
+    },
+
+    async diffTreesNameOnly(
+      base: string,
+      head: string,
+    ): Promise<readonly string[]> {
+      // `diffNameOnly`'s guards, for its reasons; only the range differs.
+      const raw = await gitOk([
+        'diff',
+        '--name-only',
+        '-z',
+        '--end-of-options',
+        `${base}..${head}`,
       ]);
       return raw.split('\0').filter((path) => path !== '');
     },

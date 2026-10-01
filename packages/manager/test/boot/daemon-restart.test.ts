@@ -120,6 +120,7 @@ async function seedPreCrashState(
     outcome: null,
     outcome_json: null,
     head_sha: null,
+    vouched_sha: null,
     started_at: now,
     ended_at: null,
   });

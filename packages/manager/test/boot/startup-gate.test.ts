@@ -42,13 +42,13 @@ async function checkpointAndDigest(
 }
 
 describe('DAEMON_SCHEMA_VERSION', () => {
-  it('is derived from the migrations directory — 5, matching the 5 shipped migrations', () => {
+  it('is derived from the migrations directory — 6, matching the 6 shipped migrations', () => {
     // Deliberately a literal rather than a re-derivation: `DAEMON_SCHEMA_VERSION`
     // IS the derivation (rule 8), so asserting it against a second count of the
     // same directory would agree with itself no matter what either did. Bumped
-    // by `0005_rounds_head_sha.ts` (M05 step 5.14), which is what a migration
+    // by `0006_rounds_vouched_sha.ts` (M08 step 8.6), which is what a migration
     // landing is supposed to look like in a diff.
-    expect(DAEMON_SCHEMA_VERSION).toBe(5);
+    expect(DAEMON_SCHEMA_VERSION).toBe(6);
   });
 });
 

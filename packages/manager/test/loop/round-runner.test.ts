@@ -114,6 +114,7 @@ function snapshot(
  */
 function stubGitClient(
   diffNameOnly: ManagerGitClient['diffNameOnly'] = () => Promise.resolve([]),
+  diffTreesNameOnly: ManagerGitClient['diffTreesNameOnly'] = diffNameOnly,
 ): ManagerGitClient {
   const notUsed = (member: string) => () =>
     Promise.reject(new Error(`${member} is not used by this test`));
@@ -124,6 +125,7 @@ function stubGitClient(
     effectiveConfig: notUsed('effectiveConfig'),
     listFiles: notUsed('listFiles'),
     diffNameOnly,
+    diffTreesNameOnly,
     push: notUsed('push'),
   };
 }
@@ -233,6 +235,7 @@ async function seedAttemptHistory(
       outcome: 'escalate',
       outcome_json: JSON.stringify({ kind: 'escalate', reason: 'seeded' }),
       head_sha: null,
+      vouched_sha: null,
       started_at: at,
       ended_at: at,
     })
@@ -721,6 +724,238 @@ describe('the round loop — protected-path enforcement (ROLE-11)', () => {
         .where('id', '=', roundId)
         .executeTakeFirst();
       expect(round?.outcome).toBeNull();
+    });
+  });
+});
+
+describe('the round loop — the tip ADL vouches for (M08 step 8.6, D-8-A-1)', () => {
+  const DEV_1 = '1'.repeat(40);
+  const GATE_1 = '2'.repeat(40);
+  const DEV_2 = '3'.repeat(40);
+  const ELSEWHERE = '4'.repeat(40);
+
+  /** A git double that records which diff ROLE-11 asked for, and answers clean. */
+  function recordingGit(calls: string[]): ManagerGitClient {
+    return stubGitClient(
+      (base, head) => {
+        calls.push(`${base}...${head}`);
+        return Promise.resolve([]);
+      },
+      (base, head) => {
+        calls.push(`${base}..${head}`);
+        return Promise.resolve([]);
+      },
+    );
+  }
+
+  function gateWithHead(
+    verdict: Verdict,
+    head: { before: string; after: string },
+  ): string {
+    return JSON.stringify({
+      kind: 'verdict',
+      verdict,
+      head,
+    } satisfies StageRunnerVerdict);
+  }
+
+  async function vouchedOf(
+    db: Kysely<Database>,
+    roundId: string,
+  ): Promise<string | null | undefined> {
+    return (
+      await db
+        .selectFrom('rounds')
+        .select('vouched_sha')
+        .where('id', '=', roundId)
+        .executeTakeFirst()
+    )?.vouched_sha;
+  }
+
+  it('vouches for a clean developer commit, then for a gate’s commit on top of it, and diffs the next developer against that', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+      const calls: string[] = [];
+      const git = recordingGit(calls);
+
+      // Round 1's developer: nothing vouched yet, so the default branch,
+      // three-dot — exactly the pre-8.6 base for round 1.
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed(DEV_1),
+        { git },
+      );
+      expect(calls).toEqual([`main...${DEV_1}`]);
+      expect(await vouchedOf(db, roundId)).toBe(DEV_1);
+
+      // A gate that started on that tip and committed (a formatter, or ADL
+      // carrying a tester's tests back) extends what ADL vouches for.
+      await report(
+        db,
+        seeded,
+        1,
+        'review',
+        gateWithHead(
+          {
+            outcome: 'pass',
+            summary: 'ok',
+            checked: [CRITERION],
+          },
+          { before: DEV_1, after: GATE_1 },
+        ),
+        { git },
+      );
+      expect(await vouchedOf(db, roundId)).toBe(GATE_1);
+
+      // The next developer commit is judged against the gate's tip, two-dot —
+      // never against its own previous commit, which is what made the gate's
+      // commit look like the developer's.
+      await report(db, seeded, 0, 'develop', committed(DEV_2), { git });
+      expect(calls.at(-1)).toBe(`${GATE_1}..${DEV_2}`);
+    });
+  });
+
+  it('never vouches for a commit ROLE-11 found violating', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed(DEV_1),
+        {
+          git: stubGitClient(() => Promise.resolve(['adl.yml'])),
+        },
+      );
+
+      expect((await reload(db, seeded.feature.id)).state).toBe('escalated');
+      // `head_sha` still says what the developer produced…
+      const round = await db
+        .selectFrom('rounds')
+        .selectAll()
+        .where('id', '=', roundId)
+        .executeTakeFirstOrThrow();
+      expect(round.head_sha).toBe(DEV_1);
+      // …and nothing vouches for it, so a resumed feature is still judged
+      // against a tip from before the violation.
+      expect(round.vouched_sha).toBeNull();
+      expect(
+        await featuresRepository(db).latestVouchedSha(seeded.feature.id),
+      ).toBeUndefined();
+    });
+  });
+
+  it('vouches for nothing when a gate started on a tip ADL never vouched for', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+      const git = recordingGit([]);
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed(DEV_1),
+        { git },
+      );
+      await report(
+        db,
+        seeded,
+        1,
+        'review',
+        gateWithHead(
+          {
+            outcome: 'pass',
+            summary: 'ok',
+            checked: [CRITERION],
+          },
+          { before: ELSEWHERE, after: GATE_1 },
+        ),
+        { git },
+      );
+
+      expect(await vouchedOf(db, roundId)).toBe(DEV_1);
+    });
+  });
+
+  it('vouches for a gate’s commit even when the stage then errored — a failed push is retried on top of it', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+      const git = recordingGit([]);
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed(DEV_1),
+        { git },
+      );
+      await report(
+        db,
+        seeded,
+        1,
+        'review',
+        JSON.stringify({
+          kind: 'stage_error',
+          error: {
+            kind: 'provider_error',
+            retryable: true,
+            detail: 'push failed',
+          },
+          head: { before: DEV_1, after: GATE_1 },
+        } satisfies StageRunnerVerdict),
+        { git },
+      );
+
+      expect(await vouchedOf(db, roundId)).toBe(GATE_1);
+    });
+  });
+
+  it('ignores a head range reported from the developer’s own index', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const seeded = await seedFeature(db);
+      const git = recordingGit([]);
+
+      const { roundId } = await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        committed(DEV_1),
+        { git },
+      );
+      // A stage error at index 0 carrying a range — the developer's own
+      // commits are exactly what ROLE-11 judges, so this must vouch for none
+      // of them.
+      await report(
+        db,
+        seeded,
+        0,
+        'develop',
+        JSON.stringify({
+          kind: 'stage_error',
+          error: {
+            kind: 'provider_error',
+            retryable: true,
+            detail: 'push failed',
+          },
+          head: { before: DEV_1, after: DEV_2 },
+        } satisfies StageRunnerVerdict),
+        { git },
+      );
+
+      expect(await vouchedOf(db, roundId)).toBe(DEV_1);
     });
   });
 });

@@ -91,6 +91,7 @@ describe('featuresRepository.closeRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -124,6 +125,7 @@ describe('featuresRepository.closeRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -165,6 +167,7 @@ describe('featuresRepository.recordRoundHeadSha', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -198,6 +201,7 @@ describe('featuresRepository.recordRoundHeadSha', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -251,6 +255,7 @@ describe('featuresRepository.latestClosedRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -273,6 +278,7 @@ describe('featuresRepository.latestClosedRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -293,6 +299,7 @@ describe('featuresRepository.latestClosedRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -320,6 +327,7 @@ describe('featuresRepository.latestClosedRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -338,6 +346,7 @@ describe('featuresRepository.latestClosedRound', () => {
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -376,6 +385,90 @@ describe('featuresRepository.listDispatchable', () => {
       expect(ids).not.toContain(publishing);
       // A human is the next actor.
       expect(ids).not.toContain(escalated);
+    });
+  });
+});
+
+describe('featuresRepository — the tip ADL vouches for (M08 step 8.6)', () => {
+  async function openRound(
+    db: Kysely<Database>,
+    featureId: string,
+    number: number,
+    closed: boolean,
+  ): Promise<string> {
+    const id = ulid();
+    await featuresRepository(db).insertRound({
+      id,
+      feature_id: featureId,
+      number,
+      outcome: closed ? 'send_back' : null,
+      outcome_json: null,
+      head_sha: null,
+      vouched_sha: null,
+      started_at: nowIso(),
+      ended_at: closed ? nowIso() : null,
+    });
+    return id;
+  }
+
+  it('reads the newest vouched tip, the OPEN round included, skipping rounds with none', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'developing', null);
+
+      expect(await repo.latestVouchedSha(featureId)).toBeUndefined();
+
+      const round1 = await openRound(db, featureId, 1, true);
+      const round2 = await openRound(db, featureId, 2, true);
+      const round3 = await openRound(db, featureId, 3, false);
+      await repo.recordRoundVouchedSha({ id: round1, sha: 'a'.repeat(40) });
+      // Round 2 vouched for nothing (its developer was blocked, say): the
+      // reader falls through to round 1 rather than to `undefined`.
+      expect(await repo.latestVouchedSha(featureId)).toBe('a'.repeat(40));
+      void round2;
+
+      // The open round counts — a developer re-run inside the same round
+      // after a crash is judged against what that round already vouched for.
+      await repo.recordRoundVouchedSha({ id: round3, sha: 'c'.repeat(40) });
+      expect(await repo.latestVouchedSha(featureId)).toBe('c'.repeat(40));
+    });
+  });
+
+  it('advances only from the tip it was told it started on', async () => {
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'gating', null);
+      const roundId = await openRound(db, featureId, 1, false);
+
+      // Nothing vouched yet: a compare-and-set against any tip fails.
+      expect(
+        await repo.advanceRoundVouchedSha({
+          id: roundId,
+          from: 'a'.repeat(40),
+          to: 'b'.repeat(40),
+        }),
+      ).toBe(false);
+
+      await repo.recordRoundVouchedSha({ id: roundId, sha: 'a'.repeat(40) });
+      expect(
+        await repo.advanceRoundVouchedSha({
+          id: roundId,
+          from: 'f'.repeat(40),
+          to: 'b'.repeat(40),
+        }),
+      ).toBe(false);
+      expect(await repo.latestVouchedSha(featureId)).toBe('a'.repeat(40));
+
+      expect(
+        await repo.advanceRoundVouchedSha({
+          id: roundId,
+          from: 'a'.repeat(40),
+          to: 'b'.repeat(40),
+        }),
+      ).toBe(true);
+      expect(await repo.latestVouchedSha(featureId)).toBe('b'.repeat(40));
     });
   });
 });

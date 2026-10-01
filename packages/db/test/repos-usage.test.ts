@@ -88,6 +88,7 @@ async function seedRound(
       outcome: null,
       outcome_json: null,
       head_sha: null,
+      vouched_sha: null,
       started_at: NOW,
       ended_at: null,
     })

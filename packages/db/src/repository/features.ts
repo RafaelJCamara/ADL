@@ -157,6 +157,40 @@ export interface FeaturesRepository {
   recordRoundHeadSha(input: { id: string; headSha: string }): Promise<boolean>;
 
   /**
+   * Vouch for a developer commit ROLE-11 found clean (M08 step 8.6,
+   * `0006_rounds_vouched_sha.ts`).
+   *
+   * Unguarded, for {@link FeaturesRepository.recordRoundHeadSha}'s reason: a
+   * retry can re-run the developer inside the same open round, and the tip
+   * that matters is the one just checked. Only ever called with a sha the
+   * check has already passed — the guard is the caller's ordering, and
+   * `round-runner.ts` is the one caller.
+   */
+  recordRoundVouchedSha(input: { id: string; sha: string }): Promise<boolean>;
+
+  /**
+   * Move this round's vouched tip from `from` to `to` — compare-and-set.
+   *
+   * A gate stage that started on the vouched tip and moved HEAD extends what
+   * ADL vouches for; one that started anywhere else (a commit ADL never
+   * checked sitting underneath it) extends nothing, and the next developer
+   * check then covers that unchecked commit too. Returns whether the swap
+   * happened, so a caller can log a refusal rather than infer it.
+   */
+  advanceRoundVouchedSha(input: {
+    id: string;
+    from: string;
+    to: string;
+  }): Promise<boolean>;
+
+  /**
+   * The newest tip ADL vouches for on this feature — the open round included —
+   * or `undefined` when no round has one (round 1 before its developer
+   * commit, or a feature from before `0006`).
+   */
+  latestVouchedSha(featureId: string): Promise<string | undefined>;
+
+  /**
    * Acquire a lease on an unheld or expired feature.
    *
    * The guard admits a row whose `lease_token` is null (never leased) or
@@ -347,6 +381,40 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
         .executeTakeFirst();
 
       return Number(result.numUpdatedRows) === 1;
+    },
+
+    async recordRoundVouchedSha({ id, sha }) {
+      const result = await db
+        .updateTable('rounds')
+        .set({ vouched_sha: sha })
+        .where('id', '=', id)
+        .executeTakeFirst();
+
+      return Number(result.numUpdatedRows) === 1;
+    },
+
+    async advanceRoundVouchedSha({ id, from, to }) {
+      const result = await db
+        .updateTable('rounds')
+        .set({ vouched_sha: to })
+        .where('id', '=', id)
+        .where('vouched_sha', '=', from)
+        .executeTakeFirst();
+
+      return Number(result.numUpdatedRows) === 1;
+    },
+
+    async latestVouchedSha(featureId) {
+      const row = await db
+        .selectFrom('rounds')
+        .select('vouched_sha')
+        .where('feature_id', '=', featureId)
+        .where('vouched_sha', 'is not', null)
+        .orderBy('number', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+
+      return row?.vouched_sha ?? undefined;
     },
 
     async acquireLease({

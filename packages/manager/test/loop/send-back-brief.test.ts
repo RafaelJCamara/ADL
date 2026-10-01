@@ -30,6 +30,7 @@ function round(overrides: Partial<RoundsTable>): RoundsTable {
     outcome: null,
     outcome_json: null,
     head_sha: null,
+    vouched_sha: null,
     started_at: '2026-01-01T00:00:00.000Z',
     ended_at: null,
     ...overrides,

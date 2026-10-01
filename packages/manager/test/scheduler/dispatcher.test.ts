@@ -449,6 +449,7 @@ describe('dispatchOnce — the send-back brief (LOOP-02, M05 step 5.15)', () => 
         outcome: 'send_back',
         outcome_json: JSON.stringify({ kind: 'send_back', brief: BRIEF }),
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: nowIso(),
       });
@@ -507,6 +508,7 @@ describe('dispatchOnce — the send-back brief (LOOP-02, M05 step 5.15)', () => 
         outcome: 'send_back',
         outcome_json: JSON.stringify({ kind: 'send_back', brief: BRIEF }),
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: nowIso(),
       });
@@ -518,6 +520,7 @@ describe('dispatchOnce — the send-back brief (LOOP-02, M05 step 5.15)', () => 
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -555,6 +558,7 @@ describe('dispatchOnce — the send-back brief (LOOP-02, M05 step 5.15)', () => 
         outcome: 'send_back',
         outcome_json: JSON.stringify({ kind: 'send_back', brief: BRIEF }),
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: nowIso(),
       });
@@ -568,6 +572,7 @@ describe('dispatchOnce — the send-back brief (LOOP-02, M05 step 5.15)', () => 
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: nowIso(),
         ended_at: null,
       });
@@ -941,6 +946,7 @@ describe('dispatchOnce — the provider-failure backoff (LOOP-07, M06 step 6.7)'
         outcome: null,
         outcome_json: null,
         head_sha: null,
+        vouched_sha: null,
         started_at: BROKE_AT,
         ended_at: null,
       })

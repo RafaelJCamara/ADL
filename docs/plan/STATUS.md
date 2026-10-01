@@ -1,6 +1,6 @@
 # STATUS — start here
 
-_Last updated: 2026-09-25_
+_Last updated: 2026-10-01_
 
 **If you are a fresh Claude session picking this project up, read this file top to bottom.
 It is the only file you need to start working.**
@@ -78,7 +78,10 @@ were opened; the audit found ten things, four of which changed what the steps ar
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
 **8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice), 8.3 (the
 failure-mode map), 8.4 (the tester agent) and 8.5 (outcomes from structured runner output) are
-done.** Three stray commits a replay double made on `main` on 2026-09-25 were dropped by a
+done, and 8.6 is in progress:** its first commit closed `DEBT.md` D-8-A-1 — a gate's own commit
+is no longer blamed on the developer by the next round's protected-path check, because ROLE-11
+now diffs against the tip ADL vouches for (`rounds.vouched_sha`) rather than the developer's
+previous commit. Three stray commits a replay double made on `main` on 2026-09-25 were dropped by a
 rebase before the first push — [`HANDOFF.md`](./HANDOFF.md) has the evidence.
 
 ```
@@ -89,7 +92,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.5 done; 8.6–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.5 done; 8.6 in progress (D-8-A-1 closed); 8.7–8.9 to go
 M09–M18 ............................. not started
 ```
 

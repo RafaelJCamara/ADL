@@ -110,6 +110,7 @@ export async function openAttempt(
           // reports a commit (M05 step 5.14) — null here is a round that has
           // not run its developer yet, which every round is at this moment.
           head_sha: null,
+          vouched_sha: null,
           started_at: at,
           ended_at: null,
         });

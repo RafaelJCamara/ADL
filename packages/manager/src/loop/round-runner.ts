@@ -30,7 +30,10 @@ import {
 import { isTransientStageErrorKind } from '@adl/core/stage';
 import type { Verdict } from '@adl/core/verdict';
 import type { ManagerGitClient } from '@adl/workspace';
-import { parseStageRunnerVerdict } from '../ipc/stage-verdict.js';
+import {
+  parseStageRunnerVerdict,
+  type GateHeadRange,
+} from '../ipc/stage-verdict.js';
 import { resolveSnapshotPipeline } from '../pipeline.js';
 import { publishOnEscalation } from '../publish/on-escalation.js';
 import { promoteChangeRequestToReady } from '../publish/promote.js';
@@ -286,6 +289,23 @@ function classify(verdictJson: string): StageCompletion {
     case 'stage_error':
       return { kind: 'error', error: verdict.error };
   }
+}
+
+/**
+ * The HEAD range a GATE stage reported, if any (M08 step 8.6, D-8-A-1).
+ *
+ * Read beside {@link classify} rather than through it: `StageCompletion` is
+ * `@adl/core/loop`'s sequencer input and a branch tip is not something the
+ * sequencer decides anything on. A malformed payload has no range — the
+ * same answer as a range the worker could not read, which vouches for
+ * nothing.
+ */
+function gateHeadRangeOf(verdictJson: string): GateHeadRange | undefined {
+  const parsed = parseStageRunnerVerdict(verdictJson);
+  if (!parsed.ok || parsed.verdict.kind === 'developer_outcome') {
+    return undefined;
+  }
+  return parsed.verdict.head;
 }
 
 /** Every verdict already recorded in this round, oldest first — `aggregate`'s input. */
@@ -763,6 +783,53 @@ async function runStageCompleted(
         headSha: committedSha,
       },
     );
+
+    // M08 step 8.6 (D-8-A-1): a commit ROLE-11 found clean becomes the tip
+    // ADL vouches for, and the next check diffs against it. Only on `clean`:
+    // a violating commit is never vouched for, so a feature escalated for one
+    // and then resumed is still judged against the last clean tip rather than
+    // against the violation (`protected-paths-check.ts` carries the
+    // argument). Evidence before state, like the two writes above.
+    if (protectedPathResult.kind === 'clean') {
+      await repo.recordRoundVouchedSha({
+        id: params.roundId,
+        sha: committedSha,
+      });
+    }
+  }
+
+  // M08 step 8.6 (D-8-A-1): a GATE stage that started on the tip ADL vouches
+  // for and moved HEAD — a plain-command gate's own commit, or ADL carrying a
+  // tester's tests back — extends what ADL vouches for, so the next developer
+  // check does not diff that commit as the developer's work.
+  //
+  // Index 0 is excluded here as well as on the wire (`GateHeadRange` has no
+  // place on the developer's envelope): the developer's commit is exactly
+  // what ROLE-11 judges, and a range from that stage must never vouch for
+  // anything. Compare-and-set against `before`, so a gate that started on a
+  // commit ADL never checked vouches for nothing and the next developer check
+  // covers both.
+  if (params.stageIndex > 0) {
+    const range = gateHeadRangeOf(params.verdictJson);
+    if (range !== undefined && range.before !== range.after) {
+      const advanced = await repo.advanceRoundVouchedSha({
+        id: params.roundId,
+        from: range.before,
+        to: range.after,
+      });
+      if (!advanced) {
+        deps.logger.warn(
+          {
+            featureId: feature.id,
+            roundId: params.roundId,
+            stageId: params.stageId,
+            before: range.before,
+            after: range.after,
+          },
+          'round loop: a gate moved HEAD from a tip ADL had not vouched for — its commits are left for the next protected-path check to judge',
+        );
+      }
+    }
   }
 
   const pipeline = resolveSnapshotPipeline(feature.effective_config_json);

@@ -193,6 +193,56 @@ function developerOutcomeResult(outcome: DeveloperOutcome): StageRunnerResult {
   return { verdictJson: JSON.stringify(verdict) };
 }
 
+/** HEAD's full sha, or `undefined` when git could not say — never a throw. */
+async function headOf(workspace: Workspace): Promise<string | undefined> {
+  try {
+    return await managerGitClient(workspace).revParse('HEAD');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Record where the branch stood when a GATE stage started, and stamp every
+ * result that stage reports with where it stands at the end (M08 step 8.6,
+ * closing `DEBT.md` D-8-A-1).
+ *
+ * The round loop vouches for a gate's commits when the gate started on the
+ * tip it already vouched for, so a commit a gate made is never diffed as the
+ * developer's in the next round — `ipc/stage-verdict.ts`'s `GateHeadRange`
+ * carries the argument. Every return out of the gate branch goes through
+ * {@link GateHeadStamp.finish}, the refusals included: a gate that committed
+ * and then failed to push is exactly the case where the range matters most.
+ *
+ * Reads the attached WORKTREE, never a composed blind copy — the copy has no
+ * `.git` by construction (8.1), and the branch is the worktree's.
+ *
+ * Either read failing means no range at all. That is the fail-closed
+ * direction: nothing is vouched for, and the next developer check covers
+ * whatever this stage did.
+ */
+interface GateHeadStamp {
+  finish(result: StageRunnerResult): Promise<StageRunnerResult>;
+}
+
+async function stampGateHead(workspace: Workspace): Promise<GateHeadStamp> {
+  const before = await headOf(workspace);
+  return {
+    async finish(result) {
+      const after = before === undefined ? undefined : await headOf(workspace);
+      if (before === undefined || after === undefined) return result;
+      const envelope = JSON.parse(result.verdictJson) as StageRunnerVerdict;
+      if (envelope.kind === 'developer_outcome') return result;
+      return {
+        verdictJson: JSON.stringify({
+          ...envelope,
+          head: { before, after },
+        } satisfies StageRunnerVerdict),
+      };
+    },
+  };
+}
+
 /**
  * Report one agent invocation's spend over the existing `fork()` IPC channel
  * (04-10 Task 2). This module must not import `@adl/db` — the worker
@@ -847,6 +897,11 @@ export function createProductionStageRunner(
         // guard, `eslint.config.js`'s `adl/gate-fresh-context` the residual).
         const appendPromises: Promise<void>[] = [];
 
+        // D-8-A-1 (M08 step 8.6): read BEFORE anything this stage does, so the
+        // range it reports covers every commit the stage made — see
+        // `stampGateHead`. Every return below goes through `gateHead.finish`.
+        const gateHead = await stampGateHead(workspace);
+
         // ROLE-06 (M08 step 8.1): a gate that declared `visible_paths` does not
         // get the workspace the previous stage left. It gets a materialised
         // copy of exactly what it declared, with no `.git`, outside every
@@ -892,12 +947,14 @@ export function createProductionStageRunner(
             // failure-mode taxonomy and is where a better-named kind belongs if
             // one is added.
             await Promise.all(appendPromises);
-            return stageErrorResult(
-              'binary_missing',
-              `pipeline stage ${JSON.stringify(assign.stageId)} declares visible_paths, and ` +
-                `its workspace could not be composed: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
+            return await gateHead.finish(
+              stageErrorResult(
+                'binary_missing',
+                `pipeline stage ${JSON.stringify(assign.stageId)} declares visible_paths, and ` +
+                  `its workspace could not be composed: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+              ),
             );
           }
         }
@@ -937,7 +994,9 @@ export function createProductionStageRunner(
           // judged. A `StageError`, never a verdict (CORE-06, D-12) — the same
           // answer `command-gate.ts` gives for a command it had to kill.
           await Promise.all(appendPromises);
-          return stageErrorResult(built.kind, built.detail);
+          return await gateHead.finish(
+            stageErrorResult(built.kind, built.detail),
+          );
         }
         // HARN-02 (M07 step 7.3): where this gate's program comes from.
         //
@@ -1177,10 +1236,12 @@ export function createProductionStageRunner(
               lifecycle.failure,
             );
             if (outcome.kind === 'stage_error') {
-              return stageErrorResult(
-                outcome.errorKind,
-                `the app under test could not be brought up for the ${assign.stageId} gate ` +
-                  `(${lifecycle.failure.kind}): ${lifecycle.failure.detail}`,
+              return await gateHead.finish(
+                stageErrorResult(
+                  outcome.errorKind,
+                  `the app under test could not be brought up for the ${assign.stageId} gate ` +
+                    `(${lifecycle.failure.kind}): ${lifecycle.failure.detail}`,
+                ),
               );
             }
             // A `send_back`, and it is this stage's verdict rather than a
@@ -1194,12 +1255,12 @@ export function createProductionStageRunner(
             // `escalate` rather than `send_back`, because the supervisor could not
             // recognise it — `StageRunnerVerdict` is a discriminated union and the
             // discriminant is not optional.
-            return {
+            return await gateHead.finish({
               verdictJson: JSON.stringify({
                 kind: 'verdict',
                 verdict: outcome.verdict,
               } satisfies StageRunnerVerdict),
-            };
+            });
           }
 
           // `report_only`, the table's third channel: the gate has already
@@ -1257,11 +1318,13 @@ export function createProductionStageRunner(
             : [];
         if (unknown.length > 0) {
           await Promise.all(appendPromises);
-          return stageErrorResult(
-            'unparseable',
-            `the ${assign.stageId} gate's verdict cites ${unknown.length === 1 ? 'a criterion' : 'criteria'} ` +
-              `the spec does not contain: ${unknown.join(', ')}. The spec defines ` +
-              `${criterionIds.length === 0 ? 'none' : criterionIds.join(', ')}.`,
+          return await gateHead.finish(
+            stageErrorResult(
+              'unparseable',
+              `the ${assign.stageId} gate's verdict cites ${unknown.length === 1 ? 'a criterion' : 'criteria'} ` +
+                `the spec does not contain: ${unknown.join(', ')}. The spec defines ` +
+                `${criterionIds.length === 0 ? 'none' : criterionIds.join(', ')}.`,
+            ),
           );
         }
         // BACK-09 (M05 step 5.18): this path sends NO `usage` message, and
@@ -1281,7 +1344,7 @@ export function createProductionStageRunner(
         // the manager acts on while its evidence is still buffered is a
         // transcript that can lose the thing it was written to explain.
         await Promise.all(appendPromises);
-        return { verdictJson: JSON.stringify(verdict) };
+        return await gateHead.finish({ verdictJson: JSON.stringify(verdict) });
       }
 
       let spec: NormalizedSpec;

@@ -27,6 +27,39 @@ import { VerdictSchema } from '@adl/core/verdict';
  * `StageError` it can route, rather than a verdict it half-believes.
  */
 
+/** A full object name — what `rev-parse` prints, sha-1 or sha-256. */
+const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+/**
+ * Where the feature's branch stood when a GATE stage started, and where it
+ * stands now (M08 step 8.6, closing `DEBT.md` D-8-A-1).
+ *
+ * The round loop vouches for `after` when `before` is the tip it already
+ * vouched for — so a commit a gate made (a plain-command gate's own, or ADL's
+ * carry-back of a tester's tests) is never diffed as the developer's work in
+ * the next round. Optional, and on the two gate-shaped envelopes only:
+ *
+ * - **Not on the developer's.** The developer's commit is exactly what ROLE-11
+ *   judges, so a range from that stage must never extend what ADL vouches
+ *   for; there is no field for it to arrive in.
+ * - **On `stage_error` as well as `verdict`.** A gate whose commit landed and
+ *   whose push then failed reports a retryable error, and the retry starts on
+ *   that commit. Without the range the commit would be vouched for by nobody
+ *   and blamed on the next developer.
+ * - **Absent means "nothing to vouch for"**, never "unchanged": a worker that
+ *   could not read HEAD reports no range, and the next developer check then
+ *   covers whatever happened — the direction that fails closed.
+ */
+const GateHeadRangeSchema = z
+  .strictObject({
+    before: z.string().regex(FULL_SHA),
+    after: z.string().regex(FULL_SHA),
+  })
+  .meta({ id: 'StageRunnerGateHeadRange' });
+
+/** {@link GateHeadRangeSchema}'s type. */
+export type GateHeadRange = z.infer<typeof GateHeadRangeSchema>;
+
 /** The developer's own result — index 0 of the pipeline, and only there (D-05). */
 const DeveloperOutcomeEnvelopeSchema = z
   .strictObject({
@@ -47,12 +80,20 @@ const DeveloperOutcomeEnvelopeSchema = z
  * untestable against the input it exists to consume.
  */
 const VerdictEnvelopeSchema = z
-  .strictObject({ kind: z.literal('verdict'), verdict: VerdictSchema })
+  .strictObject({
+    kind: z.literal('verdict'),
+    verdict: VerdictSchema,
+    head: GateHeadRangeSchema.optional(),
+  })
   .meta({ id: 'StageRunnerGateVerdict' });
 
 /** The stage broke rather than judged (D-12) — outside the verdict union entirely. */
 const StageErrorEnvelopeSchema = z
-  .strictObject({ kind: z.literal('stage_error'), error: StageErrorSchema })
+  .strictObject({
+    kind: z.literal('stage_error'),
+    error: StageErrorSchema,
+    head: GateHeadRangeSchema.optional(),
+  })
   .meta({ id: 'StageRunnerStageError' });
 
 export const StageRunnerVerdictSchema = z
