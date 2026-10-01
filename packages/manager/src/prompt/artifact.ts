@@ -29,6 +29,14 @@
  * reader (or a test) can rely on without agreeing with the writer on a
  * delimiter that might appear inside either string.
  *
+ * The write is ATOMIC: the bytes go to a sibling temp file and are renamed into
+ * place, so the artifact exists at its final path only once it is complete. A
+ * plain `writeFile` creates and truncates the file before it writes, leaving a
+ * window in which the path exists and is empty — a reader that gates on
+ * existence (the determinism test, `run-dev-run-once.mjs`) read that window as
+ * a prompt of zero bytes, and a worker crash inside it left a zero-byte record
+ * that the retry then refused as a conflict with content that had never landed.
+ *
  * An identical rewrite for the same attempt is a harmless retry and a no-op,
  * following `ScratchHomeTeardown`'s already-established idempotency
  * discipline. A rewrite with DIFFERENT content is a named refusal, never a
@@ -47,8 +55,9 @@
  * comparison `04-09` Task 3 builds is only possible because this file
  * exists, so this module's own write failing must be loud.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { ulid } from 'ulid';
 import {
   transcriptPathFor,
   TRANSCRIPT_EXTENSION,
@@ -153,6 +162,15 @@ export async function writePromptArtifact(
   }
 
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, serialised, 'utf8');
+  // The suffix keeps the temp file clear of both `.ndjson` and `.prompt`, so
+  // nothing that looks for a transcript or an artifact can mistake it for one.
+  const temp = `${path}.tmp-${process.pid}-${ulid()}`;
+  try {
+    await writeFile(temp, serialised, 'utf8');
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
   return path;
 }
