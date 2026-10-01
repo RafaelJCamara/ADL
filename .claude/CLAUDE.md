@@ -12,7 +12,8 @@ anything — it says where the project is, what the next step is, and how to bui
 | Known debt and accepted risks | [`docs/plan/DEBT.md`](../docs/plan/DEBT.md) |
 
 **Working rules:** one milestone at a time, in order · one step, one commit · anything found
-and not fixed goes in `DEBT.md` with an owner milestone · update `STATUS.md` when you stop.
+and not fixed goes in `DEBT.md` with an owner milestone · update `STATUS.md` when you stop ·
+**a push to `main` is not done until CI is green** (convention 22).
 
 `.planning/` is an **archived** GSD corpus — historical reference only, never update it.
 
@@ -477,6 +478,26 @@ the build — those are marked ⚙️.
 20. **One atomic commit per step**, conventional-commit scoped by milestone:
     `feat(05-03): …`, `fix(04): …`, `test(02): …`, `docs(…)`. Formatting-only changes go in
     a separate `style` commit so `git blame` still points at the commit that wrote the code.
+22. **A push to `main` is not finished until CI is green — check it, and fix it until it is.**
+    Pushing stays something the user asks for; this rule says what "done" means once they have.
+    After the push: `gh run list --branch main --limit 1`, then `gh run watch <id> --exit-status`
+    (or poll) until **every** leg of the matrix has concluded. If any leg is red:
+    - Read the failing logs (`gh run view <id> --log-failed`) — don't guess from the step name.
+    - Fix the **cause**, in a new atomic commit (convention 20), and push again. Never
+      `--no-verify`, never skip, delete, loosen or `retry`-wrap a test to get a tick, and never
+      weaken a gate or a security control to make it pass; a fix that does so is not a fix.
+    - Reproduce Linux-only failures locally rather than iterating by pushing: Docker Desktop is
+      available, and the Linux leg needs the `adl-worker` user, the `sudoers` rule and
+      `sg adl-worker -c "pnpm -r test"` exactly as `ci.yml` provisions them (they cannot fail on
+      the Windows dev machine, where the privilege drop has no subject).
+    - A step that never ran proves nothing: `Test (workspace root suite)` is skipped whenever
+      `Test` fails, so a red leg can be hiding a second one. Re-read the **whole** next run.
+    - Repeat until every leg is green. A flake is still red: re-run once to classify it, then
+      fix it or put it in `DEBT.md` with a reproduction (convention 21) — never ignore it.
+    - If a fix needs something only the user can decide (a security-relevant change, a secret,
+      a CI setting), stop and say so with the evidence; do not leave `main` red and move on.
+    Run `pnpm format` before pushing docs — a Prettier miss on `docs/plan/` alone has turned
+    `main` red before the tests even ran.
 21. **Anything found but out of scope goes in `docs/plan/DEBT.md`** with a **reproduction**
     (or an explicit statement that it is unreproduced and why), a proposed shape, and an
     owning milestone. A prose "didn't touch this" note is explicitly not good enough.
