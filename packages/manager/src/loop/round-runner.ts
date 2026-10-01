@@ -183,8 +183,9 @@ function describeProtectedPathViolation(paths: readonly string[]): string {
   const list =
     shown.join(', ') + (omitted > 0 ? `, and ${String(omitted)} more` : '');
   return (
-    'the developer touched a path ROLE-11 protects — the spec, adl.yml, and any ' +
-    `configured protected_paths must never be edited by the developer agent: ${list}`
+    'a path ROLE-11 protects changed between the last commit ADL vouched for and the ' +
+    "developer's — the spec, adl.yml, every gate’s owned_dir, and any configured " +
+    `protected_paths must never be edited by the developer agent or by code it wrote: ${list}`
   );
 }
 
@@ -780,6 +781,7 @@ async function runStageCompleted(
       {
         feature,
         protectedGlobs: protectedPathsOf(feature),
+        ownedDirs: ownedDirsOf(feature),
         headSha: committedSha,
       },
     );
@@ -798,22 +800,26 @@ async function runStageCompleted(
     }
   }
 
-  // M08 step 8.6 (D-8-A-1): a GATE stage that started on the tip ADL vouches
-  // for and moved HEAD — a plain-command gate's own commit, or ADL carrying a
-  // tester's tests back — extends what ADL vouches for, so the next developer
-  // check does not diff that commit as the developer's work.
+  // M08 step 8.6 (D-8-A-1): the commit ADL itself made in a GATE stage —
+  // carrying a tester's tests back — extends what ADL vouches for, so the next
+  // developer check does not diff it as the developer's work. Only that
+  // commit: the worker reports a range for nothing else, because a gate stage
+  // runs developer-controlled code (`npm test`'s script, the app's build) in
+  // the developer's worktree, and whatever THAT commits must stay unvouched
+  // and be judged with the developer's next commit.
   //
   // Index 0 is excluded here as well as on the wire (`GateHeadRange` has no
   // place on the developer's envelope): the developer's commit is exactly
   // what ROLE-11 judges, and a range from that stage must never vouch for
-  // anything. Compare-and-set against `before`, so a gate that started on a
-  // commit ADL never checked vouches for nothing and the next developer check
-  // covers both.
+  // anything. Compare-and-set against the feature's vouched tip, so a commit
+  // ADL made on top of something it never checked vouches for nothing and the
+  // next developer check covers both.
   if (params.stageIndex > 0) {
     const range = gateHeadRangeOf(params.verdictJson);
     if (range !== undefined && range.before !== range.after) {
       const advanced = await repo.advanceRoundVouchedSha({
         id: params.roundId,
+        featureId: feature.id,
         from: range.before,
         to: range.after,
       });
@@ -1165,10 +1171,29 @@ function repeatFindingThresholdOf(feature: FeaturesTable): number {
 }
 
 /**
+ * Every pipeline entry's `owned_dir` this feature was leased under (M08 step
+ * 8.6) — the third always-on protection, read off the same snapshot the stage
+ * runner reads it from, so the directory ADL commits into and the directory
+ * ROLE-11 protects cannot be two different answers.
+ *
+ * An unresolvable snapshot yields none, and that is not the fail-open it looks
+ * like: `runStageCompleted` escalates a round whose pipeline it cannot resolve
+ * (the `unparseable` branch beside `planRoundStep`), so no developer commit
+ * judged against this empty list can go on to pass anything.
+ */
+function ownedDirsOf(feature: FeaturesTable): readonly string[] {
+  const pipeline = resolveSnapshotPipeline(feature.effective_config_json);
+  if (!pipeline.ok) return [];
+  return pipeline.stages.flatMap((stage) =>
+    stage.ownedDir === undefined ? [] : [stage.ownedDir],
+  );
+}
+
+/**
  * The maintainer-declared protected-path globs this feature was leased
  * under, from its own snapshot — `maxRoundsOf`'s exact degrade-on-malformed
  * shape (rule 5, CORE-06's spirit): a snapshot this build cannot read narrows
- * `checkProtectedPaths` to its two structural, always-on protections rather
+ * `checkProtectedPaths` to its structural, always-on protections rather
  * than throwing. It never widens what is protected — an empty list here only
  * ever means "nothing configured or nothing readable", never "read and empty
  * on purpose vs. read and unreadable" collapsed into a false negative wider

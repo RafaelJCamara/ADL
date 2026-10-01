@@ -79,6 +79,9 @@ describe('both gate kinds are handed the same context object', () => {
     const code = await stageRunnerCode();
 
     expect(code).toContain('resolvedStageFor(assign)?.needsApp');
+    // And the carry-back of a gate's own files (M08 step 8.6): the declared
+    // `owned_dir`, the same way — never "the tester's tests" by name.
+    expect(code).toContain('resolvedStageFor(assign)?.ownedDir');
     for (const forbidden of [
       "assign.stageId === 'behaviour'",
       "stageId === 'behaviour'",

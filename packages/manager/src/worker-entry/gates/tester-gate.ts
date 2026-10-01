@@ -100,7 +100,37 @@
  *
  * **Ambiguity is reported, not guessed** — a `warn` naming the criterion and the
  * reading taken, which `aggregate` already knows never produces a `send_back`.
+ *
+ * ## Its tests are kept, and only its tests are run (ROLE-09, M08 step 8.6)
+ *
+ * The entry declares `owned_dir`, and what the tester leaves there is committed
+ * to the feature's branch by ADL once the stage has judged —
+ * `worker-entry/owned-dir.ts` does it, for any gate declaring the key. This
+ * module's part is the other half of the same answer: **the suite runs exactly
+ * the files ADL will commit**, named one by one after the declared command. Not
+ * the repository's other tests that `visible_paths` happens to copy in — a
+ * tester that wrote nothing was credited with those (`DEBT.md` D-8-05-3) — and
+ * not tests an earlier feature committed to the same directory. Every round,
+ * this feature's committed tests are copied back in and run again, which is
+ * what makes the tester's `deterministic` judgement kind honest: a re-run test
+ * has a stable fingerprint, so the tester stops being a fresh opinion each
+ * round (audit finding 8).
+ *
+ * Files, not the directory, because `node --test <dir>` tries to load the
+ * directory as a module and fails (probed, node 24.19), while runners in general
+ * accept file paths. Every file is passed, helpers included: ADL does not guess
+ * which files "are tests" (`protected_paths`' own rule), and the prompt says
+ * so. A file with no test in it is node's synthetic pass, `D-8-05-2` — 8.8's
+ * must-fail-at-base guardrail is what rejects it.
+ *
+ * **No own files at all is `inconclusive`**, without running anything — the
+ * same answer a suite that executed nothing gets (ROLE-08), reached without a
+ * run whose command would have had no file arguments and would therefore have
+ * discovered the whole repository's tests instead. And like `needs_app`, the
+ * tester refuses to run without the key, naming it: a tester whose tests vanish
+ * with its workspace is the dishonest `deterministic` finding 8 warned about.
  */
+import { posix } from 'node:path';
 import * as z from 'zod';
 import {
   interpolateCommandEnv,
@@ -183,10 +213,10 @@ function shellWord(word: string): string {
 }
 
 /** The suite as the tester is told it, with the env ALREADY interpolated — what it is told is what runs. */
-function renderSuite(command: CommandSpec): string {
+function renderSuite(command: CommandSpec, ownedDir: string): string {
   const env = Object.entries(command.env ?? {});
   return [
-    `Command: ${command.argv.map(shellWord).join(' ')}`,
+    `Command: ${command.argv.map(shellWord).join(' ')} <every file you leave under ${ownedDir}/, one argument each>`,
     `Directory: ${command.cwd ?? '.'}`,
     ...(env.length === 0
       ? ['Environment: (nothing beyond the defaults)']
@@ -212,6 +242,7 @@ function renderInstructions(
   baseUrl: string,
   verdictPath: string,
   suite: CommandSpec,
+  ownedDir: string,
 ): string {
   return [
     `# Behaviour test: ${gate.spec.title}`,
@@ -245,7 +276,21 @@ function renderInstructions(
     '',
     'When you have finished, ADL runs this suite itself, in your working directory:',
     '',
-    renderSuite(suite),
+    renderSuite(suite, ownedDir),
+    '',
+    `Only the files under \`${ownedDir}/\` are run — every one of them, as a test file,`,
+    'so keep anything that is not a test inside a test file. Tests elsewhere in your',
+    'workspace are not run and do not count.',
+    '',
+    '## Your tests are kept',
+    '',
+    `What you leave under \`${ownedDir}/\` is committed to the feature’s branch by ADL`,
+    'when you are done, and becomes permanent regression coverage the team owns. Every',
+    'later round runs it again, and the developer can never change it. So write each test',
+    'as one a maintainer would want to keep: deterministic, independent of the others,',
+    'and about one behaviour the specification promises. Files there that you did not',
+    'write this round are tests from earlier rounds — keep them unless one is wrong.',
+    'Anything you write outside that directory is discarded.',
     '',
     '**That run decides this stage’s outcome, not your verdict.** A test that fails',
     'there sends the feature back to the developer, with your test’s name as the',
@@ -264,8 +309,8 @@ function renderInstructions(
     '## What to do',
     '',
     `1. Write tests that exercise ${baseUrl} against the acceptance criteria above.`,
-    '   Put them in the directory you can already see tests in, following the',
-    '   conventions of the tests that are there.',
+    `   Put them under \`${ownedDir}/\`, following the conventions of any tests you`,
+    '   can already see.',
     '2. Run them with the command and environment above, as often as you like — your',
     '   run is not the one that counts, and reading what actually happened is.',
     `3. Write your verdict as a single JSON object to \`${verdictPath}\`.`,
@@ -325,6 +370,20 @@ export async function runTesterGate(
     );
   }
 
+  // The same refusal, for the same reason, for `owned_dir` (M08 step 8.6): a
+  // tester whose tests are not kept re-invents them every round, which turns its
+  // `deterministic` judgement kind into a fresh opinion per round (audit finding
+  // 8) — and its suite would run whatever else the workspace held (D-8-05-3).
+  if (host.owned === undefined) {
+    return stageError(
+      'binary_missing',
+      `the ${gate.stageId} gate is the behaviour tester and was dispatched without an owned_dir. ` +
+        "Add `owned_dir: <directory>` to this stage's pipeline entry (covered by its " +
+        'visible_paths) so ADL commits the tests it writes and runs only those (ROLE-09).',
+    );
+  }
+  const owned = host.owned;
+
   const parsedWith = TesterWithSchema.safeParse(gate.config);
   if (!parsedWith.success) {
     return stageError(
@@ -366,6 +425,7 @@ export async function runTesterGate(
         baseUrl,
         verdictPath,
         suiteCommand,
+        owned.dir,
       ),
       contextFiles: [],
       limits: { maxWallClockMs: TESTER_MAX_WALL_CLOCK_MS },
@@ -439,10 +499,44 @@ export async function runTesterGate(
     );
   }
 
+  // ROLE-09 (M08 step 8.6): the files this suite runs are exactly the files ADL
+  // will commit — the module docblock's last section.
+  const ownFiles = await owned.freeze();
+  if (!ownFiles.ok) {
+    return stageError(
+      'unparseable',
+      `the ${gate.stageId} tester left something in ${owned.dir} ADL will neither run nor commit: ${ownFiles.detail}`,
+    );
+  }
+  if (ownFiles.files.length === 0) {
+    return {
+      kind: 'verdict',
+      verdict: {
+        outcome: 'inconclusive',
+        summary: `the ${gate.stageId} tester wrote no tests`,
+        reason:
+          `there is no file under ${owned.dir} for this feature, so there was nothing of the ` +
+          "tester's own to run — tests elsewhere in its workspace are not its own, and a pass " +
+          'from them would verify nothing about this feature',
+      },
+    };
+  }
+  // Forward slashes, because the file names are git's and `posix.relative`
+  // reads a backslash as part of a name — and `RepoRelativePathSchema` accepts
+  // `tests\unit` as a `cwd`, which Windows then runs in.
+  const cwd = (suiteCommand.cwd ?? '.').split('\\').join('/');
+  const scopedCommand: CommandSpec = {
+    ...suiteCommand,
+    argv: [
+      ...suiteCommand.argv,
+      ...ownFiles.files.map((file) => posix.relative(cwd, file)),
+    ],
+  };
+
   // ROLE-08: the suite, run by ADL, in the tester's own blind workspace, with the
   // app still up (this runs inside `withAppUnderTest`'s body).
   const run = await runCaptured(gate, {
-    command: suiteCommand,
+    command: scopedCommand,
     path: host.path,
     readStdout: true,
     transcriptPrefix: 'suite:',

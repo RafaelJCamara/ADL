@@ -17,6 +17,17 @@
  * So the two properties that matter are measured from opposite ends at once: the
  * app was reachable (the tester fetched it) and the implementation was not (the
  * tester walked its whole root and the marker is nowhere in it).
+ *
+ * ## And a tester that wrote nothing is credited with nothing (M08 step 8.6)
+ *
+ * Until 8.6 this scenario was `DEBT.md` D-8-05-3's reproduction: the double writes
+ * no test, the suite ran the repository's own `tests/existing.test.mjs`, and the
+ * round came out GREEN on a test the tester never wrote. The tester now declares
+ * `owned_dir`, and ADL runs only this feature's files under it — so the same
+ * double, against the same repository, is `inconclusive` and goes to a human.
+ * Two decoys make the point: a test outside the owned directory, and one an
+ * EARLIER feature committed inside it. Each appends to a witness file when it
+ * runs, and neither may.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -61,6 +72,8 @@ interface TesterReport {
   readonly fetchError: string | null;
   /** Whether the instructions carried the suite ADL runs (M08 step 8.5). */
   readonly sawSuiteCommand: boolean;
+  /** Where the instructions said tests go (M08 step 8.6). */
+  readonly ownedDir: string | null;
 }
 
 async function waitUntil(
@@ -81,7 +94,7 @@ async function waitUntil(
 
 describe('scenario: a code-blind tester verifies a running app', () => {
   it(
-    'reaches the app it cannot read, and reports a verdict the loop acts on',
+    'reaches the app it cannot read, and is credited with no test it did not write',
     { timeout: 240_000 },
     async () => {
       await withTempDb(async ({ db, filePath }) => {
@@ -107,9 +120,25 @@ describe('scenario: a code-blind tester verifies a running app', () => {
             `export const ${MARKER} = 'the implementation';\n`,
             'utf8',
           );
+          // Two decoys, each of which records that it ran (M08 step 8.6): one the
+          // tester can see but does not own, and one an earlier feature's tester
+          // committed INTO the owned directory before this feature branched.
+          const decoyWitness = join(scratchRoot, '..', `decoys-${folder}`);
+          const decoy = (name: string): string =>
+            "import { test } from 'node:test';\n" +
+            "import { appendFileSync } from 'node:fs';\n" +
+            `test(${JSON.stringify(name)}, () => { appendFileSync(${JSON.stringify(decoyWitness)}, ${JSON.stringify(`${name}\n`)}); });\n`;
           await writeFile(
             join(mainRepo, 'tests', 'existing.test.mjs'),
-            "import { test } from 'node:test';\ntest('a test the tester can see', () => {});\n",
+            decoy('a test the tester can see'),
+            'utf8',
+          );
+          await mkdir(join(mainRepo, 'tests', 'behaviour'), {
+            recursive: true,
+          });
+          await writeFile(
+            join(mainRepo, 'tests', 'behaviour', 'earlier-feature.test.mjs'),
+            decoy('an earlier feature’s committed test'),
             'utf8',
           );
           await git.add('.');
@@ -148,12 +177,14 @@ describe('scenario: a code-blind tester verifies a running app', () => {
                 harness: 'behaviour',
                 visible_paths: ['tests/**'],
                 needs_app: true,
+                // ROLE-09 (M08 step 8.6): where the tester's tests go and are kept
+                // — and the only files its suite runs. The double writes no test
+                // here, which before 8.6 meant the suite ran the repository's own
+                // `tests/existing.test.mjs` and credited the tester with it
+                // (D-8-05-3).
+                owned_dir: 'tests/behaviour',
                 // ROLE-08 (M08 step 8.5): the suite ADL runs after the agent, whose
-                // report — not the agent's claim — decides the stage. The double
-                // writes no test here, so what executes is the repository's own
-                // `tests/existing.test.mjs`: the tester is credited with a test it
-                // did not write, which is DEBT.md's D-8-05-3, reproduced (owner
-                // 8.6, which is what identifies the tester's own files).
+                // report — not the agent's claim — decides the stage.
                 with: {
                   suite: {
                     command: {
@@ -272,10 +303,12 @@ describe('scenario: a code-blind tester verifies a running app', () => {
             // hunting for source that is not there.
             expect(report.toldSourceIsAbsent).toBe(true);
 
-            // ── 6. The loop acted on the verdict ──────────────────────
-            // The round is green, which means the tester's `pass` reached
-            // `aggregate` as a real verdict rather than as a StageError — and the
-            // double only emits a `pass` when the app actually answered.
+            // ── 6. The loop acted on the verdict — and credited nothing ──
+            // The double claimed `pass` (it really reached the app), and wrote no
+            // test. Before M08 step 8.6 the round was GREEN here, on the decoy
+            // outside the owned directory (D-8-05-3). Now the tester's own files
+            // are what run, there are none, and the stage is `inconclusive`: the
+            // round is `unverified` and a human decides.
             const rounds = await db
               .selectFrom('rounds')
               .selectAll()
@@ -283,17 +316,21 @@ describe('scenario: a code-blind tester verifies a running app', () => {
               .orderBy('number')
               .execute();
             expect(rounds).toHaveLength(1);
-            expect(rounds[0]?.outcome).toBe('green');
+            expect(rounds[0]?.outcome).toBe('unverified');
+            expect(rounds[0]?.outcome_json).toContain('wrote no tests');
+            // Neither decoy ran: not the one outside the owned directory, and
+            // not the one an earlier feature committed inside it.
+            await expect(readFile(decoyWitness, 'utf8')).rejects.toMatchObject({
+              code: 'ENOENT',
+            });
+            // And it was told where its tests would have gone.
+            expect(report.ownedDir).toBe('tests/behaviour');
 
-            // ── 7. The pass cites the SUITE, not the criterion claimed ──
-            // Changed by M08 step 8.5, deliberately. The double claims AC-1, and
-            // until 8.5 that claim went straight into `verdict_checked_criteria` —
-            // the table M09's coverage section is drawn from — on the model's word
-            // alone. Now the suite ADL ran decides, and "every executed test
-            // passed" is evidence about the suite, not about AC-1: which test
-            // covers which criterion is step 8.7's link. The claim is still
-            // checked (ROLE-04, on the claim, inside the gate) and named in the
-            // verdict's summary; it is not recorded as coverage.
+            // ── 7. Nothing was recorded as covered ────────────────────
+            // An `inconclusive` verdict checks nothing — and until 8.6 this was
+            // `[{ global: build }]`, coverage recorded on another feature's test.
+            // (What a passing tester's coverage looks like is
+            // `tester-tests-committed.test.ts`'s to show.)
             const covered = await db
               .selectFrom('verdict_checked_criteria')
               .innerJoin(
@@ -313,9 +350,7 @@ describe('scenario: a code-blind tester verifies a running app', () => {
               ])
               .where('stage_attempts.stage_id', '=', 'behaviour')
               .execute();
-            expect(covered).toEqual([
-              { refKind: 'global', criterionId: null, category: 'build' },
-            ]);
+            expect(covered).toEqual([]);
 
             // ── 8. And it was told how ADL would run its tests ─────────
             // The command that runs the suite, which step 8.0's spike said the

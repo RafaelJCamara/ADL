@@ -78,10 +78,13 @@ were opened; the audit found ten things, four of which changed what the steps ar
 [What to do next](#what-to-do-next) for those four and the milestone file for all ten.
 **8.0 (the spike), 8.1 (the one-way decision), 8.2 (the tracer slice), 8.3 (the
 failure-mode map), 8.4 (the tester agent) and 8.5 (outcomes from structured runner output) are
-done, and 8.6 is in progress:** its first commit closed `DEBT.md` D-8-A-1 — a gate's own commit
-is no longer blamed on the developer by the next round's protected-path check, because ROLE-11
-now diffs against the tip ADL vouches for (`rounds.vouched_sha`) rather than the developer's
-previous commit. Three stray commits a replay double made on `main` on 2026-09-25 were dropped by a
+done, and so is 8.6 (the tester's tests are committed):** a gate declares `owned_dir`, ADL
+commits and pushes what it leaves there — under its own identity, exactly the bytes its run used
+— and the directory becomes a third always-on protection; ROLE-11 now diffs against the tip ADL
+vouches for, which is ADL's own commit and never anything else a gate stage committed
+(`DEBT.md` D-8-A-1 and D-8-05-3 closed). An adversarial review of the step found that the first
+version vouched for code the developer controls; that is fixed and recorded in the milestone
+file. Three stray commits a replay double made on `main` on 2026-09-25 were dropped by a
 rebase before the first push — [`HANDOFF.md`](./HANDOFF.md) has the evidence.
 
 ```
@@ -92,7 +95,7 @@ M04 First Agent Backend ............. 🟡 code complete (1 deferred check)
 M05 The Loop Closes ................. 🟡 code complete (1 deferred check) — all 20 steps done
 M06 Accountant ...................... 🟡 code complete (1 deferred check) — 6.2–6.11 done
 M07 Code Reviewer Gate .............. 🟡 code complete (1 deferred check) — 7.1–7.9 done
-M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.5 done; 8.6 in progress (D-8-A-1 closed); 8.7–8.9 to go
+M08 Behaviour Tester ................ ◀ IN PROGRESS — 8.0–8.6 done; 8.7–8.9 to go
 M09–M18 ............................. not started
 ```
 
@@ -883,6 +886,21 @@ commits landed alongside: `fix(08-05)` (an inconclusive gate is `gate_inconclusi
 after the incident above). **Found and not fixed:** `D-8-05-1` to `D-8-05-14`, the two that
 matter most being node's synthetic file-level pass (owner 8.8) and pre-existing visible tests
 being credited to the tester (owner 8.6, reproduced by `behaviour-tester.test.ts`).
+
+**8.6 is done (2026-10-01): the tester's tests are committed, by ADL, and only ADL's commit is
+vouched for.** Two commits. `fix(08-06)` closed D-8-A-1 first: ROLE-11 diffs, two-dot, against
+the tip ADL vouches for (`rounds.vouched_sha`). `feat(08-06)` is the step: a pipeline entry
+declares `owned_dir`, the worker carries what the gate left there out of its `.git`-less copy,
+commits it as ADL and pushes it, the directory becomes a third always-on protection, and the
+tester runs exactly the files ADL commits — closing D-8-05-3. **An adversarial review then found
+that the first commit vouched for whatever a gate stage committed, which includes code the
+developer controls** (`npm test`'s script, the app's build); now only ADL's own commit is
+vouched for, and nineteen more verified findings were fixed or recorded. The milestone file has
+the whole record; `DEBT.md` D-8-06-1 to D-8-06-8 carry what was not fixed.
+
+**Next: 8.7** — three of the four guardrails (assertion floor, spec-clause link, stability
+runs). Read the 8.6 done-text and `DEBT.md` D-8-06-3 first: committed behaviour tests that a
+plain `commands.test` runs without an app is 8.7's to decide.
 
 ---
 

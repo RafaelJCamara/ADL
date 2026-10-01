@@ -2,6 +2,11 @@ import * as z from 'zod';
 
 import { LoadError } from '../errors.js';
 import { DurationSchema } from './duration.js';
+import {
+  OwnedDirSchema,
+  directoriesOverlap,
+  visiblePathsCoverDirectory,
+} from './owned-dir.js';
 import { RepoRelativePathSchema } from './path-guard.js';
 import { parseYamlDocument } from './yaml-parse.js';
 
@@ -459,7 +464,7 @@ export type OnSendBack = z.infer<typeof OnSendBackSchema>;
  * would be dangerous if this value is ever resolved as a filesystem path
  * (01-08's `pipeline.ts`).
  */
-const HarnessEntrySchema = z.strictObject({
+const HarnessEntryShape = z.strictObject({
   harness: RepoRelativePathSchema.describe(
     'The harness id, resolved (01-08) as a built-in id, then an npm package, then a ' +
       'repo-relative path (guarded against traversal). Unrecognised ids fail at config ' +
@@ -503,6 +508,55 @@ const HarnessEntrySchema = z.strictObject({
         'because most gates judge a tree rather than a running program — a lint harness ' +
         'has no use for a server. Default: false (no app; every pre-M08 pipeline).',
     ),
+  owned_dir: OwnedDirSchema.optional().describe(
+    'One repo-relative directory this gate owns — ROLE-09, and the behaviour tester is its ' +
+      'first declarer. What the gate leaves under it in its composed workspace is committed ' +
+      "to the feature's branch BY ADL, under ADL's own identity, after the gate has judged: " +
+      'added, changed and deleted files alike, so the branch holds exactly what was run. ' +
+      'Files present at the commit the feature branched from belong to earlier features and ' +
+      'are left alone. The directory is then always protected, beside the feature folder and ' +
+      'adl.yml: the developer agent may never change it, whatever protected_paths says. ' +
+      'Requires visible_paths on the same entry, covering the directory with "<dir>/**" (or ' +
+      'an ancestor’s "/**", or "**"), so committed files are copied back in and re-run next ' +
+      'round. Must not overlap features_dir or another entry’s owned_dir. A single directory, ' +
+      'never a glob. Default: absent (the gate commits nothing).',
+  ),
+});
+
+/**
+ * {@link HarnessEntryShape} plus the one rule that relates two of its own keys:
+ * `owned_dir` needs a composed workspace that copies the whole directory in
+ * (M08 step 8.6, `owned-dir.ts`'s `visiblePathsCoverDirectory`).
+ *
+ * A `.superRefine` rather than a shape change because the rule is about two
+ * keys at once. Allowed here: the ban on refinements is `verdict/`'s, whose
+ * schemas are published as JSON Schema; `adl.yml`'s are not (`StartCommandSpecSchema`
+ * is the precedent).
+ */
+const HarnessEntrySchema = HarnessEntryShape.superRefine((entry, ctx) => {
+  if (entry.owned_dir === undefined) return;
+  if (entry.visible_paths === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['owned_dir'],
+      message:
+        'owned_dir requires visible_paths on the same entry: ADL carries back what the gate ' +
+        'leaves in its composed workspace, and a gate without visible_paths has none — it ' +
+        "writes straight into the developer's worktree",
+    });
+    return;
+  }
+  if (!visiblePathsCoverDirectory(entry.visible_paths, entry.owned_dir)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['visible_paths'],
+      message:
+        `visible_paths must copy every file under owned_dir "${entry.owned_dir}" back in — ` +
+        `add "${entry.owned_dir}/**" (or an ancestor's "/**", or "**"). A narrower pattern ` +
+        "leaves committed files out of the next round's copy, and ADL's carry-back would then " +
+        'delete them from the branch.',
+    });
+  }
 });
 
 /**
@@ -711,7 +765,46 @@ export const AdlYmlSchema = z
         'is EffectiveConfig’s, not this schema’s. Default: {} (no role overrides).',
     ),
   })
-  .meta({ id: 'AdlYml' });
+  .meta({ id: 'AdlYml' })
+  // The two `owned_dir` rules that need more than one entry to state (M08
+  // step 8.6). `DaemonConfigSchema`'s `.meta()`-then-`.superRefine()` is the
+  // precedent for a root-level rule on a strict object.
+  //
+  // **Against THIS file's `features_dir`, which is necessary and not
+  // sufficient:** detection reads the daemon's `repos[].features_dir`, not
+  // this one, so `worker-entry/stage-runner.ts` checks the dispatched
+  // feature's real folder again before it carries anything back.
+  .superRefine((config, ctx) => {
+    const owners: { readonly dir: string; readonly index: number }[] = [];
+    config.pipeline.forEach((entry, index) => {
+      if (typeof entry !== 'object' || !('harness' in entry)) return;
+      const dir = entry.owned_dir;
+      if (dir === undefined) return;
+      if (directoriesOverlap(dir, config.features_dir)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['pipeline', index, 'owned_dir'],
+          message:
+            `owned_dir "${dir}" overlaps features_dir "${config.features_dir}". The feature ` +
+            'folder is always protected and holds the spec a gate judges against, so a gate ' +
+            'may never own any part of it — nor a directory containing it.',
+        });
+      }
+      for (const earlier of owners) {
+        if (directoriesOverlap(dir, earlier.dir)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['pipeline', index, 'owned_dir'],
+            message:
+              `owned_dir "${dir}" overlaps pipeline entry ${String(earlier.index)}'s owned_dir ` +
+              `"${earlier.dir}". ADL mirrors each gate's directory onto the branch, so two ` +
+              "gates owning the same files would delete each other's work.",
+          });
+        }
+      }
+      owners.push({ dir, index });
+    });
+  });
 
 export type AdlYml = z.infer<typeof AdlYmlSchema>;
 

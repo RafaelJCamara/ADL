@@ -58,6 +58,7 @@ describe('violatedProtectedPaths', () => {
         changedPaths: ['src/widgets.ts', 'README.md'],
         featurePath,
         protectedGlobs: [],
+        ownedDirs: [],
       }),
     ).toEqual([]);
   });
@@ -68,6 +69,7 @@ describe('violatedProtectedPaths', () => {
         changedPaths: ['src/widgets.ts', GATE_CONFIG_PATH],
         featurePath,
         protectedGlobs: [],
+        ownedDirs: [],
       }),
     ).toEqual([GATE_CONFIG_PATH]);
   });
@@ -82,6 +84,7 @@ describe('violatedProtectedPaths', () => {
         ],
         featurePath,
         protectedGlobs: [],
+        ownedDirs: [],
       }),
     ).toEqual([`${featurePath}/spec.md`, `${featurePath}/nested/notes.md`]);
   });
@@ -92,6 +95,7 @@ describe('violatedProtectedPaths', () => {
         changedPaths: ['features/export-widgets-v2/spec.md'],
         featurePath,
         protectedGlobs: [],
+        ownedDirs: [],
       }),
     ).toEqual([]);
   });
@@ -102,8 +106,39 @@ describe('violatedProtectedPaths', () => {
         changedPaths: ['tests/widgets.spec.ts', 'src/widgets.ts'],
         featurePath,
         protectedGlobs: ['tests/**'],
+        ownedDirs: [],
       }),
     ).toEqual(['tests/widgets.spec.ts']);
+  });
+
+  it('always protects every gate’s owned_dir, with no configured globs at all (M08 step 8.6)', () => {
+    expect(
+      violatedProtectedPaths({
+        changedPaths: [
+          'tests/behaviour/health.test.mjs',
+          'tests/behaviour/nested/helper.mjs',
+          'tests/unit/widgets.test.ts',
+          'src/widgets.ts',
+        ],
+        featurePath,
+        protectedGlobs: [],
+        ownedDirs: ['tests/behaviour'],
+      }),
+    ).toEqual([
+      'tests/behaviour/health.test.mjs',
+      'tests/behaviour/nested/helper.mjs',
+    ]);
+  });
+
+  it('does not treat a sibling directory that shares an owned_dir’s prefix as owned', () => {
+    expect(
+      violatedProtectedPaths({
+        changedPaths: ['tests/behaviour-old/x.test.mjs', 'tests/behaviourx'],
+        featurePath,
+        protectedGlobs: [],
+        ownedDirs: ['tests/behaviour'],
+      }),
+    ).toEqual([]);
   });
 
   it('combines all three protections in one pass', () => {
@@ -117,6 +152,7 @@ describe('violatedProtectedPaths', () => {
         ],
         featurePath,
         protectedGlobs: ['tests/**'],
+        ownedDirs: [],
       }),
     ).toEqual([
       GATE_CONFIG_PATH,

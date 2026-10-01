@@ -75,15 +75,18 @@ import { WorkspaceError } from '../errors.js';
  * "every" was doing work the list could not support.
  *
  * Each entry carries the answer to "what does an attacker get from this one",
- * because eight opaque assignments is a list a future contributor will trim —
+ * because nine opaque assignments is a list a future contributor will trim —
  * that is threat T-2-37, and the per-key loop in `test/git/poisoned-config.test.ts`
  * is the other half of the defence: a removed entry removes its own assertion,
  * so trimming this list makes the suite prove less rather than fail. Read that
  * loop before touching this array.
  *
- * All eight were verified locally, one at a time, against a repository whose
- * local configuration had that key poisoned: in every case
- * `git -c <entry> config --get <key>` returned the neutralised value.
+ * The first eight were verified locally, one at a time, against a repository
+ * whose local configuration had that key poisoned: in every case
+ * `git -c <entry> config --get <key>` returned the neutralised value. The ninth,
+ * `commit.gpgsign`, arrived with this client's first `commit` (M08 step 8.6)
+ * and was probed the same way, plus once more with the program it would run
+ * actually planted.
  *
  * **Adding an entry is a two-file change.** `test/git/manager-git.test.ts`
  * asserts this list and the README's "What ADL's own git overrides" table
@@ -117,6 +120,13 @@ export const NEUTRALISED_CONFIG = Object.freeze([
   // `ext::<command>` URLs run an arbitrary command as the transport. `never`
   // is git's own refusal, rather than a value this module invents.
   'protocol.ext.allow=never',
+  // Signing a commit runs `gpg.program` (or `gpg.ssh.program`) — a program
+  // named in the shared configuration — and a failed signature fails the
+  // commit. Reachable only since M08 step 8.6 gave this client a `commit`;
+  // probed against git 2.49 first: a poisoned `commit.gpgsign=true` with a
+  // planted `gpg.program` ran the program on commit, and this override
+  // stopped it.
+  'commit.gpgsign=false',
 ] as const);
 
 /**
@@ -271,7 +281,73 @@ export interface ManagerGitClient {
    * recorded in `docs/plan/DEBT.md` rather than solved by this signature.
    */
   push(remoteUrl: string, refspec: string): Promise<void>;
+  /**
+   * Stage exactly `paths` — additions, modifications and deletions alike — for
+   * {@link ManagerGitClient.commit} (M08 step 8.6, ADL carrying a gate's output
+   * back onto the branch).
+   *
+   * **`--force`**, because the paths are ADL's decision, already made: a
+   * repository that ignores its test output directory would otherwise make
+   * `git add` refuse a file ADL just ran and is about to commit, and the
+   * commit would silently differ from what was judged. **Literal pathspecs**
+   * (`GIT_LITERAL_PATHSPECS=1`), because the names come from files a gate
+   * wrote: `a*.mjs` must mean that one file, and a leading `:` must not be
+   * pathspec magic. A path that names a deleted tracked file stages its
+   * removal (probed against git 2.49).
+   */
+  add(paths: readonly string[]): Promise<void>;
+  /**
+   * Commit exactly `paths`, as `identity`, with `message` — and nothing else
+   * that happens to be staged (M08 step 8.6).
+   *
+   * `--only` semantics: anything the developer's agent left staged in the
+   * worktree's index stays out of ADL's commit and stays staged (probed against
+   * git 2.49). `--no-verify` beside the `core.hooksPath` override, so no
+   * commit hook runs by either route. The identity goes in the environment for
+   * this one invocation (D-09), never into a configuration file: a commit ADL
+   * makes is attributed to ADL, never to whoever's `user.name` the shared
+   * configuration carries. Fails, rather than making an empty commit, when
+   * none of `paths` changed — callers check {@link ManagerGitClient.status}
+   * first.
+   */
+  commit(input: {
+    readonly paths: readonly string[];
+    readonly message: string;
+    readonly identity: CommitIdentity;
+  }): Promise<void>;
+  /**
+   * Every tracked path under `pathPrefix` whose index entry tells git NOT to
+   * look at the working tree — assume-unchanged or skip-worktree (M08 step
+   * 8.6).
+   *
+   * Those two flags make {@link ManagerGitClient.status} report a modified file
+   * as clean (probed against git 2.49: `status --porcelain` printed nothing
+   * for either), and the agent that ran `git update-index` to set them is the
+   * one whose changes the status check exists to see. So a caller that relies
+   * on `status` for "nothing here differs from HEAD" asks this first.
+   * `ls-files -v`: a lowercase tag is assume-unchanged, `S`/`s` is
+   * skip-worktree.
+   */
+  flaggedIndexEntries(pathPrefix: string): Promise<readonly string[]>;
+  /**
+   * Unstage exactly `paths` — the index goes back to HEAD for them and the
+   * working tree is untouched (`git reset -q -- <paths>`, literal pathspecs).
+   * How a carry-back that staged and then failed leaves the index as it found
+   * it (M08 step 8.6).
+   */
+  unstage(paths: readonly string[]): Promise<void>;
 }
+
+/** Who a commit ADL makes is attributed to — author and committer alike. */
+export interface CommitIdentity {
+  readonly name: string;
+  readonly email: string;
+}
+
+/** What makes a pathspec mean exactly the path it names (`add` and `commit`). */
+const LITERAL_PATHSPECS_ENV: Readonly<Record<string, string>> = Object.freeze({
+  GIT_LITERAL_PATHSPECS: '1',
+});
 
 export interface ManagerGitClientOptions {
   /**
@@ -366,8 +442,11 @@ export function managerGitClient(
   }
 
   /** Run, and treat anything but a clean exit as a failure worth naming. */
-  async function gitOk(args: readonly string[]): Promise<string> {
-    const outcome = await git(args);
+  async function gitOk(
+    args: readonly string[],
+    env?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    const outcome = await git(args, env);
     if (outcome.exitCode !== 0) {
       throw new WorkspaceError(
         `git ${args.join(' ')} failed with exit code ${String(outcome.exitCode)}: ${outcome.stderr.trim() || '(no stderr)'}`,
@@ -520,6 +599,42 @@ export function managerGitClient(
       // known-good pieces (a configured repo's remote and ADL's own
       // `adl/<feature-id>` branch convention, D-13).
       await gitOk(['push', remoteUrl, refspec]);
+    },
+
+    async add(paths: readonly string[]): Promise<void> {
+      await gitOk(['add', '--force', '--', ...paths], LITERAL_PATHSPECS_ENV);
+    },
+
+    async flaggedIndexEntries(pathPrefix: string): Promise<readonly string[]> {
+      const raw = await gitOk(
+        ['ls-files', '-v', '-z', '--', pathPrefix],
+        LITERAL_PATHSPECS_ENV,
+      );
+      return raw
+        .split('\0')
+        .filter((entry) => entry.length > 2)
+        .filter((entry) => {
+          const tag = entry[0] ?? '';
+          return tag === 'S' || tag === 's' || tag !== tag.toUpperCase();
+        })
+        .map((entry) => entry.slice(2));
+    },
+
+    async unstage(paths: readonly string[]): Promise<void> {
+      await gitOk(['reset', '-q', '--', ...paths], LITERAL_PATHSPECS_ENV);
+    },
+
+    async commit({ paths, message, identity }): Promise<void> {
+      await gitOk(
+        ['commit', '--only', '--no-verify', '-m', message, '--', ...paths],
+        {
+          ...LITERAL_PATHSPECS_ENV,
+          GIT_AUTHOR_NAME: identity.name,
+          GIT_AUTHOR_EMAIL: identity.email,
+          GIT_COMMITTER_NAME: identity.name,
+          GIT_COMMITTER_EMAIL: identity.email,
+        },
+      );
     },
   };
 }

@@ -279,6 +279,25 @@ pipeline-entry key under `visible_paths`' principle. **What no report can tell A
 reports a test-less file, or one whose test calls `process.exit(0)`, as one passing test;
 step 8.8's must-fail-at-base guardrail is what rejects it. (M08 step 8.5, ROLE-08, HARN-04.)
 
+**A gate's output is kept by declaring `owned_dir`, and ADL — not the gate — commits it.**
+The pipeline-entry key `owned_dir` names one repo-relative directory (never a glob: overlap
+with the feature folder, an always-on protection and a mirror all need a set with a boundary).
+After the gate has judged, the worker copies what the gate left there out of its composed,
+`.git`-less workspace into the developer's worktree, commits it as `ADL <adl@noreply.local>`
+with `--only`, literal pathspecs and `commit.gpgsign` neutralised, and pushes it before the
+dispatch ends (5.10's constraint). The commit **mirrors** the directory — additions, changes
+and deletions — so what lands is what ran; files that existed at the branch point belong to
+earlier features and are left alone and not run. The worktree must be clean there and the
+copy is pruned to what git tracks, so nothing the developer left behind is run or committed
+as the gate's. The directory then becomes a **third always-on protection** beside the feature
+folder and `adl.yml` — `protected_paths` defaults to `[]`, and the tester's tests are exactly
+what the developer must not rewrite. The behaviour tester requires the key, as it requires
+`needs_app`, and runs exactly the files ADL will commit, by name, after its declared suite
+command. **Rejected:** the tester committing (it has no `.git`, by 8.1's design); a
+`GateContext` commit member (a one-way change to the published contract, and code-blindness
+would then hinge on a gate's honesty); and a top-level `tests_dir` (it would need a branch on
+the tester's name, which HARN-04 forbids). (M08 step 8.6, ROLE-09, HARN-04.)
+
 **Session resume is an optimisation, never a correctness requirement.**
 That single rule is what stops the core quietly becoming Claude-shaped — Gemini's CLI has
 no resume and emits one JSON object at completion rather than an event stream.
@@ -362,6 +381,22 @@ depending on both) was rejected as unnecessary machinery for a solo project: it 
 buy back the ability to install `@adl/cli` alone as a binary, which is not a documented v1
 requirement anywhere in the plan. **Reversibility: costly** — the package that owns the
 published executable's name is a distribution-facing choice.
+
+**ROLE-11 judges a developer commit against the tip ADL vouches for.** Not against the
+developer's previous commit (`rounds.head_sha`), which is what made a gate's own commit look
+like the developer's in the next round (`DEBT.md` D-8-A-1). `rounds.vouched_sha` holds a
+developer commit ROLE-11 found clean, or **the commit ADL itself made** in a gate stage (the
+carry-back of an `owned_dir`), advanced by compare-and-set from that commit's parent against the
+feature's tip. **Never the gate stage's whole HEAD range** — the step's first commit did that,
+and its adversarial review showed why it cannot: a gate stage runs developer-controlled code in
+the developer's worktree (`npm test`'s script, the app's build), and a range would vouch for
+whatever that code committed. So a commit any other program makes during a gate is judged with
+the developer's next commit; a gate that commits into a protected path escalates. The diff is
+**two-dot** from that tip, so a developer that resets past a vouched commit is seen deleting
+what it removed. A violating commit is never vouched for, and with no vouched tip the whole
+branch is judged — there is no fallback that judges less. `head_sha` keeps meaning "what the
+developer produced", because the pull request renders it as the developer's. (M08 step 8.6,
+ROLE-11.)
 
 ---
 

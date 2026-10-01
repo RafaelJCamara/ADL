@@ -106,13 +106,17 @@ import {
   type AppUnderTest,
 } from './app/lifecycle.js';
 import { buildGateContext } from './gate-context.js';
+import { prepareOwnedDir, type OwnedDirSession } from './owned-dir.js';
 import type { AgentGateHost } from './gates/agent-gate-host.js';
 import { runCommandGate } from './gates/command-gate.js';
 import { runReviewerGate } from './gates/reviewer-gate.js';
 import { runTesterGate } from './gates/tester-gate.js';
 import { loadSpecFromWorktree } from './spec-from-worktree.js';
 import type { AssignMessage, WorkerToManagerMessage } from '../ipc/protocol.js';
-import type { StageRunnerVerdict } from '../ipc/stage-verdict.js';
+import type {
+  GateHeadRange,
+  StageRunnerVerdict,
+} from '../ipc/stage-verdict.js';
 import { unknownCitedCriteria } from '@adl/core/verdict';
 import { writePromptArtifact } from '../prompt/artifact.js';
 import { buildDeveloperPrompt } from '../prompt/build.js';
@@ -193,52 +197,51 @@ function developerOutcomeResult(outcome: DeveloperOutcome): StageRunnerResult {
   return { verdictJson: JSON.stringify(verdict) };
 }
 
-/** HEAD's full sha, or `undefined` when git could not say — never a throw. */
-async function headOf(workspace: Workspace): Promise<string | undefined> {
-  try {
-    return await managerGitClient(workspace).revParse('HEAD');
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * Record where the branch stood when a GATE stage started, and stamp every
- * result that stage reports with where it stands at the end (M08 step 8.6,
- * closing `DEBT.md` D-8-A-1).
+ * Stamp a GATE stage's result with the commit ADL itself made during it, if it
+ * made one (M08 step 8.6, `DEBT.md` D-8-A-1).
  *
- * The round loop vouches for a gate's commits when the gate started on the
- * tip it already vouched for, so a commit a gate made is never diffed as the
- * developer's in the next round — `ipc/stage-verdict.ts`'s `GateHeadRange`
- * carries the argument. Every return out of the gate branch goes through
- * {@link GateHeadStamp.finish}, the refusals included: a gate that committed
- * and then failed to push is exactly the case where the range matters most.
+ * The round loop vouches for that commit — compare-and-set from its parent —
+ * so the next developer is never diffed against ADL's own carry-back of a
+ * tester's tests (`ipc/stage-verdict.ts`'s `GateHeadRange`).
  *
- * Reads the attached WORKTREE, never a composed blind copy — the copy has no
- * `.git` by construction (8.1), and the branch is the worktree's.
+ * **ADL's commit, and nothing else a gate stage committed.** The first version
+ * of this stamped the stage's whole HEAD range, and an adversarial review
+ * found what that vouched for: a gate stage runs developer-controlled code in
+ * the developer's worktree — `commands.test` is often `npm test`, whose script
+ * the developer writes, and `needs_app` builds and starts the developer's app
+ * there — so a commit that code made to the spec, `adl.yml` or an owned
+ * directory would have been vouched for and never diffed again. Only the
+ * carry-back records a range, from the parent it read immediately before its
+ * own commit, so anything else on the branch stays unvouched and is judged
+ * with the developer's next commit.
  *
- * Either read failing means no range at all. That is the fail-closed
- * direction: nothing is vouched for, and the next developer check covers
- * whatever this stage did.
+ * Every return out of the gate branch goes through
+ * {@link GateCommitStamp.finish}, the refusals included: a carry-back whose
+ * push then failed is exactly the case where the range matters most.
  */
-interface GateHeadStamp {
+interface GateCommitStamp {
+  /** Called by the carry-back, once, with the commit it made. */
+  record(range: GateHeadRange): void;
   finish(result: StageRunnerResult): Promise<StageRunnerResult>;
 }
 
-async function stampGateHead(workspace: Workspace): Promise<GateHeadStamp> {
-  const before = await headOf(workspace);
+function stampGateCommit(): GateCommitStamp {
+  let recorded: GateHeadRange | undefined;
   return {
-    async finish(result) {
-      const after = before === undefined ? undefined : await headOf(workspace);
-      if (before === undefined || after === undefined) return result;
+    record(range) {
+      recorded = range;
+    },
+    finish(result) {
+      if (recorded === undefined) return Promise.resolve(result);
       const envelope = JSON.parse(result.verdictJson) as StageRunnerVerdict;
-      if (envelope.kind === 'developer_outcome') return result;
-      return {
+      if (envelope.kind === 'developer_outcome') return Promise.resolve(result);
+      return Promise.resolve({
         verdictJson: JSON.stringify({
           ...envelope,
-          head: { before, after },
+          head: recorded,
         } satisfies StageRunnerVerdict),
-      };
+      });
     },
   };
 }
@@ -897,10 +900,10 @@ export function createProductionStageRunner(
         // guard, `eslint.config.js`'s `adl/gate-fresh-context` the residual).
         const appendPromises: Promise<void>[] = [];
 
-        // D-8-A-1 (M08 step 8.6): read BEFORE anything this stage does, so the
-        // range it reports covers every commit the stage made — see
-        // `stampGateHead`. Every return below goes through `gateHead.finish`.
-        const gateHead = await stampGateHead(workspace);
+        // D-8-A-1 (M08 step 8.6): the commit ADL makes in this stage, if any,
+        // is reported with every result — see `stampGateCommit`. Every return
+        // below goes through `gateHead.finish`.
+        const gateHead = stampGateCommit();
 
         // ROLE-06 (M08 step 8.1): a gate that declared `visible_paths` does not
         // get the workspace the previous stage left. It gets a materialised
@@ -998,6 +1001,46 @@ export function createProductionStageRunner(
             stageErrorResult(built.kind, built.detail),
           );
         }
+
+        // ROLE-09 (M08 step 8.6): a gate that declared `owned_dir` has what it
+        // leaves there committed by ADL once it has judged — see
+        // `worker-entry/owned-dir.ts`. Declared, never inferred from the stage's
+        // name (HARN-04): a third party's gate declaring the key gets the
+        // identical carry-back. Prepared BEFORE the gate runs, so a dirty
+        // directory or an overlap with the feature folder is refused before
+        // anything is spent, and the copy is pruned to what git tracks before
+        // the gate can see it.
+        const declaredOwnedDir = resolvedStageFor(assign)?.ownedDir;
+        let ownedSession: OwnedDirSession | undefined;
+        if (declaredOwnedDir !== undefined) {
+          if (composedWorkspace === undefined) {
+            // `adl.yml`'s schema refuses `owned_dir` without `visible_paths`;
+            // a snapshot that reaches here anyway was not validated by it, and
+            // the gate would be writing straight into the developer's worktree.
+            await Promise.all(appendPromises);
+            return await gateHead.finish(
+              stageErrorResult(
+                'binary_missing',
+                `pipeline stage ${JSON.stringify(assign.stageId)} declares owned_dir without ` +
+                  'visible_paths, so it has no composed workspace for ADL to carry anything back from',
+              ),
+            );
+          }
+          const prepared = await prepareOwnedDir({
+            dir: declaredOwnedDir,
+            featurePath: assign.workspaceHandle,
+            worktree: workspace,
+            composed: composedWorkspace,
+            changedOnBranch: built.gate.diff.changedPaths,
+          });
+          if (!prepared.ok) {
+            await Promise.all(appendPromises);
+            return await gateHead.finish(
+              stageErrorResult(prepared.kind, prepared.detail),
+            );
+          }
+          ownedSession = prepared.session;
+        }
         // HARN-02 (M07 step 7.3): where this gate's program comes from.
         //
         // A stage that declared its own `with.command` runs THAT — it is a
@@ -1068,6 +1111,7 @@ export function createProductionStageRunner(
           // `appVariables` call.
           const host: AgentGateHost = {
             path: process.env['PATH'] ?? '',
+            ...(ownedSession === undefined ? {} : { owned: ownedSession.host }),
             ...(app === undefined
               ? {}
               : {
@@ -1343,6 +1387,39 @@ export function createProductionStageRunner(
         // developer path's own `await Promise.all(appendPromises)` — a verdict
         // the manager acts on while its evidence is still buffered is a
         // transcript that can lose the thing it was written to explain.
+        // ROLE-09 (M08 step 8.6): the gate has judged, so what it left in its
+        // owned directory is committed — here, before the `finally` destroys
+        // the composed copy it lives in. Only after a VERDICT: a stage error
+        // judged nothing, and a test from a gate that did not finish is not a
+        // regression test anyone asked for. Every verdict commits, a
+        // `send_back` included, because a failing test committed is what the
+        // next round re-runs — which is what makes the tester's
+        // `deterministic` judgement kind honest (M08 audit finding 8).
+        if (ownedSession !== undefined && verdict.kind === 'verdict') {
+          const carried = await ownedSession.carryBack({
+            stageId: assign.stageId,
+            pushUrl: assign.pushUrl,
+            branch: branchNameFor(workspace.id),
+          });
+          if (carried.head !== undefined) gateHead.record(carried.head);
+          if (!carried.ok) {
+            await Promise.all(appendPromises);
+            return await gateHead.finish(
+              stageErrorResult(carried.kind, carried.detail),
+            );
+          }
+          appendPromises.push(
+            appendRecord({
+              kind: 'text',
+              messageId: 'owned:commit',
+              delta:
+                carried.committed.length === 0
+                  ? `nothing in ${ownedSession.host.dir} differed from the branch — no commit`
+                  : `committed ${String(carried.committed.length)} file(s) in ${ownedSession.host.dir}: ${carried.committed.join(', ')}`,
+            }),
+          );
+        }
+
         await Promise.all(appendPromises);
         return await gateHead.finish({ verdictJson: JSON.stringify(verdict) });
       }

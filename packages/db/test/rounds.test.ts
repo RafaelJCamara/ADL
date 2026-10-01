@@ -446,6 +446,7 @@ describe('featuresRepository — the tip ADL vouches for (M08 step 8.6)', () => 
       expect(
         await repo.advanceRoundVouchedSha({
           id: roundId,
+          featureId,
           from: 'a'.repeat(40),
           to: 'b'.repeat(40),
         }),
@@ -455,6 +456,7 @@ describe('featuresRepository — the tip ADL vouches for (M08 step 8.6)', () => 
       expect(
         await repo.advanceRoundVouchedSha({
           id: roundId,
+          featureId,
           from: 'f'.repeat(40),
           to: 'b'.repeat(40),
         }),
@@ -464,6 +466,48 @@ describe('featuresRepository — the tip ADL vouches for (M08 step 8.6)', () => 
       expect(
         await repo.advanceRoundVouchedSha({
           id: roundId,
+          featureId,
+          from: 'a'.repeat(40),
+          to: 'b'.repeat(40),
+        }),
+      ).toBe(true);
+      expect(await repo.latestVouchedSha(featureId)).toBe('b'.repeat(40));
+    });
+  });
+});
+
+describe('featuresRepository.advanceRoundVouchedSha — against the feature, not the row', () => {
+  it('vouches on a round whose own row has nothing yet, when the feature’s tip matches', async () => {
+    // A feature resumed after escalating at a gate starts its next round AT
+    // that gate: the new row's vouched_sha is null, and the tip ADL vouches for
+    // lives on the previous round.
+    await withTempDb(async ({ db }) => {
+      await migrateToLatest(db, MIGRATIONS_DIR);
+      const repo = featuresRepository(db);
+      const featureId = await seedFeature(db, 'gating', null);
+      const insert = async (number: number, closed: boolean) => {
+        const id = ulid();
+        await repo.insertRound({
+          id,
+          feature_id: featureId,
+          number,
+          outcome: closed ? 'escalate' : null,
+          outcome_json: null,
+          head_sha: null,
+          vouched_sha: null,
+          started_at: nowIso(),
+          ended_at: closed ? nowIso() : null,
+        });
+        return id;
+      };
+      const round1 = await insert(1, true);
+      await repo.recordRoundVouchedSha({ id: round1, sha: 'a'.repeat(40) });
+      const round2 = await insert(2, false);
+
+      expect(
+        await repo.advanceRoundVouchedSha({
+          id: round2,
+          featureId,
           from: 'a'.repeat(40),
           to: 'b'.repeat(40),
         }),

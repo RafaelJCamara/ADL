@@ -38,4 +38,36 @@ export interface AgentGateHost {
   readonly path: string;
   /** Present exactly when an app under test was started for this gate (`GateContext.app`). */
   readonly variables?: AppVariableValues;
+  /**
+   * Present exactly when this gate's pipeline entry declared `owned_dir` (M08
+   * step 8.6): the directory, and which files under it are this feature's.
+   *
+   * A host fact rather than a `GateContext` member for this module's reason —
+   * it is what the gate is told about ITS OWN output. ADL's carry-back is the
+   * same for every gate kind declaring the key; an agent gate is additionally
+   * handed this list, because the tester runs a suite of its own and a command
+   * gate's program decides for itself what it runs. The tester reads it to run
+   * only its own files (D-8-05-3) and ADL reads the same answer to commit
+   * them, so what was run and what is committed cannot be two lists.
+   */
+  readonly owned?: OwnedFilesHost;
 }
+
+/** {@link AgentGateHost.owned}. */
+export interface OwnedFilesHost {
+  /** The declared `owned_dir`, repo-relative. */
+  readonly dir: string;
+  /**
+   * Settle the gate's workspace for the run ADL is about to make, and name the
+   * files that run: everything outside the directory goes back to what ADL
+   * composed, and this feature's files under it are fixed — those paths are the
+   * run, and those bytes are what ADL commits. Idempotent: the first call
+   * decides, and carry-back uses the same answer.
+   */
+  freeze(): Promise<OwnedFiles>;
+}
+
+/** The files, or the one entry ADL will neither run nor commit (a symlink, say). */
+export type OwnedFiles =
+  | { readonly ok: true; readonly files: readonly string[] }
+  | { readonly ok: false; readonly detail: string };

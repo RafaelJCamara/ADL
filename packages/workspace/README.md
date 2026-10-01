@@ -86,16 +86,17 @@ upgrade to.
 ADL therefore passes these overrides on **every** git invocation it makes for
 itself. They are not configurable and cannot be switched off:
 
-| Key                  | Overridden to | What an attacker gets without it                                                               |
-| -------------------- | ------------- | ---------------------------------------------------------------------------------------------- |
-| `core.hooksPath`     | _(empty)_     | A directory of scripts git runs around ordinary operations — verified to fire on `git status`. |
-| `core.fsmonitor`     | `false`       | A command git runs to ask what changed, on status, diff, and every index refresh.              |
-| `core.pager`         | `cat`         | A command git pipes its output through.                                                        |
-| `core.editor`        | `false`       | A command git launches to compose a message.                                                   |
-| `core.sshCommand`    | _(empty)_     | The program git uses to reach a remote — runs on every fetch and push.                         |
-| `credential.helper`  | _(empty)_     | A program git runs to obtain credentials: execution, and a way to be handed your forge token.  |
-| `diff.external`      | _(empty)_     | A program git runs instead of computing a diff itself.                                         |
-| `protocol.ext.allow` | `never`       | `ext::<command>` URLs, which run an arbitrary command as the transport.                        |
+| Key                  | Overridden to | What an attacker gets without it                                                                                |
+| -------------------- | ------------- | --------------------------------------------------------------------------------------------------------------- |
+| `core.hooksPath`     | _(empty)_     | A directory of scripts git runs around ordinary operations — verified to fire on `git status`.                  |
+| `core.fsmonitor`     | `false`       | A command git runs to ask what changed, on status, diff, and every index refresh.                               |
+| `core.pager`         | `cat`         | A command git pipes its output through.                                                                         |
+| `core.editor`        | `false`       | A command git launches to compose a message.                                                                    |
+| `core.sshCommand`    | _(empty)_     | The program git uses to reach a remote — runs on every fetch and push.                                          |
+| `credential.helper`  | _(empty)_     | A program git runs to obtain credentials: execution, and a way to be handed your forge token.                   |
+| `diff.external`      | _(empty)_     | A program git runs instead of computing a diff itself.                                                          |
+| `protocol.ext.allow` | `never`       | `ext::<command>` URLs, which run an arbitrary command as the transport.                                         |
+| `commit.gpgsign`     | `false`       | A signing program (`gpg.program`) git runs on every commit ADL makes — and a failed signature fails the commit. |
 
 **This affects ADL's own git operations only** — not yours, and not the agent's.
 Your own `git` in your own shell is untouched, and none of these keys is one ADL

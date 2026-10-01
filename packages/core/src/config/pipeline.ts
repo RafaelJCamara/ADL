@@ -78,6 +78,15 @@ export interface ResolvedStage {
    * carry.
    */
   readonly needsApp?: boolean | undefined;
+  /**
+   * The directory this gate owns (ROLE-09, M08 step 8.6): what the gate leaves
+   * under it in its composed workspace is committed by ADL, and the developer
+   * may never change it — `config/owned-dir.ts` carries the argument.
+   *
+   * `undefined` when the key was absent: the gate commits nothing, which is
+   * every pre-8.6 pipeline.
+   */
+  readonly ownedDir?: string | undefined;
 }
 
 /**
@@ -132,6 +141,7 @@ export type PipelineEntryInput =
       readonly on_send_back?: OnSendBack | undefined;
       readonly visible_paths?: readonly string[] | undefined;
       readonly needs_app?: boolean | undefined;
+      readonly owned_dir?: string | undefined;
     }
   | { readonly group: readonly unknown[] };
 
@@ -269,6 +279,12 @@ export function resolvePipeline(
       // where there is a real workspace to answer it in (ROLE-07, M08 step 8.2).
       ...(typeof entry !== 'string' && entry.needs_app !== undefined
         ? { needsApp: entry.needs_app }
+        : {}),
+      // Carried the same way. Whether the directory exists, or overlaps the
+      // folder of the feature actually being dispatched, is a question about a
+      // worktree — `worker-entry/stage-runner.ts` asks it there (M08 step 8.6).
+      ...(typeof entry !== 'string' && entry.owned_dir !== undefined
+        ? { ownedDir: entry.owned_dir }
         : {}),
     });
   }

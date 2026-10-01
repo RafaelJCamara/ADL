@@ -31,13 +31,16 @@ import { VerdictSchema } from '@adl/core/verdict';
 const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 /**
- * Where the feature's branch stood when a GATE stage started, and where it
- * stands now (M08 step 8.6, closing `DEBT.md` D-8-A-1).
+ * The commit ADL itself made during a GATE stage — `before` its parent, `after`
+ * the commit — when it made one (M08 step 8.6, `DEBT.md` D-8-A-1).
  *
  * The round loop vouches for `after` when `before` is the tip it already
- * vouched for — so a commit a gate made (a plain-command gate's own, or ADL's
- * carry-back of a tester's tests) is never diffed as the developer's work in
- * the next round. Optional, and on the two gate-shaped envelopes only:
+ * vouched for, so ADL's carry-back of a tester's tests is never diffed as the
+ * developer's work in the next round. Never the stage's whole HEAD range: a
+ * gate stage runs developer-controlled code in the developer's worktree, and a
+ * range would vouch for whatever that code committed (found by the step's
+ * adversarial review; `worker-entry/stage-runner.ts`'s `stampGateCommit`
+ * carries it). Optional, and on the two gate-shaped envelopes only:
  *
  * - **Not on the developer's.** The developer's commit is exactly what ROLE-11
  *   judges, so a range from that stage must never extend what ADL vouches

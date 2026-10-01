@@ -19,26 +19,33 @@ import {
 } from '../../../db/test/helpers/temp-db.js';
 
 /**
- * A commit a GATE made is never attributed to the developer (M08 step 8.6,
- * closing `DEBT.md` D-8-A-1).
+ * A commit made during a GATE stage by anything other than ADL is NOT vouched
+ * for — it is judged with the developer's next commit (M08 step 8.6, the
+ * adversarial review's finding on `DEBT.md` D-8-A-1).
  *
- * The defect: ROLE-11's protected-path check diffed "the previous round's
- * `head_sha`" against the developer's new commit, and `head_sha` is the
- * developer's sha, recorded before any gate runs. So a commit a gate made in
- * round N fell outside round N's recorded head and inside round N+1's diff,
- * and was judged there as the developer's work — a hard escalation naming a
- * path the developer never touched and could do nothing about.
+ * D-8-A-1 was: ROLE-11 diffed the developer's new commit against the previous
+ * round's `head_sha` — the developer's OWN previous commit, recorded before any
+ * gate ran — so whatever a gate committed afterwards was judged as the
+ * developer's work. Step 8.6's first commit fixed it by vouching for every
+ * gate stage's HEAD range. The step's adversarial review then found what that
+ * vouched for: a gate stage runs developer-controlled code in the developer's
+ * worktree — `commands.test` is typically `npm test`, whose script the
+ * developer writes — so a developer could have that code commit an edit to a
+ * protected path, and the edit would be vouched for and never diffed again.
  *
- * It was reachable on `main` before M08 through 7.3's plain-command gate,
- * which is an arbitrary program running in the developer's worktree, and that
- * is exactly the shape this scenario uses: a gate that commits a generated
- * file under `tests/` — a formatter or a codegen step committing its own
- * output — with `protected_paths: ['tests/**']`, the schema's own worked
- * example. Its first run commits and fails, so there IS a round 2; its second
- * run passes. Round 2's developer touches only `agent-output.txt`.
+ * So ADL now vouches only for the commit it makes itself (the carry-back of a
+ * tester's tests, `tester-tests-committed.test.ts` proves it is not blamed).
+ * A commit made by anything else during a gate stage stays outside the vouched
+ * tip, and ROLE-11 judges it with the developer's next commit. This scenario is
+ * that rule, through a real daemon: a plain-command gate commits
+ * `tests/generated.txt` under `protected_paths: ['tests/**']` and fails; round
+ * 2's developer touches only `agent-output.txt`; and the round escalates, naming
+ * the gate's file. A formatter or codegen gate that commits into a protected
+ * path is therefore a configuration a human must look at, and the reason says
+ * so without claiming the developer typed it.
  *
- * **Watched failing:** against `main` before this step's fix, the feature
- * escalated at round 2 with a reason naming `tests/generated.txt`.
+ * **Watched failing:** with every gate stage's range vouched for (this step's
+ * first commit, `f8949f5`), round 2 went green and the change was never seen.
  *
  * Every layer is production except the billed `claude` binary.
  */
@@ -100,9 +107,9 @@ function commitThenFail(counterPath: string): readonly string[] {
   ];
 }
 
-describe('scenario: a gate’s own commit is not blamed on the developer (D-8-A-1)', () => {
+describe('scenario: a commit a gate stage made is judged, never vouched for', () => {
   it(
-    'a committing gate in round 1 does not trip ROLE-11 on round 2’s developer commit',
+    'a protected path a plain-command gate committed in round 1 escalates at round 2’s developer commit',
     { timeout: 180_000 },
     async () => {
       await withTempDb(async ({ db, filePath }) => {
@@ -209,20 +216,26 @@ describe('scenario: a gate’s own commit is not blamed on the developer (D-8-A-
               .orderBy('number')
               .execute();
 
-            // The fix: round 2's developer commit is judged on what IT
-            // changed, so the round goes green rather than escalating with
-            // `tests/generated.txt` named as the developer's violation.
-            const reasons = rounds.map((round) => round.outcome_json ?? '');
-            expect(reasons.join('\n')).not.toContain('tests/generated.txt');
+            // Round 2's developer commit is judged together with everything
+            // since the last tip ADL vouched for — which is round 1's
+            // developer commit, not the gate's.
             expect(rounds.map((round) => round.outcome)).toEqual([
               'send_back',
-              'green',
+              'escalate',
             ]);
+            expect(rounds[0]?.vouched_sha).toBe(rounds[0]?.head_sha);
+            const reason = (
+              JSON.parse(rounds[1]?.outcome_json ?? '{}') as { reason?: string }
+            ).reason;
+            expect(reason).toContain('tests/generated.txt');
+            // Without claiming the developer typed it.
+            expect(reason).toContain(
+              'changed between the last commit ADL vouched for',
+            );
 
-            // The gate really did commit, and really did run twice — without
-            // these the green round below could be a gate that never wrote
-            // anything.
-            expect(Number(await readFile(counterPath, 'utf8'))).toBe(2);
+            // The gate really did commit, and ran once — round 2 ended at the
+            // developer's commit, before any gate.
+            expect(Number(await readFile(counterPath, 'utf8'))).toBe(1);
             const gateCommits = (
               await git.raw([
                 'log',

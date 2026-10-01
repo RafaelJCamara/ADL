@@ -33,7 +33,11 @@ import {
 } from '@adl/core/stage';
 import type { NormalizedSpec } from '@adl/core/spec';
 import { fingerprintFinding, type Verdict } from '@adl/core/verdict';
-import type { AgentGateHost } from '../../src/worker-entry/gates/agent-gate-host.js';
+import type {
+  AgentGateHost,
+  OwnedFiles,
+  OwnedFilesHost,
+} from '../../src/worker-entry/gates/agent-gate-host.js';
 import { runCommandGate } from '../../src/worker-entry/gates/command-gate.js';
 import {
   reconcileTesterClaim,
@@ -63,7 +67,21 @@ const VARIABLES: AppVariableValues = {
   ADL_FEATURE_ID: 'feat-1',
 };
 
-const HOST: AgentGateHost = { path: '/usr/bin', variables: VARIABLES };
+/** This feature's files under the tester's `owned_dir` (M08 step 8.6). */
+const OWNED_FILES = ['tests/behaviour/export.test.mjs'] as const;
+
+/** An `AgentGateHost.owned` that answers `files` with a fixed listing. */
+function ownedHost(
+  files: OwnedFiles = { ok: true, files: OWNED_FILES },
+): OwnedFilesHost {
+  return { dir: 'tests/behaviour', freeze: () => Promise.resolve(files) };
+}
+
+const HOST: AgentGateHost = {
+  path: '/usr/bin',
+  variables: VARIABLES,
+  owned: ownedHost(),
+};
 
 /** The suite the pipeline entry declares, env still carrying its variable. */
 const SUITE = {
@@ -295,7 +313,14 @@ describe('the suite ADL runs', () => {
 
     expect(scripted.execs).toHaveLength(1);
     const [spec] = scripted.execs;
-    expect(spec?.argv).toEqual(['node', '--test', '--test-reporter=tap']);
+    // The declared argv, then exactly this feature's own files (M08 step 8.6,
+    // D-8-05-3) — never a bare runner left to discover the whole workspace.
+    expect(spec?.argv).toEqual([
+      'node',
+      '--test',
+      '--test-reporter=tap',
+      'tests/behaviour/export.test.mjs',
+    ]);
     expect(spec?.path).toBe('/usr/bin');
     expect(spec?.env).toEqual({ APP_URL: `http://127.0.0.1:${String(PORT)}` });
     expect(spec?.timeoutMs).toBe(90_000);
@@ -327,6 +352,109 @@ describe('the suite ADL runs', () => {
     if (result.kind !== 'stage_error') return;
     expect(result.error.kind).toBe('timeout');
     expect(result.error.retryable).toBe(true);
+  });
+});
+
+describe('only the tester’s own files are run (ROLE-09, M08 step 8.6)', () => {
+  it('refuses to run without an owned_dir, naming the key, before any agent is paid for', async () => {
+    const scripted = gateFor({ verdictFile: claimFile(PASS_CLAIM) });
+    const result = await runTesterGate(scripted.gate, {
+      path: '/usr/bin',
+      variables: VARIABLES,
+    });
+
+    expect(result.kind).toBe('stage_error');
+    if (result.kind !== 'stage_error') return;
+    expect(result.error.kind).toBe('binary_missing');
+    expect(result.error.detail).toContain('owned_dir');
+    expect(scripted.asked()).toBeUndefined();
+    expect(scripted.execs).toHaveLength(0);
+  });
+
+  it('is inconclusive, and runs nothing, when the tester left no file of its own', async () => {
+    // A bare `node --test` with no file arguments would discover every test in
+    // the workspace and credit the tester with them — D-8-05-3, by another route.
+    const scripted = gateFor({ verdictFile: claimFile(PASS_CLAIM) });
+    const result = await runTesterGate(scripted.gate, {
+      ...HOST,
+      owned: ownedHost({ ok: true, files: [] }),
+    });
+
+    expect(result.kind).toBe('verdict');
+    if (result.kind !== 'verdict') return;
+    expect(result.verdict.outcome).toBe('inconclusive');
+    expect(scripted.execs).toHaveLength(0);
+  });
+
+  it('refuses a workspace holding something ADL will neither run nor commit', async () => {
+    const scripted = gateFor({ verdictFile: claimFile(PASS_CLAIM) });
+    const result = await runTesterGate(scripted.gate, {
+      ...HOST,
+      owned: ownedHost({
+        ok: false,
+        detail: 'tests/behaviour/link is not a regular file',
+      }),
+    });
+
+    expect(result.kind).toBe('stage_error');
+    if (result.kind !== 'stage_error') return;
+    expect(result.error.kind).toBe('unparseable');
+    expect(result.error.detail).toContain('tests/behaviour/link');
+    expect(scripted.execs).toHaveLength(0);
+  });
+
+  it('names each file relative to the suite’s own directory', async () => {
+    const scripted = gateFor({
+      verdictFile: claimFile(PASS_CLAIM),
+      config: {
+        suite: { ...SUITE, command: { ...SUITE.command, cwd: 'tests' } },
+      },
+    });
+    await runTesterGate(scripted.gate, {
+      ...HOST,
+      owned: ownedHost({
+        ok: true,
+        files: [
+          'tests/behaviour/a.test.mjs',
+          'tests/behaviour/deep/b.test.mjs',
+        ],
+      }),
+    });
+
+    expect(scripted.execs[0]?.argv.slice(3)).toEqual([
+      'behaviour/a.test.mjs',
+      'behaviour/deep/b.test.mjs',
+    ]);
+  });
+
+  it('reads a backslash cwd as a directory, not as part of a name', async () => {
+    // `RepoRelativePathSchema` accepts `tests\behaviour`, and Windows runs the
+    // suite in it — so the file arguments must be relative to that directory.
+    const scripted = gateFor({
+      verdictFile: claimFile(PASS_CLAIM),
+      config: {
+        suite: {
+          ...SUITE,
+          command: { ...SUITE.command, cwd: 'tests\\behaviour' },
+        },
+      },
+    });
+    await runTesterGate(scripted.gate, HOST);
+
+    expect(scripted.execs[0]?.argv.slice(3)).toEqual(['export.test.mjs']);
+  });
+
+  it('is told where its tests go, that they are kept, and that only they are run', async () => {
+    const scripted = gateFor({ verdictFile: claimFile(PASS_CLAIM) });
+    await runTesterGate(scripted.gate, HOST);
+
+    const instructions = scripted.asked()?.instructions ?? '';
+    expect(instructions).toContain('Put them under `tests/behaviour/`');
+    expect(instructions).toContain('committed to the feature’s branch by ADL');
+    expect(instructions).toContain(
+      'Command: node --test --test-reporter=tap <every file you leave under tests/behaviour/, one argument each>',
+    );
+    expect(instructions).toContain('Tests elsewhere in your');
   });
 });
 

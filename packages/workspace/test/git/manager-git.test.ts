@@ -103,6 +103,15 @@ describe('the neutralisation cannot be reached around', () => {
         'https://example.invalid/repo.git',
         'refs/heads/main:refs/heads/main',
       ),
+    add: (client) => client.add(['tests/a.test.mjs']),
+    flaggedIndexEntries: (client) => client.flaggedIndexEntries('tests'),
+    unstage: (client) => client.unstage(['tests/a.test.mjs']),
+    commit: (client) =>
+      client.commit({
+        paths: ['tests/a.test.mjs'],
+        message: 'carry back',
+        identity: { name: 'ADL', email: 'adl@noreply.local' },
+      }),
   };
 
   it('drives every member the client exposes, with none left uncovered', async () => {

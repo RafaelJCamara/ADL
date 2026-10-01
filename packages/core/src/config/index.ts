@@ -19,6 +19,15 @@ export {
   RepoRelativePathSchema,
   type RepoRelativePath,
 } from './path-guard.js';
+// `owned_dir` (ROLE-09, M08 step 8.6): the directory a gate owns, and the
+// segment-wise relations the schema, ROLE-11 and the stage runner all ask.
+export {
+  OwnedDirSchema,
+  directoriesOverlap,
+  isOwnedDir,
+  isWithinDirectory,
+  visiblePathsCoverDirectory,
+} from './owned-dir.js';
 export {
   ADL_YML_VERSION,
   AdlYmlSchema,

@@ -34,6 +34,19 @@
 // `--adl-tester-report-dir <dir>` writes one report per feature, named after the
 // feature's title, so two features in one daemon do not overwrite each other's.
 //
+// ── What M08 step 8.6 added ───────────────────────────────────────────────
+//
+// The test goes where the instructions say — "Put them under `<owned_dir>/`" —
+// the way a real tester follows its prompt, and the report records the directory
+// it was told. `--adl-tester-writes fail-first` writes the same test, made to fail
+// the FIRST time ADL's suite runs it (a counter file named by `ADL_86_COUNTER`,
+// which again exists only in the suite's env) and pass afterwards: a send-back in
+// round 1 whose committed test is re-run, unchanged, in round 2.
+//
+// `--adl-developer-edits <path>` makes the DEVELOPER half, in every round after
+// the first, also append to `<path>` and commit it — the ImpossibleBench move,
+// editing a test that judges it, which ROLE-11 must refuse.
+//
 // eslint-disable-next-line no-restricted-imports -- this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
@@ -87,6 +100,15 @@ if (!isTester) {
     `written by the fake claude double (pid ${process.pid})\n`,
   );
   execFileSync('git', ['add', 'agent-output.txt'], { cwd });
+  const edits = flag('--adl-developer-edits');
+  const firstRound = (argv[argv.length - 1] ?? '').includes(
+    '(first round — no prior feedback)',
+  );
+  if (edits !== undefined && !firstRound) {
+    mkdirSync(dirname(join(cwd, edits)), { recursive: true });
+    appendFileSync(join(cwd, edits), '// loosened by the developer\n');
+    execFileSync('git', ['add', edits], { cwd });
+  }
   execFileSync('git', ['commit', '-m', 'agent: implement the feature'], {
     cwd,
   });
@@ -120,6 +142,8 @@ const reportPath =
     ? join(reportDir, `${slug}.json`)
     : flag('--adl-tester-report');
 const baseUrlMatch = /^Base URL: (\S+)$/m.exec(instructions);
+// M08 step 8.6: where the instructions say the tests go.
+const ownedDir = /Put them under `([^`]+)\/`/.exec(instructions)?.[1];
 // Case-insensitive, because the reviewer's prompt says "Then write your verdict"
 // and the tester's says "3. Write your verdict" — a case-sensitive regex here cost
 // a full scenario run to diagnose, since a double that exits 9 is reported as
@@ -137,6 +161,8 @@ const report = {
   /** Whether the instructions carried the suite ADL will run (M08 step 8.5). */
   sawSuiteCommand: instructions.includes('--test-reporter=tap'),
   title,
+  /** The directory the instructions said tests go in (M08 step 8.6). */
+  ownedDir: ownedDir ?? null,
   wrote: [],
   skip: false,
   fetched: null,
@@ -154,7 +180,7 @@ if (baseUrlMatch !== null) {
   }
 }
 
-if (writes === 'by-title') {
+if (writes === 'by-title' || writes === 'fail-first') {
   // A real node:test file, written and NOT run: ADL runs it. The witness line is
   // appended before the fetch, so it proves the test executed even if the app
   // then failed to answer.
@@ -166,14 +192,24 @@ if (writes === 'by-title') {
     "import { appendFileSync } from 'node:fs';",
     `test${report.skip ? '.skip' : ''}(${JSON.stringify(testName)}, async () => {`,
     `  appendFileSync(process.env.ADL_85_WITNESS, ${JSON.stringify(`executed: ${title}\n`)});`,
+    ...(writes === 'fail-first'
+      ? [
+          "  const { readFileSync, writeFileSync } = await import('node:fs');",
+          '  let runs = 0;',
+          "  try { runs = Number(readFileSync(process.env.ADL_86_COUNTER, 'utf8')); } catch {}",
+          '  writeFileSync(process.env.ADL_86_COUNTER, String(runs + 1));',
+          "  assert.notEqual(runs, 0, 'first run: GET /health is not trusted yet');",
+        ]
+      : []),
     '  const response = await fetch(`${process.env.APP_URL}/health`);',
     '  assert.equal(response.status, 200, `GET /health answered ${String(response.status)}`);',
     '});',
     '',
   ].join('\n');
-  mkdirSync(join(cwd, 'tests'), { recursive: true });
-  writeFileSync(join(cwd, 'tests', 'health.test.mjs'), body, 'utf8');
-  report.wrote.push('tests/health.test.mjs');
+  const into = ownedDir ?? 'tests';
+  mkdirSync(join(cwd, into), { recursive: true });
+  writeFileSync(join(cwd, into, 'health.test.mjs'), body, 'utf8');
+  report.wrote.push(`${into}/health.test.mjs`);
 }
 
 if (reportPath !== undefined) {

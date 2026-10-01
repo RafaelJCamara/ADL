@@ -127,6 +127,10 @@ function stubGitClient(
     diffNameOnly,
     diffTreesNameOnly,
     push: notUsed('push'),
+    add: notUsed('add'),
+    commit: notUsed('commit'),
+    flaggedIndexEntries: notUsed('flaggedIndexEntries'),
+    unstage: notUsed('unstage'),
   };
 }
 

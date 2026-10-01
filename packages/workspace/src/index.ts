@@ -226,6 +226,7 @@ export {
   NEUTRALISATION_RESIDUAL_RISK,
   NEUTRALISE_ARGS,
   NEUTRALISED_CONFIG,
+  type CommitIdentity,
   type GitStatusEntry,
   type ManagerGitClient,
   type ManagerGitClientOptions,
@@ -253,3 +254,19 @@ export {
   type VisibleComposition,
   type VisibleWorkspaceSpec,
 } from './visible/compose.js';
+
+// What a gate leaves under its `owned_dir`, carried back into the developer's
+// worktree so ADL can commit it (ROLE-09, M08 step 8.6). The git half is
+// `ManagerGitClient.add`/`commit`; the manager's stage runner sequences both.
+export {
+  carryBackFiles,
+  pruneOwnedDirectory,
+  readOwnedFiles,
+  restoreComposition,
+  snapshotComposition,
+  type CarriedBack,
+  type CarryBackInput,
+  type CarryBackResult,
+  type CompositionSnapshot,
+  type OwnedFileContents,
+} from './visible/carry-back.js';

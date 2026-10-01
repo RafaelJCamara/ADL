@@ -235,6 +235,8 @@ describe('scenario: two testers claim pass; the one whose suite executed nothing
               {
                 harness: 'behaviour',
                 visible_paths: ['tests/**'],
+                // M08 step 8.6: where the tester's tests go — and the only files its suite runs.
+                owned_dir: 'tests/behaviour',
                 needs_app: true,
                 with: {
                   suite: {
@@ -350,7 +352,7 @@ describe('scenario: two testers claim pass; the one whose suite executed nothing
               expect(report.fetched?.status, report.title).toBe(200);
               expect(report.sawSuiteCommand, report.title).toBe(true);
               expect(report.wrote, report.title).toEqual([
-                'tests/health.test.mjs',
+                'tests/behaviour/health.test.mjs',
               ]);
             }
             expect(nothingReport.skip).toBe(true);

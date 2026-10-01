@@ -169,16 +169,21 @@ export interface FeaturesRepository {
   recordRoundVouchedSha(input: { id: string; sha: string }): Promise<boolean>;
 
   /**
-   * Move this round's vouched tip from `from` to `to` — compare-and-set.
+   * Vouch for ADL's own commit `to`, made on top of `from` — compare-and-set
+   * against the FEATURE's newest vouched tip ({@link
+   * FeaturesRepository.latestVouchedSha}), and written on round `id`.
    *
-   * A gate stage that started on the vouched tip and moved HEAD extends what
-   * ADL vouches for; one that started anywhere else (a commit ADL never
-   * checked sitting underneath it) extends nothing, and the next developer
-   * check then covers that unchecked commit too. Returns whether the swap
-   * happened, so a caller can log a refusal rather than infer it.
+   * Against the feature's tip, not this round's row: a round that began at a
+   * gate (a feature resumed after escalating there) has no vouched value of
+   * its own yet, and comparing its null would refuse ADL's commit and blame
+   * the next developer for it. A commit made on anything other than the
+   * vouched tip extends nothing, and the next developer check then covers
+   * whatever sits underneath it. Returns whether the swap happened, so a
+   * caller can log a refusal rather than infer it.
    */
   advanceRoundVouchedSha(input: {
     id: string;
+    featureId: string;
     from: string;
     to: string;
   }): Promise<boolean>;
@@ -393,12 +398,27 @@ export function featuresRepository(db: Kysely<Database>): FeaturesRepository {
       return Number(result.numUpdatedRows) === 1;
     },
 
-    async advanceRoundVouchedSha({ id, from, to }) {
+    async advanceRoundVouchedSha({ id, featureId, from, to }) {
+      // One statement, so the read of the feature's tip and the write are
+      // atomic without a transaction this repository may already be inside.
       const result = await db
         .updateTable('rounds')
         .set({ vouched_sha: to })
         .where('id', '=', id)
-        .where('vouched_sha', '=', from)
+        .where('feature_id', '=', featureId)
+        .where((eb) =>
+          eb(
+            eb
+              .selectFrom('rounds as latest')
+              .select('latest.vouched_sha')
+              .where('latest.feature_id', '=', featureId)
+              .where('latest.vouched_sha', 'is not', null)
+              .orderBy('latest.number', 'desc')
+              .limit(1),
+            '=',
+            from,
+          ),
+        )
         .executeTakeFirst();
 
       return Number(result.numUpdatedRows) === 1;

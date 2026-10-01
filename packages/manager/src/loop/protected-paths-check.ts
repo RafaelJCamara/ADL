@@ -85,6 +85,8 @@ export interface CheckProtectedPathsParams {
   readonly feature: FeaturesTable;
   /** `EffectiveConfig.protected_paths` — the maintainer-declared glob list, already resolved. */
   readonly protectedGlobs: readonly string[];
+  /** Every pipeline entry's `owned_dir` (M08 step 8.6) — always protected, never configurable. */
+  readonly ownedDirs: readonly string[];
   /** The sha this round's developer stage just reported as `committed`. */
   readonly headSha: string;
 }
@@ -146,6 +148,7 @@ export async function checkProtectedPaths(
     changedPaths,
     featurePath: params.feature.path,
     protectedGlobs: params.protectedGlobs,
+    ownedDirs: params.ownedDirs,
   });
 
   return violated.length === 0

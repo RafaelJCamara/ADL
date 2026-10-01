@@ -9,7 +9,7 @@
  * round's commit actually changed, did it touch something it must never
  * touch? Detected by diffing, never by asking.
  *
- * Three protections apply, and only the third is configurable:
+ * Four protections apply, and only the fourth is configurable:
  *
  * 1. **The feature's own spec folder** — every path under it, unconditionally.
  *    A developer editing the spec that defines what it must build is editing
@@ -17,7 +17,16 @@
  * 2. **{@link GATE_CONFIG_PATH}** (`adl.yml`) — the gate configuration itself,
  *    unconditionally. A developer that cannot pass `commands.test` can
  *    otherwise edit it to point at something that exits 0.
- * 3. **`AdlYml.protected_paths`** — repo-relative glob patterns the
+ * 3. **Every gate's `owned_dir`** (M08 step 8.6) — the directories ADL
+ *    commits a gate's output into, unconditionally. They hold what judges the
+ *    developer — the behaviour tester's tests — and a developer that could
+ *    rewrite them could make a failing feature pass by weakening its tests,
+ *    which is the ImpossibleBench behaviour the milestone notes name. Made
+ *    always-on rather than left to `protected_paths`, which defaults to `[]`
+ *    and so would leave exactly these files open in an untouched install.
+ *    ADL's own carry-back commits are not judged here at all: they extend the
+ *    tip ADL vouches for, so the next developer diff starts after them.
+ * 4. **`AdlYml.protected_paths`** — repo-relative glob patterns the
  *    maintainer declares explicitly, typically the tests that judge a gate.
  *    Empty unless the maintainer sets it: ADL has no way to know which files
  *    in an arbitrary repository "are tests" without being told, and
@@ -28,6 +37,7 @@
  * supplied by the caller, which is the database-and-git half in
  * `@adl/manager`'s `loop/protected-paths-check.ts`.
  */
+import { isWithinDirectory } from '../config/owned-dir.js';
 
 /** Where the gate configuration lives, relative to the repository root. Not configurable. */
 export const GATE_CONFIG_PATH = 'adl.yml';
@@ -122,6 +132,8 @@ export interface ProtectedPathsInput {
   readonly featurePath: string;
   /** `EffectiveConfig.protected_paths` — the maintainer-declared glob list. */
   readonly protectedGlobs: readonly string[];
+  /** Every pipeline entry's `owned_dir` (M08 step 8.6) — directories, never globs. */
+  readonly ownedDirs: readonly string[];
 }
 
 /**
@@ -134,11 +146,12 @@ export interface ProtectedPathsInput {
 export function violatedProtectedPaths(
   input: ProtectedPathsInput,
 ): readonly string[] {
-  const { changedPaths, featurePath, protectedGlobs } = input;
+  const { changedPaths, featurePath, protectedGlobs, ownedDirs } = input;
   return changedPaths.filter(
     (path) =>
       path === GATE_CONFIG_PATH ||
       isWithinFeatureFolder(path, featurePath) ||
+      ownedDirs.some((dir) => isWithinDirectory(path, dir)) ||
       protectedGlobs.some((pattern) => matchesGlob(pattern, path)),
   );
 }

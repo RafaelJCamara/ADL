@@ -57,26 +57,28 @@ as of the last commit and says exactly where things stand.
 
 CONTEXT: You were asked to take every remaining item up to and including M10, build
 a work queue, and implement them one by one. M06 and M07 are both closed and
-code-complete. Twenty-one items are done and committed to main: 6.10, 6.11, the M06
+code-complete. Twenty-two items are done and committed to main: 6.10, 6.11, the M06
 close-out, an M07 step-sketch refinement, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, the 7.7
 deferral, 7.8, 7.9, the M07 close-out, M08's step refinement, 8.0, 8.1, 8.2, 8.3,
-8.4 and 8.5.
+8.4, 8.5 and 8.6.
 
-REMAINING QUEUE — 20 items, in order. Rebuild this as a task list, then work
+REMAINING QUEUE — 19 items, in order. Rebuild this as a task list, then work
 through it one at a time:
 
-  8.6 — the tester's tests are committed (ROLE-09; D-8-A-1, D-8-05-3)  <- NEXT
-  8.7–8.9, M08 close-out
+  8.7 — assertion floor, spec-clause link, stability runs (ROLE-10)  <- NEXT
+  8.8–8.9, M08 close-out
   M09 step refinement, 9.1–9.8, M09 close-out
   M10 step refinement, 10.1–10.6, M10 close-out
 
 M08's sketch HAS been refined — ten steps, 8.0 through 8.9, with the audit's ten
-findings in the milestone file's own header. 8.0 through 8.5 are done. Before
-starting 8.6, read "After 8.5" at the top of HANDOFF.md, the 8.5 done-text in the
-milestone file, and DEBT.md's D-8-A-1 and D-8-05-3 — 8.6 owns both. 8.0's spike
-record decided that ADL, not the tester, carries the surviving tests back into the
-developer's worktree and commits them, at a point it controls relative to
-`recordRoundHeadSha`.
+findings in the milestone file's own header. 8.0 through 8.6 are done. Before
+starting 8.7, read the 8.6 done-text in the milestone file and DEBT.md's D-8-06-2
+and D-8-06-3 (8.8 and 8.7 own them). 8.6's carry-back is in
+`worker-entry/owned-dir.ts`: the tester's suite runs exactly the files ADL freezes
+and commits, so a guardrail that rejects a test must act on that frozen set — and a
+rejected test must then not be committed either. What the review taught is in the
+done-text: a gate stage runs developer-controlled code, so never vouch for, trust or
+credit anything a gate stage produced unless ADL produced it itself.
 
 WORKING RULES (also in .claude/CLAUDE.md — follow them exactly):
 - One step, one commit, conventional-commit scoped: feat(08-01): …
