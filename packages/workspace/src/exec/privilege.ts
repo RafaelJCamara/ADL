@@ -44,14 +44,17 @@
  * isolated when it was not (T-2-32). The resolution is the middle one: continue,
  * and emit a warning that names concretely what is not enforced.
  */
-import { constants } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
 import {
   access,
   chmod,
   chown,
   lstat,
+  open,
   readFile,
   readdir,
+  stat,
+  type FileHandle,
 } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { scratchHomeRoot } from './scratch-home.js';
@@ -535,15 +538,52 @@ export interface WorkerAccessConfig {
   /** The shared group. Both the daemon user and the worker user are members. */
   readonly group: string | undefined;
   /**
-   * Files that must stay daemon-owned and NOT group-writable.
+   * The worker's user NAME, resolved to a uid through the passwd database.
    *
-   * `<mainRepo>/.git/config`, in practice. Passed in rather than derived here
-   * so this module holds no opinion about git's layout — the backend that knows
-   * where the repository is names the file.
+   * What lets the grant tell "an entry the worker made" (the worker's own to
+   * manage -- skipped) from "an entry somebody else owns that the daemon cannot
+   * widen" (which must degrade loudly, not be waved through as though the
+   * worker had made it). Without it nothing is treated as the worker's, which is
+   * the strict direction. A name that is set but unresolvable degrades, because
+   * a `sudo --user` of a name `/etc/passwd` does not have fails anyway.
+   */
+  readonly workerUser?: string;
+  /**
+   * Paths that must stay daemon-writable only, however they arrived.
+   *
+   * `<common git dir>/config` and `<common git dir>/hooks`, in practice: both
+   * name programs git executes on the DAEMON's behalf. A file has its group and
+   * world write bits cleared; a directory has them cleared on itself and on
+   * every entry beneath it. A path that does not exist is skipped (there is
+   * nothing to protect). Passed in rather than derived here so this module holds
+   * no opinion about git's layout.
+   *
+   * **Runs whether or not the grants succeeded.** A degraded grant is a reason
+   * to say so, never a reason to leave `.git/config` writable.
    */
   readonly protect?: readonly string[];
+  /**
+   * Directories the worker may create entries in and may NOT touch the daemon's
+   * entries of: group `rwx` plus the sticky bit (`1775`), applied to the
+   * directory itself and **not** recursively.
+   *
+   * The loose-object fan-out directories (`objects/xx`), in practice. Sticky is
+   * the whole point: an entry in a sticky directory can be unlinked or renamed
+   * only by its owner or the directory's owner, so the worker can add objects
+   * and cannot replace or delete one the daemon wrote.
+   */
+  readonly stickyDirs?: readonly string[];
   /** Overridable for tests. Defaults to `/etc/group`. */
   readonly groupFile?: string;
+  /** Overridable for tests. Defaults to `/etc/passwd`. */
+  readonly passwdFile?: string;
+  /**
+   * Test seam: called with each child's path immediately before the grant walk
+   * opens it -- the window in which a path-based walk could be redirected by a
+   * symlink swap. A test swaps the entry here, deterministically, instead of
+   * racing a second process for the same window. Never set in production.
+   */
+  readonly beforeOpen?: (path: string) => void | Promise<void>;
 }
 
 /**
@@ -581,34 +621,297 @@ function codeOf(error: unknown): string {
 }
 
 /**
+ * One filesystem entry, held open so that what was inspected is what is changed.
+ *
+ * The reason this is an object and not a path: every operation below goes
+ * through the SAME open file, never back through the path. A path is a name an
+ * attacker who can write the parent directory can re-point between two calls;
+ * an open descriptor is the inode itself.
+ */
+interface HeldEntry {
+  /** `fstat` of the open entry -- not `lstat` of a name that may since have moved. */
+  readonly info: Stats;
+  chown(gid: number): Promise<void>;
+  chmod(mode: number): Promise<void>;
+  /** The names inside a directory. */
+  list(): Promise<string[]>;
+  /** The path to open `name` through, as a child of THIS open entry. */
+  child(name: string): string;
+  close(): Promise<void>;
+}
+
+/**
+ * Open an entry, or report why it is not one to touch.
+ *
+ * `undefined` means "skip it": a symlink, something that vanished, something that
+ * is not a file or directory. `root` is true for a path the caller NAMED, where
+ * absence or a symlink is not a thing to step over quietly.
+ */
+type OpenEntry = (
+  path: string,
+  root: boolean,
+) => Promise<HeldEntry | undefined>;
+
+/** What `open(2)` says about an entry that is simply not there to grant. */
+const SKIPPED_ON_OPEN: ReadonlySet<string> = new Set([
+  'ELOOP', // O_NOFOLLOW met a symlink
+  'ENOENT', // gone since the directory was read (git renames its tmp_obj_*)
+  'ENOTDIR', // replaced by a file since the directory was read
+  'ENXIO', // a socket, or a fifo with no reader
+  'ENODEV',
+  'EOPNOTSUPP',
+]);
+
+/**
+ * `/proc/self/fd/<n>`: the directory a descriptor stands for, as a path.
+ *
+ * `fs/promises` has no `fchownat` and no `readdir(fd)`, so the way to keep
+ * walking THROUGH an open directory rather than back through its name is the
+ * kernel's own: a path under `/proc/self/fd/<n>/` resolves relative to the
+ * descriptor's inode, wherever the directory's name has since been pointed.
+ */
+const PROC_SELF_FD = '/proc/self/fd';
+
+/**
+ * The race-free opener (Linux): `O_NOFOLLOW`, then everything on the descriptor.
+ *
+ * `lstat`-then-`chown` -- what this module did -- is a time-of-check/time-of-use
+ * gap over a tree the WORKER can write: it swaps a daemon-owned entry for a
+ * symlink between the two calls and the daemon `chown`s and `chmod`s the target
+ * (reproduced: a repository's `pre-commit` hook went to the worker's group, group
+ * writable, in 3 tries of 300). `open(O_NOFOLLOW)` refuses a symlink atomically
+ * with the open, and `fchown`/`fchmod`/`fstat` act on the inode that was opened,
+ * so there is no second name lookup to redirect. Measured against the same probe:
+ * 0 hits in 1500 tries and half a million swaps.
+ *
+ * `O_NONBLOCK` so opening a FIFO the worker planted cannot hang the daemon on a
+ * writer that never comes.
+ */
+function descriptorOpener(workerUid: number | undefined): OpenEntry {
+  const flags =
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+
+  return async (path, root) => {
+    let handle: FileHandle;
+    try {
+      handle = await open(path, flags);
+    } catch (error) {
+      const code = codeOf(error);
+      if (!root && SKIPPED_ON_OPEN.has(code)) return undefined;
+      if (!root && code === 'EACCES') {
+        // A directory the worker made private (0700) is not one the daemon can
+        // open. That is the worker's own business -- but only if the worker
+        // made it. `lstat` is a name lookup, and that is fine HERE: nothing is
+        // changed on the strength of it, only skipped.
+        const info = await lstat(path).catch(() => undefined);
+        if (info === undefined) return undefined;
+        if (workerUid !== undefined && info.uid === workerUid) return undefined;
+      }
+      throw error;
+    }
+
+    let info: Stats;
+    try {
+      info = await handle.stat();
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
+    const via = `${PROC_SELF_FD}/${String(handle.fd)}`;
+
+    return {
+      info,
+      chown: (gid) => handle.chown(-1, gid),
+      chmod: (mode) => handle.chmod(mode),
+      list: () => readdir(via),
+      child: (name) => join(via, name),
+      close: () => handle.close(),
+    };
+  };
+}
+
+/**
+ * The path-based opener, for a platform with no `/proc/self/fd`.
+ *
+ * Reached only by the platforms the privilege drop does not exist on (D-05), in
+ * which `applyWorkerAccess` runs under a test that injected `mode: 'dropped'` to
+ * exercise the arithmetic. It checks `lstat` and skips symlinks, and it IS racy
+ * in the way {@link descriptorOpener} documents; that is acceptable only because
+ * there is no worker identity on those platforms for anything to be raced by.
+ * It is never selected on Linux.
+ */
+const pathOpener: OpenEntry = async (path, root) => {
+  let info: Stats;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    if (!root && SKIPPED_ON_OPEN.has(codeOf(error))) return undefined;
+    throw error;
+  }
+  if (info.isSymbolicLink()) {
+    if (root) {
+      throw Object.assign(new Error(`${path} is a symbolic link`), {
+        code: 'ELOOP',
+      });
+    }
+    return undefined;
+  }
+  return {
+    info,
+    chown: (gid) => chown(path, -1, gid),
+    chmod: (mode) => chmod(path, mode),
+    list: () => readdir(path),
+    child: (name) => join(path, name),
+    close: () => Promise.resolve(),
+  };
+};
+
+/**
+ * Choose the opener, or say why none is safe.
+ *
+ * On Linux the only acceptable one is the descriptor-based one, which needs
+ * `/proc`. A Linux host without it (a stripped container) gets a degraded report
+ * naming that, rather than the racy fallback behind the operator's back.
+ */
+async function chooseOpener(
+  workerUid: number | undefined,
+): Promise<OpenEntry | { readonly unavailable: string }> {
+  if (process.platform !== 'linux') return pathOpener;
+  try {
+    await stat(PROC_SELF_FD);
+  } catch {
+    return {
+      unavailable: `${PROC_SELF_FD} is not available, and the grant walk refuses to fall back to path-based chown/chmod over a tree the worker can write (a symlink swap would redirect it) -- mount /proc`,
+    };
+  }
+  return descriptorOpener(workerUid);
+}
+
+/** What one walk needs to know that is not the path. */
+interface WalkContext {
+  readonly open: OpenEntry;
+  readonly gid: number;
+  /** The worker's uid when known; its entries are its own to manage. */
+  readonly workerUid: number | undefined;
+  readonly beforeOpen?: (path: string) => void | Promise<void>;
+}
+
+/** Whether an entry is one the worker identity made. */
+function madeByWorker(info: Stats, ctx: WalkContext): boolean {
+  return ctx.workerUid !== undefined && info.uid === ctx.workerUid;
+}
+
+/**
+ * A cheap, read-only look at a child, used only to SKIP work -- never to decide
+ * what to change.
+ *
+ * Every later attach re-walks the whole worktree, and the common case by then is
+ * a file that already carries the grant. Opening each one (open, fstat, close,
+ * three trips to the thread pool) cost about 90us an entry, which on a worktree
+ * with a `node_modules` in it is seconds per stage; an `lstat` is a fraction of
+ * that. It is safe because it is one-directional: a stale answer here can at
+ * worst leave a file un-granted until the next attach, and it never reaches
+ * `chown`/`chmod` -- anything that might need changing is opened with
+ * `O_NOFOLLOW` and decided again from the descriptor. A link, an entry that is
+ * gone, and a regular file that is already the worker's or already carries the
+ * grant are skipped; a directory (which has to be descended into) and anything
+ * unusual is not.
+ */
+async function nothingToGrant(
+  path: string,
+  ctx: WalkContext,
+): Promise<boolean> {
+  let info: Stats;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    // Gone: nothing to do. Any other failure is left for the open to report.
+    return SKIPPED_ON_OPEN.has(codeOf(error));
+  }
+  if (info.isSymbolicLink()) return true;
+  if (!info.isFile()) return false;
+  return (
+    madeByWorker(info, ctx) ||
+    (info.gid === ctx.gid && (info.mode & 0o060) === 0o060)
+  );
+}
+
+/**
  * Give the shared group read, write, and traverse permission over one tree.
  *
- * **Symlinks are skipped, never followed.** `chmod` has no `lchmod` on Linux,
- * so widening through a link inside a worktree would apply the group bits to
- * whatever it points at — and the contents of a worktree are exactly what an
- * agent controls. A link to `/etc` is a one-line exploit of a helper that
- * recursed blindly (T-2-35).
+ * **Symlinks are skipped, never followed -- and "never" includes the race.**
+ * `chmod` has no `lchmod` on Linux, so widening through a link inside a worktree
+ * would apply the group bits to whatever it points at, and the contents of a
+ * worktree are exactly what an agent controls (T-2-35). The check that an entry
+ * is not a link is made by `open(O_NOFOLLOW)` and everything after it acts on the
+ * open descriptor ({@link descriptorOpener}), so there is no gap between "it was
+ * not a link" and "now change it" for the worker to swap a link into.
  *
  * **No world bit is ever set.** The mode is the existing mode OR the group
  * bits, so anything already open stays as it was and nothing becomes readable
  * to every local user because ADL touched it.
+ *
+ * **Idempotent, and tolerant of what the worker made (D-6-CI-4).** This runs
+ * again on every `attach`, by which time the worker has created files in the
+ * tree. `chown(2)` and `chmod(2)` by a non-owner fail with `EPERM` even when they
+ * would change nothing, so each is issued only when it would change something,
+ * and an entry the WORKER made is left to the worker. The gate is "owned by the
+ * worker's uid" and nothing looser: an entry owned by a third user that does not
+ * already carry the grant is attempted, fails with `EPERM`, and degrades the
+ * report -- a repository a human cloned while the daemon runs as another user is
+ * a misconfiguration to announce, not one to report as `applied` (it used to be
+ * skipped on "the daemon does not own it").
+ *
+ * **Vanishing is not failure.** `git` renames its `tmp_obj_*` files into place
+ * while a walk is under way; an entry that is gone by the time it is opened is
+ * skipped. A directory the daemon cannot read that the worker made is skipped
+ * for the same reason it is not the daemon's to widen.
  */
-async function grantGroupAccess(path: string, gid: number): Promise<void> {
-  const info = await lstat(path);
-  if (info.isSymbolicLink()) return;
+async function grantGroupAccess(
+  path: string,
+  ctx: WalkContext,
+  root: boolean,
+): Promise<void> {
+  const entry = await ctx.open(path, root);
+  if (entry === undefined) return;
 
-  // -1 means "leave the owner alone" to chown(2). The daemon user stays the
-  // owner; only the group changes.
-  await chown(path, -1, gid);
+  try {
+    const { info } = entry;
+    const directory = info.isDirectory();
+    // A fifo, a socket, a device: nothing a worktree needs a grant on.
+    if (!directory && !info.isFile()) return;
 
-  const bits = info.isDirectory() ? 0o070 : 0o060;
-  // & 0o7777 keeps setuid/setgid/sticky exactly as found rather than dropping
-  // them on the way through.
-  await chmod(path, (info.mode & 0o7777) | bits);
+    if (!madeByWorker(info, ctx)) {
+      // -1 means "leave the owner alone" to chown(2). The daemon user stays the
+      // owner; only the group changes.
+      if (info.gid !== ctx.gid) await entry.chown(ctx.gid);
 
-  if (!info.isDirectory()) return;
-  for (const entry of await readdir(path)) {
-    await grantGroupAccess(join(path, entry), gid);
+      const bits = directory ? 0o070 : 0o060;
+      // & 0o7777 keeps setuid/setgid/sticky exactly as found rather than
+      // dropping them on the way through.
+      const mode = info.mode & 0o7777;
+      if ((mode & bits) !== bits) await entry.chmod(mode | bits);
+    }
+
+    if (!directory) return;
+
+    let names: string[];
+    try {
+      names = await entry.list();
+    } catch (error) {
+      const code = codeOf(error);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
+      if (code === 'EACCES' && madeByWorker(info, ctx)) return;
+      throw error;
+    }
+    for (const name of names) {
+      const child = entry.child(name);
+      if (await nothingToGrant(child, ctx)) continue;
+      await ctx.beforeOpen?.(child);
+      await grantGroupAccess(child, ctx, false);
+    }
+  } finally {
+    await entry.close();
   }
 }
 
@@ -642,7 +945,30 @@ async function grantTraverse(path: string, gid: number): Promise<void> {
 }
 
 /**
- * Take group and world write permission off a file, and never add any.
+ * Give the shared group a directory it may add to and may not tamper with:
+ * `g+rwx` and the sticky bit, on the directory itself only.
+ *
+ * Not recursive on purpose -- see {@link WorkerAccessConfig.stickyDirs}. What is
+ * inside was written by the daemon (and is exactly what sticky protects) or by
+ * the worker (and is the worker's).
+ */
+async function grantSticky(path: string, ctx: WalkContext): Promise<void> {
+  const entry = await ctx.open(path, false);
+  if (entry === undefined) return;
+  try {
+    const { info } = entry;
+    if (!info.isDirectory() || madeByWorker(info, ctx)) return;
+    if (info.gid !== ctx.gid) await entry.chown(ctx.gid);
+    const mode = info.mode & 0o7777;
+    const wanted = mode | 0o070 | 0o1000;
+    if (wanted !== mode) await entry.chmod(wanted);
+  } finally {
+    await entry.close();
+  }
+}
+
+/**
+ * Take group and world write permission off a tree, and never add any.
  *
  * The counterpart to {@link grantGroupAccess}, and the structural half of the
  * defence against 02-RESEARCH.md § Pitfall 5: a linked worktree shares the main
@@ -652,18 +978,55 @@ async function grantTraverse(path: string, gid: number): Promise<void> {
  * dedicated OS user buys beyond "the agent cannot read /etc/shadow" (T-2-31).
  *
  * Clearing rather than merely not-granting is deliberate. A repository created
- * under a permissive umask can arrive with the config already group-writable,
- * and "we did not widen it" would then be true while the worker could still
- * write it.
+ * under a permissive umask can arrive with the config -- or a hook -- already
+ * group-writable, and "we did not widen it" would then be true while the worker
+ * could still write it. A hook is a program git runs on the daemon's later
+ * operations, so it is the same escalation one directory over.
+ *
+ * Applied to a directory it covers the directory and every entry beneath it;
+ * symlinks inside are skipped (the same `open(O_NOFOLLOW)` walk as the grant).
+ * An entry that does not exist is nothing to protect.
  */
-async function protectFromWorker(path: string): Promise<void> {
-  const info = await lstat(path);
-  if (info.isSymbolicLink()) {
-    throw new Error(
-      `${path} is a symbolic link; refusing to chmod through it (the target is outside this module's knowledge).`,
-    );
+async function protectFromWorker(
+  path: string,
+  ctx: WalkContext,
+  root: boolean,
+): Promise<void> {
+  const entry = await ctx.open(path, root);
+  if (entry === undefined) return;
+  try {
+    const { info } = entry;
+    const directory = info.isDirectory();
+    if (!directory && !info.isFile()) return;
+
+    const mode = info.mode & 0o7777;
+    if ((mode & 0o022) !== 0) await entry.chmod(mode & ~0o022);
+    if (!directory) return;
+
+    let names: string[];
+    try {
+      names = await entry.list();
+    } catch (error) {
+      const code = codeOf(error);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
+      throw error;
+    }
+    for (const name of names) {
+      await protectFromWorker(entry.child(name), ctx, false);
+    }
+  } finally {
+    await entry.close();
   }
-  await chmod(path, info.mode & 0o7777 & ~0o022);
+}
+
+/** `protect`, run for a path that may legitimately not exist. */
+async function protectIfPresent(path: string, ctx: WalkContext): Promise<void> {
+  try {
+    await protectFromWorker(path, ctx, true);
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return;
+    throw error;
+  }
 }
 
 /**
@@ -671,9 +1034,11 @@ async function protectFromWorker(path: string): Promise<void> {
  *
  * The trees passed in are the scratch `HOME`, the feature's worktree, and the
  * main repository's per-worktree administrative directory — the worker needs to
- * write an index and a `HEAD` in that last one in order to commit. The main
- * repository's `.git/config` is deliberately NOT among them; it is passed as
- * `protect` instead.
+ * write an index and a `HEAD` in that last one in order to commit — plus the
+ * shared parts of the main repository a commit writes to (see
+ * `worktree/shared-git.ts`). The main repository's `.git/config` and
+ * `.git/hooks` are deliberately NOT among them; they are passed as `protect`
+ * instead.
  *
  * One path is granted that no caller passes: {@link scratchHomeRoot}, and only
  * `--x`. Without it the worker cannot reach its own `HOME`; with anything more
@@ -688,6 +1053,11 @@ async function protectFromWorker(path: string): Promise<void> {
  * feature's worktree reachable by every other concurrently running feature's
  * agent.
  *
+ * **`protect` is independent of the grants.** It runs after them whatever they
+ * did, and its own failure is reported alongside theirs, so a grant that
+ * degraded half way (or never started) cannot be the reason `.git/config` was
+ * left writable.
+ *
  * A no-op when the mode is not `dropped`. There is no second identity in that
  * case, so widening anything would be pure exposure with no beneficiary.
  */
@@ -699,10 +1069,88 @@ export async function applyWorkerAccess(
     return { outcome: 'not-applicable', mode: config.mode };
   }
 
+  let workerUid: number | undefined;
+  const workerUser = config.workerUser?.trim() ?? '';
+  if (workerUser !== '') {
+    let ids: UserIds | undefined;
+    try {
+      ids = await resolveUserIds(workerUser, config.passwdFile);
+    } catch (error) {
+      return {
+        outcome: 'degraded',
+        reason: `could not read the user database while resolving ${workerUser}: ${codeOf(error)}`,
+      };
+    }
+    if (ids === undefined) {
+      return {
+        outcome: 'degraded',
+        reason: `worker user ${workerUser} could not be resolved to a uid from the local user database, so entries it owns cannot be told from entries nobody can grant (see parseId)`,
+      };
+    }
+    workerUid = ids.uid;
+  }
+
+  const opener = await chooseOpener(workerUid);
+  if (typeof opener === 'object') {
+    return { outcome: 'degraded', reason: opener.unavailable };
+  }
+
+  const granted: string[] = [];
+  const grant = await grantPhase(paths, config, opener, workerUid, granted);
+
+  // Always, and AFTER: see the docblock. Its failure never replaces the
+  // grant's; both are worth hearing.
+  let protectFailure: string | undefined;
+  const protectContext: WalkContext = { open: opener, gid: -1, workerUid };
+  for (const path of config.protect ?? []) {
+    try {
+      await protectIfPresent(path, protectContext);
+    } catch (error) {
+      protectFailure = `could not remove group and world write permission from ${path}: ${codeOf(error)}`;
+      break;
+    }
+  }
+
+  if (!grant.ok) {
+    return {
+      outcome: 'degraded',
+      reason:
+        protectFailure === undefined
+          ? grant.reason
+          : `${grant.reason}; and ${protectFailure}`,
+    };
+  }
+  if (protectFailure !== undefined) {
+    return { outcome: 'degraded', reason: protectFailure };
+  }
+
+  // `granted`, not `paths`: the caller asked about a few trees and the helper
+  // also touched the scratch-home root, so reporting the argument back would
+  // understate what this function changed on disk.
+  return {
+    outcome: 'applied',
+    group: grant.group,
+    gid: grant.gid,
+    paths: granted,
+  };
+}
+
+/** The grants, as a result rather than an exception (convention 5). */
+type GrantResult =
+  | { readonly ok: true; readonly group: string; readonly gid: number }
+  | { readonly ok: false; readonly reason: string };
+
+async function grantPhase(
+  paths: readonly string[],
+  config: WorkerAccessConfig,
+  open: OpenEntry,
+  workerUid: number | undefined,
+  granted: string[],
+): Promise<GrantResult> {
   const group = config.group?.trim() ?? '';
   if (group === '') {
     return {
-      outcome: 'degraded',
+      ok: false,
       reason: `the privilege drop is active but ${WORKER_GROUP_VAR} is unset, so the worker user has no shared group through which to reach its worktree or its scratch HOME`,
     };
   }
@@ -712,29 +1160,37 @@ export async function applyWorkerAccess(
     gid = await resolveGroupId(group, config.groupFile);
   } catch (error) {
     return {
-      outcome: 'degraded',
+      ok: false,
       reason: `could not read the group database while resolving ${group}: ${codeOf(error)}`,
     };
   }
 
   if (gid === undefined) {
     return {
-      outcome: 'degraded',
+      ok: false,
       reason: `group ${group} could not be resolved to a gid from the local group database — it is either absent, or its line's gid field is not a bare decimal and was rejected rather than coerced to 0 (see parseId); a directory-service group is not visible here, and the operator must pre-provision a local group (D-06)`,
     };
   }
 
+  const ctx: WalkContext = {
+    open,
+    gid,
+    workerUid,
+    ...(config.beforeOpen === undefined
+      ? {}
+      : { beforeOpen: config.beforeOpen }),
+  };
+
   // The scratch-home root, and ONLY when a home under it is being granted.
   // Ordered before the grants so that a run which cannot traverse to its own
   // HOME degrades before anything has been widened, rather than after.
-  const granted: string[] = [];
   if (paths.some((path) => dirname(path) === scratchHomeRoot())) {
     try {
       await grantTraverse(scratchHomeRoot(), gid);
       granted.push(scratchHomeRoot());
     } catch (error) {
       return {
-        outcome: 'degraded',
+        ok: false,
         reason: `could not give group ${group} traverse access to the scratch-home root ${scratchHomeRoot()}: ${codeOf(error)}`,
       };
     }
@@ -742,34 +1198,34 @@ export async function applyWorkerAccess(
 
   for (const path of paths) {
     try {
-      await grantGroupAccess(path, gid);
+      await grantGroupAccess(path, ctx, true);
       granted.push(path);
     } catch (error) {
       // Setting a group requires the calling process to be a member of it,
       // which the install documentation establishes. EPERM here almost always
-      // means the daemon user was never added to the shared group.
+      // means the daemon user was never added to the shared group -- or that
+      // the tree is owned by somebody who is neither the daemon nor the worker.
       return {
-        outcome: 'degraded',
+        ok: false,
         reason: `could not give group ${group} access to ${path}: ${codeOf(error)}`,
       };
     }
   }
 
-  for (const path of config.protect ?? []) {
+  for (const path of config.stickyDirs ?? []) {
     try {
-      await protectFromWorker(path);
+      // Not added to `granted`: 256 fan-out directories would drown the three
+      // trees the report is there to name.
+      await grantSticky(path, ctx);
     } catch (error) {
       return {
-        outcome: 'degraded',
-        reason: `could not remove group and world write permission from ${path}: ${codeOf(error)}`,
+        ok: false,
+        reason: `could not give group ${group} a sticky, writable ${path}: ${codeOf(error)}`,
       };
     }
   }
 
-  // `granted`, not `paths`: the caller asked about three trees and the helper
-  // also touched the scratch-home root, so reporting the argument back would
-  // understate what this function changed on disk.
-  return { outcome: 'applied', group, gid, paths: granted };
+  return { ok: true, group, gid };
 }
 
 /**

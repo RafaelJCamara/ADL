@@ -549,11 +549,20 @@ describe('no module under src/ reaches git through simple-git', () => {
     // considers a repository is git — so the check asks rather than assumes.
     // A call site whose success case is a non-zero exit is exactly the kind
     // this pin exists to make somebody look at.
+    //
+    // `worktree/shared-git.ts` and `worktree/ref-guard.ts` joined with the
+    // privilege-drop hardening (D-6-CI-1, D-6-CI-7). Both ask git, read-only and
+    // through the chokepoint, a question only git can answer: where the common
+    // git directory is (`rev-parse --git-common-dir`, so `<repo>/.git` is never
+    // assumed to be a directory) and what a worktree's `HEAD` names
+    // (`symbolic-ref`). Neither writes anything through git.
     expect(reaching.sort()).toEqual([
       'visible/compose.ts',
       'worktree/backend.ts',
       'worktree/lifecycle.ts',
       'worktree/list.ts',
+      'worktree/ref-guard.ts',
+      'worktree/shared-git.ts',
     ]);
   });
 });

@@ -48,7 +48,10 @@ import { adlGit, type AdlGitOutcome } from '../git/adl-git.js';
  * DETECT-05 needs the folder name for exactly the case the row is gone and
  * the ULID is the one thing lost with it.
  */
-const BRANCH_PREFIX = 'adl/';
+export const BRANCH_NAMESPACE = 'adl';
+
+/** {@link BRANCH_NAMESPACE} as a ref prefix: every ADL branch is `adl/<featureId>`. */
+const BRANCH_PREFIX = `${BRANCH_NAMESPACE}/`;
 
 /** The same prefix as git reports it in `worktree list --porcelain`. */
 const REF_PREFIX = `refs/heads/${BRANCH_PREFIX}`;

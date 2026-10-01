@@ -33,6 +33,7 @@ import { describe, expect, it } from 'vitest';
 import { managerGitClient, workspaceRegistry } from '@adl/workspace';
 import { githubForgeAdapter } from '@adl/forge-github';
 import { listFeatureFolders } from '../../src/detect/scanner.js';
+import { createBareRemote } from '../helpers/bare-remote.js';
 import { withTempRepo } from '../../../workspace/test/helpers/temp-repo.js';
 import { startMockGithubServer } from '../../../forge-github/test/helpers/mock-github-server.js';
 import { throwawayPrivateKeyPem } from '../../../forge-github/test/helpers/throwaway-key.js';
@@ -110,7 +111,8 @@ describe('tracer: a committed feature folder is detected, published, and opens a
         });
 
       const branch = `adl/${featureId}`;
-      const bareRemote = join(ctx.scratchRoot, '..', 'origin.git');
+      const remote = await createBareRemote(join(ctx.scratchRoot, '..'));
+      const bareRemote = remote.path;
 
       try {
         await featureWorkspace.write(
@@ -150,8 +152,6 @@ describe('tracer: a committed feature folder is detected, published, and opens a
         // a fresh `simple-git` import: `adl/no-direct-spawn` bans that
         // specifier outside `packages/workspace/**`, matching the same
         // discipline `crash-recovery.test.ts` documents.
-        await mkdir(bareRemote, { recursive: true });
-        await ctx.git.raw(['-C', bareRemote, 'init', '--bare']);
         await managerGitClient(featureWorkspace).push(
           bareRemote,
           `HEAD:refs/heads/${branch}`,
@@ -160,14 +160,7 @@ describe('tracer: a committed feature folder is detected, published, and opens a
         await featureWorkspace.destroy();
       }
 
-      const pushedSha = (
-        await ctx.git.raw([
-          '-C',
-          bareRemote,
-          'rev-parse',
-          `refs/heads/${branch}`,
-        ])
-      ).trim();
+      const pushedSha = await remote.revParse(`refs/heads/${branch}`);
       expect(pushedSha).toMatch(/^[0-9a-f]{40}$/);
 
       // ── 5. The forge side (5.8/5.9) — a real draft CR, through a real ──

@@ -118,6 +118,11 @@ export {
   type WorktreeTeardown,
 } from './worktree/lifecycle.js';
 
+// The guard a daemon-side write to the feature's branch passes through first:
+// a worker-writable `refs/heads/adl` lets a planted symlink redirect the write
+// onto another ref, and the worktree's own HEAD offers the same (D-6-CI-7).
+export { guardRefWrite, type RefWriteGuard } from './worktree/ref-guard.js';
+
 // The disk inventory (D-20). Deliberately the MECHANISM only: it reports which
 // worktrees exist, and decides nothing about which should be reclaimed. The
 // POLICY — joining this inventory against feature state — is `sweepOrphans`,

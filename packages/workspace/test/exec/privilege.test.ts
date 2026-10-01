@@ -2,7 +2,6 @@ import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ExecSpec, LogChunk, Workspace } from '@adl/core/stage';
 import {
   applyWorkerAccess,
   createPrivilegeWarner,
@@ -23,6 +22,7 @@ import {
 } from '../../src/exec/scratch-home.js';
 import { worktreeWorkspace } from '../../src/worktree/backend.js';
 import { linuxOnly, posixOnly } from '../helpers/platform.js';
+import { runIn } from '../helpers/run-in.js';
 import { withTempRepo } from '../helpers/temp-repo.js';
 
 /**
@@ -41,26 +41,6 @@ const NON_DROPPED_MODES: readonly PrivilegeMode[] = [
   'launcher-missing',
   'worker-user-unset',
 ];
-
-/** Run a command through the workspace, returning its exit code and output. */
-async function runIn(
-  workspace: Workspace,
-  argv: readonly string[],
-): Promise<{ exitCode: number | null; output: string }> {
-  const chunks: LogChunk[] = [];
-  const spec: ExecSpec = {
-    argv,
-    cwd: workspace.root,
-    path: process.env.PATH ?? '',
-    networkPolicy: 'full',
-    resources: {},
-  };
-  const result = await workspace.exec(spec, (chunk) => chunks.push(chunk));
-  return {
-    exitCode: result.exitCode,
-    output: chunks.map((chunk) => chunk.text).join('\n'),
-  };
-}
 
 describe('privilege: the launcher gate and the honest degraded mode', () => {
   it('is a no-op with an empty prefix on a platform that is not Linux', async () => {
@@ -672,6 +652,90 @@ describe('privilege: the drop, as a child process reports it', () => {
         // exit-code check alone — and the thing that actually matters is
         // whether the bytes reached the file git reads.
         expect(await readFile(config, 'utf8')).not.toContain(marker);
+      } finally {
+        await workspace.destroy();
+      }
+    });
+  }, 180_000);
+  // The commit, the object store and every refusal that goes with them moved to
+  // `worker-access.test.ts` (D-6-CI-1): one case per refusal, so that each is red
+  // for exactly one defect.
+
+  it('re-grants over a tree the worker has already written without degrading (D-6-CI-4)', async (ctx) => {
+    const gate = linuxOnly(
+      'the worker user only exists where the privilege drop applies (D-05), so there is no worker-owned entry to re-grant over here',
+    );
+    if (gate.kind === 'skip') {
+      ctx.skip(gate.reason);
+      return;
+    }
+
+    await withTempRepo(async ({ mainRepo, scratchRoot }) => {
+      const workspace = await worktreeWorkspace({
+        mainRepo,
+        scratchRoot,
+        featureId: 'priv-regrant',
+        baseRef: 'HEAD',
+      });
+      try {
+        const made = await runIn(workspace, [
+          '/bin/sh',
+          '-c',
+          'mkdir made-by-worker && echo x > made-by-worker/file.txt',
+        ]);
+        expect(made.exitCode, made.output).toBe(0);
+
+        // What `attach` does on the next stage. chown(2) by a non-owner is EPERM
+        // even as a no-op, which used to degrade the grant here and skip
+        // everything after it, `protect` included.
+        const report = await applyWorkerAccess(
+          [
+            workspace.root,
+            join(mainRepo, '.git', 'refs', 'heads', 'adl'),
+            join(mainRepo, '.git', 'logs', 'refs', 'heads', 'adl'),
+          ],
+          {
+            mode: 'dropped',
+            group: gate.workerGroup,
+            workerUser: gate.workerUser,
+          },
+        );
+        expect(report, JSON.stringify(report)).toMatchObject({
+          outcome: 'applied',
+        });
+      } finally {
+        await workspace.destroy();
+      }
+    });
+  }, 180_000);
+
+  it('rejects a missing command with ENOENT under the drop, exactly as an undropped spawn does (D-6-CI-3)', async (ctx) => {
+    const gate = linuxOnly(
+      'the launcher is what hides a missing command behind its own exit code, and it only exists where the drop applies (D-05)',
+    );
+    if (gate.kind === 'skip') {
+      ctx.skip(gate.reason);
+      return;
+    }
+
+    await withTempRepo(async ({ mainRepo, scratchRoot }) => {
+      const workspace = await worktreeWorkspace({
+        mainRepo,
+        scratchRoot,
+        featureId: 'priv-missing',
+        baseRef: 'HEAD',
+      });
+      try {
+        await expect(
+          runIn(workspace, ['adl-no-such-command-4b1e']),
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(
+          runIn(workspace, ['./adl-no-such-script-4b1e']),
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+        // ...and a command that exists still runs and still reports its own
+        // exit code as data, so the probe has not turned failures into throws.
+        const failing = await runIn(workspace, ['/bin/sh', '-c', 'exit 3']);
+        expect(failing.exitCode).toBe(3);
       } finally {
         await workspace.destroy();
       }

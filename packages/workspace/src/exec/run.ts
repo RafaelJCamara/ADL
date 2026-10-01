@@ -13,6 +13,9 @@
  * only caller of `buildChildEnv`, and it always passes both arguments, so there
  * is exactly one place where a child environment comes into existence.
  */
+import { constants } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
+import { delimiter, isAbsolute, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { ExecResult, ExecSpec, LogChunk } from '@adl/core/stage';
 import { WorkspaceError } from '../errors.js';
@@ -56,6 +59,78 @@ import {
  * caller gets by forgetting, rather than what a caller gets by remembering.
  */
 export type ExecOwner = 'agent' | 'adl';
+
+/** What the daemon's own filesystem view says about one candidate executable. */
+type Candidate = 'executable' | 'absent' | 'unknown';
+
+/**
+ * Whether `candidate` is a file, from the DAEMON's side of the privilege drop.
+ *
+ * **Only `ENOENT` and `ENOTDIR` mean absent.** Anything else the daemon cannot
+ * answer -- `EACCES` because a directory on the way is the worker's private
+ * `0700` one, `EPERM`, `ELOOP` -- is a fact about the daemon's view, not about
+ * the file. A worker-built tool in a worker-private directory is exactly such a
+ * command: the daemon cannot traverse to it and the worker can run it, and
+ * reporting it missing would fail the stage as a permanent `binary_missing`
+ * (reproduced: the worker ran `./build/tool`; the daemon's `stat` of it was
+ * `EACCES`). So the answer there is `unknown`, and `unknown` means "let the
+ * launcher decide".
+ */
+async function probeCandidate(candidate: string): Promise<Candidate> {
+  let info;
+  try {
+    info = await stat(candidate);
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unknown';
+  }
+  if (!info.isFile()) return 'absent';
+  try {
+    await access(candidate, constants.X_OK);
+    return 'executable';
+  } catch {
+    // It is a file the daemon cannot execute. The worker may be able to (group
+    // or owner bits that are not the daemon's), so this is not "missing".
+    return 'unknown';
+  }
+}
+
+/**
+ * Reject with an `ENOENT`-shaped error when `spec.argv[0]` is definitely
+ * missing.
+ *
+ * Resolved against the CHILD's PATH (`ExecSpec.path`) -- a relative entry
+ * against `ExecSpec.cwd`, which is where the child will resolve it, not the
+ * daemon's cwd -- or against `ExecSpec.cwd` when the command names a path. This
+ * is the daemon's view of the filesystem, which is the right one for "is it
+ * missing" and an unreliable one for anything else: see {@link probeCandidate}.
+ * A command that is present but unreachable or unexecutable FROM HERE returns
+ * normally and fails (or runs) as itself under the launcher.
+ */
+async function assertCommandExists(spec: ExecSpec): Promise<void> {
+  const command = spec.argv[0] as string;
+
+  let candidates: readonly string[];
+  if (command.includes('/')) {
+    candidates = [isAbsolute(command) ? command : resolve(spec.cwd, command)];
+  } else {
+    candidates = spec.path
+      .split(delimiter)
+      .filter((dir) => dir !== '')
+      .map((dir) => resolve(spec.cwd, dir, command));
+  }
+
+  for (const candidate of candidates) {
+    if ((await probeCandidate(candidate)) !== 'absent') return;
+  }
+
+  throw Object.assign(new Error(`spawn ${command} ENOENT`), {
+    code: 'ENOENT',
+    errno: -2,
+    syscall: `spawn ${command}`,
+    path: command,
+  });
+}
 
 export async function run(
   spec: ExecSpec,
@@ -107,6 +182,15 @@ export async function run(
       'ExecSpec.argv is empty — there is no command to run.',
     );
   }
+
+  // D-6-CI-3: under the drop the executable execa launches is the LAUNCHER, so a
+  // missing command is `sudo` exiting 1 with "command not found" -- byte-for-byte
+  // an ordinary non-zero exit, never the `ENOENT` rejection an undropped spawn
+  // gives and `classifySpawnError` keys on. Resolve the command here instead, the
+  // way execa would have, and reject the same way, so `binary_missing` means the
+  // same thing in both modes and a permanently wrong agent path fails fast
+  // rather than being retried as a transient `provider_error`.
+  if (prefix.length > 0) await assertCommandExists(spec);
 
   const startedAt = Date.now();
 

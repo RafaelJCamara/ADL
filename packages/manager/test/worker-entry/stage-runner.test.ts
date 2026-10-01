@@ -16,6 +16,7 @@ import {
   type TempRepo,
 } from '../../../workspace/test/helpers/temp-repo.js';
 import { posixOnly } from '../helpers/platform.js';
+import { createBareRemote } from '../helpers/bare-remote.js';
 import { branchNameFor } from '@adl/workspace';
 import { composeBranchFeatureId } from '../../src/branch-identity.js';
 import type { AssignMessage } from '../../src/ipc/protocol.js';
@@ -318,9 +319,8 @@ describe('createProductionStageRunner', () => {
       await commitFeatureSpec(git, featureId);
       const baseRef = (await git.revparse(['HEAD'])).trim();
 
-      const bareRemote = join(scratchRoot, '..', 'push-target.git');
-      await mkdir(bareRemote, { recursive: true });
-      await git.raw(['-C', bareRemote, 'init', '--bare']);
+      const remote = await createBareRemote(join(scratchRoot, '..'));
+      const bareRemote = remote.path;
 
       const assign = buildAssign({
         featureId,
@@ -348,9 +348,7 @@ describe('createProductionStageRunner', () => {
       }
 
       const branch = realBranchFor(assign);
-      const pushedSha = (
-        await git.raw(['-C', bareRemote, 'rev-parse', `refs/heads/${branch}`])
-      ).trim();
+      const pushedSha = await remote.revParse(`refs/heads/${branch}`);
       expect(pushedSha).toBe(verdict.outcome.sha);
 
       // Kept on the committed-and-pushed path too: the branch is on the remote

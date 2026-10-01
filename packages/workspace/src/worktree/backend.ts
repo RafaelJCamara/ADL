@@ -44,6 +44,8 @@ import {
   destroyWorktree,
   type CreatedWorktree,
 } from './lifecycle.js';
+import { sweepAdlRefs } from './ref-guard.js';
+import { prepareSharedGit } from './shared-git.js';
 
 /** The OS error code behind a failed filesystem call, when there is one. */
 function codeOf(error: unknown): string | undefined {
@@ -184,6 +186,21 @@ async function openWorktreeWorkspace(
 
   const adminDir = await worktreeAdminDir(worktreePath);
 
+  // Only when the drop is real: an undropped child is the daemon and needs no
+  // grant, and a developer's repository should not gain 256 empty directories
+  // for a boundary that is not there. See `shared-git.ts` for what is granted
+  // in the main repository, in what shape, and what is deliberately not.
+  const shared =
+    privilege.mode === 'dropped'
+      ? await prepareSharedGit(spec.mainRepo)
+      : undefined;
+  if (shared !== undefined && !shared.ok) {
+    // Classified, not thrown (convention 5): the worker will fail to commit and
+    // the banner says why. The grants that do not depend on it still apply.
+    reportWorkerAccess({ outcome: 'degraded', reason: shared.reason });
+  }
+  const sharedGit = shared?.ok === true ? shared : undefined;
+
   reportWorkerAccess(
     await applyWorkerAccess(
       [
@@ -191,16 +208,34 @@ async function openWorktreeWorkspace(
         worktreePath,
         // The worker writes an index and a HEAD here in order to commit.
         ...(adminDir === undefined ? [] : [adminDir]),
+        // ...and the `adl/*` branch refs and reflogs in the main repository,
+        // which a commit moves as well (D-6-CI-1).
+        ...(sharedGit?.trees ?? []),
       ],
       {
         mode: privilege.mode,
         group: worker.group,
+        ...(worker.user === undefined ? {} : { workerUser: worker.user }),
+        // ...and the 256 loose-object fan-out directories, sticky: the worker
+        // adds objects and cannot replace the daemon's.
+        ...(sharedGit === undefined
+          ? {}
+          : { stickyDirs: sharedGit.stickyDirs }),
         // Emphatically NOT in the granted set. A linked worktree shares the
         // main repository's config, and git config names programs git executes
-        // (02-RESEARCH.md § Pitfall 5, T-2-31). Group and world write come OFF
-        // it, which is the structural half of that defence and precisely what a
-        // dedicated OS user buys.
-        protect: [join(spec.mainRepo, '.git', 'config')],
+        // (02-RESEARCH.md § Pitfall 5, T-2-31); a hook is one. Group and world
+        // write come OFF both, which is the structural half of that defence and
+        // precisely what a dedicated OS user buys. Applied even when the grants
+        // above degrade.
+        //
+        // When the common git dir could not be resolved (the banner above says
+        // so) the clamp falls back to the conventional layout rather than to
+        // nothing: before the shared grants existed `.git/config` was always
+        // protected, and a failed lookup must not be a way to lose that.
+        protect: sharedGit?.protect ?? [
+          join(spec.mainRepo, '.git', 'config'),
+          join(spec.mainRepo, '.git', 'hooks'),
+        ],
       },
     ),
   );
@@ -487,6 +522,17 @@ export async function worktreeWorkspace(
   spec: WorkspaceSpec,
   options: WorktreeWorkspaceOptions = {},
 ): Promise<Workspace> {
+  // A link the worker planted in the `adl/*` namespace redirects the daemon's
+  // own `worktree add -b` (see `ref-guard.ts`). Swept before the first ref
+  // this creates is written; what it finds is reported, not fatal -- the branch
+  // being created is new, and a tampered sibling surfaces on ITS next attach.
+  const removed = await sweepAdlRefs(spec.mainRepo);
+  if (removed.length > 0) {
+    process.stderr.write(
+      `[ADL][WORK-05] Removed ${String(removed.length)} non-regular entr${removed.length === 1 ? 'y' : 'ies'} from the adl/* branch namespace before creating ${spec.featureId}: ${removed.slice(0, 5).join(', ')}. A symbolic link there redirects a daemon-side ref write to any other ref; a worker planted it.
+`,
+    );
+  }
   return openWorktreeWorkspace(
     spec,
     options,

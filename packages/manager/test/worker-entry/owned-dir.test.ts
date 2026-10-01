@@ -19,6 +19,7 @@ import {
   managerGitClient,
   workspaceRegistry,
 } from '@adl/workspace';
+import { createBareRemote } from '../helpers/bare-remote.js';
 import {
   ADL_COMMIT_IDENTITY,
   prepareOwnedDir,
@@ -73,6 +74,7 @@ async function withFixture(
         scratchRoot: ctx.scratchRoot,
         baseRef,
       });
+    fixtureBranch = branchNameFor(worktree.id);
     const git = managerGitClient(worktree);
     let copies = 0;
     const composedAll: Workspace[] = [];
@@ -142,11 +144,18 @@ async function withFixture(
   });
 }
 
+/**
+ * The branch the fixture's worktree is on. `carryBack` checks the worktree's HEAD
+ * against it before ADL commits (the ref guard, D-6-CI-7), so a stand-in name no
+ * longer does -- tests run one at a time within a file, so one slot suffices.
+ */
+let fixtureBranch = '';
+
 const carry = (session: OwnedDirSession) =>
   session.carryBack({
     stageId: 'behaviour',
     pushUrl: undefined,
-    branch: 'unused',
+    branch: fixtureBranch,
   });
 
 describe('prepareOwnedDir — refusals before the gate runs', () => {
@@ -415,9 +424,8 @@ describe('carryBack — what lands on the branch', () => {
         // The retry: the tester re-writes the same file, so there is nothing
         // new to commit — and the branch is pushed anyway, because the push
         // that failed is the one that has not happened yet.
-        const remote = join(ctx.scratchRoot, '..', 'retry-remote.git');
-        await mkdir(remote, { recursive: true });
-        await ctx.git.raw(['-C', remote, 'init', '--bare']);
+        const bare = await createBareRemote(join(ctx.scratchRoot, '..'));
+        const remote = bare.path;
         const retry = await session();
         await writeFile(
           join(retry.composed.root, DIR, 'health.test.mjs'),
@@ -430,14 +438,7 @@ describe('carryBack — what lands on the branch', () => {
         });
         expect(retried).toEqual({ ok: true, committed: [] });
         expect(
-          (
-            await ctx.git.raw([
-              '-C',
-              remote,
-              'rev-parse',
-              `refs/heads/${branchNameFor(worktree.id)}`,
-            ])
-          ).trim(),
+          await bare.revParse(`refs/heads/${branchNameFor(worktree.id)}`),
         ).toBe(committed.sha);
       });
     },

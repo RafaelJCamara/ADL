@@ -60,6 +60,7 @@ import type { StageErrorKind, Workspace } from '@adl/core/stage';
 import { directoriesOverlap, isWithinDirectory } from '@adl/core/config';
 import {
   carryBackFiles,
+  guardRefWrite,
   managerGitClient,
   pruneOwnedDirectory,
   readOwnedFiles,
@@ -279,6 +280,18 @@ export async function prepareOwnedDir(
         let head: GateHeadRange | undefined;
         const committed: string[] = [];
         try {
+          // Before ADL's own commit moves the feature's branch: the worker can
+          // write the branch namespace and this worktree's HEAD, and a link
+          // or a repointed HEAD there would make this commit land on another
+          // ref (D-6-CI-7). Refused, not retried -- nothing transient about it.
+          const guard = await guardRefWrite(input.worktree.root, branch);
+          if (!guard.ok) {
+            return {
+              ok: false,
+              kind: 'unparseable',
+              detail: `the ${stageId} gate's files were not committed: ${guard.detail}`,
+            };
+          }
           const before = await git.revParse('HEAD');
           const carried = await carryBackFiles({
             to: input.worktree.root,

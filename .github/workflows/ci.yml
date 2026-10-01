@@ -50,6 +50,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Nothing in this job pushes, so the token the checkout would otherwise
+          # leave in .git/config has no use -- and the dropped worker can now
+          # traverse the runner's home (see the privilege-drop provisioning
+          # below), which would make a persisted token reachable by it.
+          persist-credentials: false
 
       - name: Set up Node ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -128,6 +134,25 @@ jobs:
           # requires membership of it, so without this applyWorkerAccess
           # degrades with EPERM and the worker cannot write its own scratch HOME.
           sudo usermod --append --groups adl-worker "$me"
+
+          # Traverse on the runner's home, for CI's own sake and nobody else's.
+          # The checkout lives under /home/runner, which GitHub ships as
+          # `drwxr-x--- runner runner`, and the test fixtures (the fake agent
+          # CLIs under packages/manager/test/helpers) are executed AS the
+          # worker. Without a search bit on that one directory a dropped child
+          # cannot reach them, node's module-resolution failure names neither
+          # the file nor the permission, and ~30 tests fail as an opaque
+          # `provider_error` (D-6-CI-2). This is `o+x` on the home and nothing
+          # else: it lets any local user pass THROUGH a directory to a path it
+          # already knows, and neither list it nor read anything in it. It adds
+          # no group to anyone, so the T-2-30 test above keeps its subject (a
+          # group the daemon carries and the worker lacks) -- an earlier shape
+          # of this step put the worker into the runner's primary group, which
+          # emptied that set, turned the test vacuous, and gave the worker the
+          # reach of everything the runner group owns. CI-only by construction:
+          # a real deployment's agent CLI lives at a world-readable system path,
+          # which is why this is not in applyWorkerAccess.
+          sudo chmod o+x "$HOME"
 
           # SETENV, not a bare NOPASSWD. `sudo` resets the environment by
           # default, and the environment it would reset is the zero-inherit one
