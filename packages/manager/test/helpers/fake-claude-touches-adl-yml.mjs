@@ -10,6 +10,7 @@
 // eslint-disable-next-line no-restricted-imports -- see the note above: this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
+import { TOOL_STDIO } from './agent-tool-stdio.mjs';
 import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const cwd = process.cwd();
@@ -26,8 +27,14 @@ appendFileSync(
 // developer's own work — exactly the shape ROLE-11 exists to catch, and
 // exactly what a model editing its own grading criteria looks like on disk.
 appendFileSync(`${cwd}/adl.yml`, '# edited by the developer agent\n');
-execFileSync('git', ['add', 'agent-output.txt', 'adl.yml'], { cwd });
-execFileSync('git', ['commit', '-m', 'agent: implement the feature'], { cwd });
+execFileSync('git', ['add', 'agent-output.txt', 'adl.yml'], {
+  cwd,
+  stdio: TOOL_STDIO,
+});
+execFileSync('git', ['commit', '-m', 'agent: implement the feature'], {
+  cwd,
+  stdio: TOOL_STDIO,
+});
 
 const lines = [
   {

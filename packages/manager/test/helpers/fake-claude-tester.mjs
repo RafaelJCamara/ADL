@@ -51,6 +51,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
+import { TOOL_STDIO } from './agent-tool-stdio.mjs';
 import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const argv = process.argv.slice(2);
@@ -99,7 +100,7 @@ if (!isTester) {
     `${cwd}/agent-output.txt`,
     `written by the fake claude double (pid ${process.pid})\n`,
   );
-  execFileSync('git', ['add', 'agent-output.txt'], { cwd });
+  execFileSync('git', ['add', 'agent-output.txt'], { cwd, stdio: TOOL_STDIO });
   const edits = flag('--adl-developer-edits');
   const firstRound = (argv[argv.length - 1] ?? '').includes(
     '(first round — no prior feedback)',
@@ -107,10 +108,11 @@ if (!isTester) {
   if (edits !== undefined && !firstRound) {
     mkdirSync(dirname(join(cwd, edits)), { recursive: true });
     appendFileSync(join(cwd, edits), '// loosened by the developer\n');
-    execFileSync('git', ['add', edits], { cwd });
+    execFileSync('git', ['add', edits], { cwd, stdio: TOOL_STDIO });
   }
   execFileSync('git', ['commit', '-m', 'agent: implement the feature'], {
     cwd,
+    stdio: TOOL_STDIO,
   });
   emitTranscript('Implementing now.');
   process.exit(0);

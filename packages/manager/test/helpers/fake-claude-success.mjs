@@ -14,6 +14,7 @@
 // eslint-disable-next-line no-restricted-imports -- see the note above: this file IS the external program, not ADL code launching one
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
+import { TOOL_STDIO } from './agent-tool-stdio.mjs';
 import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const cwd = process.cwd();
@@ -76,8 +77,11 @@ appendFileSync(
   `${cwd}/agent-output.txt`,
   `written by the fake claude double (pid ${process.pid}, ${process.hrtime.bigint()})\n`,
 );
-execFileSync('git', ['add', 'agent-output.txt'], { cwd });
-execFileSync('git', ['commit', '-m', 'agent: implement the feature'], { cwd });
+execFileSync('git', ['add', 'agent-output.txt'], { cwd, stdio: TOOL_STDIO });
+execFileSync('git', ['commit', '-m', 'agent: implement the feature'], {
+  cwd,
+  stdio: TOOL_STDIO,
+});
 
 const lines = [
   {

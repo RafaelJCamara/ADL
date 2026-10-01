@@ -43,7 +43,19 @@
  *   is pushed. It also keeps the default branch, tags and remote-tracking refs
  *   out of reach.
  * - `packed-refs`, `shallow`, `info/`, `gc.log` -- the worker never writes them
- *   to commit (`update-ref` of a packed ref writes a LOOSE ref).
+ *   to commit (`update-ref` of a packed ref writes a LOOSE ref). It does try to
+ *   LOCK `packed-refs` on git 2.55: `git commit` there ends by deleting the
+ *   `AUTO_MERGE` pseudoref, and the files backend takes `packed-refs.lock` in
+ *   this directory for any deletion. As the worker that is refused, so git
+ *   prints `error: Unable to create '<gitDir>/packed-refs.lock': Permission
+ *   denied` -- and the commit still exits 0 with the branch moved: the deletion
+ *   runs after the branch update, and git does not treat its failure as the
+ *   commit's. Probed against git 2.55.0 (the
+ *   ubuntu-latest image) and 2.43.0 (Ubuntu 24.04's package, which attempts no
+ *   deletion and prints nothing). Making the lock creatable would mean a
+ *   group-writable `.git/`, from which the worker could create `packed-refs`
+ *   itself when absent -- `refs/replace/*` and the default branch with it -- so
+ *   the refusal and its line of output are the intended shape (DEBT D-6-CI-20).
  *
  * ── The fan-out directories are created up front ──────────────────────────────
  *

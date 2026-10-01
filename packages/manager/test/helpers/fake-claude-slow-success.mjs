@@ -14,6 +14,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+import { TOOL_STDIO } from './agent-tool-stdio.mjs';
 import { refuseToCommitInSourceCheckout } from './refuse-source-checkout.mjs';
 
 const cwd = process.cwd();
@@ -33,8 +34,11 @@ await delay(delayMs);
 // `refuse-source-checkout.mjs` for the incident that made this necessary).
 refuseToCommitInSourceCheckout(cwd, 'fake-claude-slow-success');
 writeFileSync(`${cwd}/agent-output.txt`, 'written by the fake claude double\n');
-execFileSync('git', ['add', 'agent-output.txt'], { cwd });
-execFileSync('git', ['commit', '-m', 'agent: implement the feature'], { cwd });
+execFileSync('git', ['add', 'agent-output.txt'], { cwd, stdio: TOOL_STDIO });
+execFileSync('git', ['commit', '-m', 'agent: implement the feature'], {
+  cwd,
+  stdio: TOOL_STDIO,
+});
 
 process.stdout.write(
   `${JSON.stringify({
