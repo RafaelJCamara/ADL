@@ -34,6 +34,7 @@ import type { InstallationAccessTokenAuthentication } from '@octokit/auth-app';
 import { Octokit } from 'octokit';
 import {
   COLLABORATOR_PERMISSIONS,
+  createKeyedSerialiser,
   type ChangeRequest,
   type CollaboratorPermission,
   type ForgeAdapter,
@@ -170,6 +171,55 @@ export function githubForgeAdapter(
       : {}),
   });
 
+  // One chain per adapter instance, so the guarantee `upsertComment` documents
+  // is exactly "callers of this adapter" and no wider (D-7-05-1).
+  const serialiseUpserts = createKeyedSerialiser();
+
+  async function upsertCommentUnserialised(
+    input: UpsertCommentInput,
+  ): Promise<void> {
+    const marker = stickyMarker(input.key);
+    const body = `${marker}\n${input.body}`;
+
+    // **Paginated, not first-page.** A single `listComments` call returns
+    // GitHub's default 30, and ADL's own marker is pushed off that page as
+    // soon as humans and other bots comment alongside it — at which point
+    // this method silently stops finding its prior comment and creates a
+    // SECOND one every round, which is the exact failure FORGE-06 exists to
+    // prevent, arriving through the mechanism meant to prevent it.
+    // `octokit.paginate` follows the `Link: rel="next"` header (verified
+    // against the installed `octokit@5.0.5` with a local paginating server
+    // before this was written); `per_page: 100` is GitHub's maximum, so the
+    // common case is still one request.
+    const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+      owner: input.repo.owner,
+      repo: input.repo.repo,
+      issue_number: input.number,
+      per_page: 100,
+    });
+    const existing = comments.find(
+      (comment) =>
+        typeof comment.body === 'string' && comment.body.includes(marker),
+    );
+
+    if (existing !== undefined) {
+      await octokit.rest.issues.updateComment({
+        owner: input.repo.owner,
+        repo: input.repo.repo,
+        comment_id: existing.id,
+        body,
+      });
+      return;
+    }
+
+    await octokit.rest.issues.createComment({
+      owner: input.repo.owner,
+      repo: input.repo.repo,
+      issue_number: input.number,
+      body,
+    });
+  }
+
   return {
     id: 'github',
 
@@ -245,50 +295,41 @@ export function githubForgeAdapter(
       };
     },
 
-    async upsertComment(input: UpsertCommentInput): Promise<void> {
-      const marker = stickyMarker(input.key);
-      const body = `${marker}\n${input.body}`;
-
-      // **Paginated, not first-page.** A single `listComments` call returns
-      // GitHub's default 30, and ADL's own marker is pushed off that page as
-      // soon as humans and other bots comment alongside it — at which point
-      // this method silently stops finding its prior comment and creates a
-      // SECOND one every round, which is the exact failure FORGE-06 exists to
-      // prevent, arriving through the mechanism meant to prevent it.
-      // `octokit.paginate` follows the `Link: rel="next"` header (verified
-      // against the installed `octokit@5.0.5` with a local paginating server
-      // before this was written); `per_page: 100` is GitHub's maximum, so the
-      // common case is still one request.
-      const comments = await octokit.paginate(
-        octokit.rest.issues.listComments,
-        {
-          owner: input.repo.owner,
-          repo: input.repo.repo,
-          issue_number: input.number,
-          per_page: 100,
-        },
+    /**
+     * **Serialised per (repository, change request, key)** (D-7-05-1). The
+     * body below is check-then-act -- list every comment, look for the marker,
+     * then update or create -- and with nothing between the read and the write
+     * two concurrent calls for one key both read "none" and both create,
+     * leaving the human reading the pull request with the comment twice.
+     * `octokit`'s write pacing does not close this: it gates the *write*, not
+     * the read that decided to write, so a paced pair still decides together
+     * and merely creates one second apart.
+     *
+     * What this covers: concurrent callers sharing THIS adapter instance. That
+     * is every caller ADL has -- forge writes are manager-side (the worker
+     * holds no `ForgeAdapter`; `packages/manager/src/publish/` and the round
+     * loop are the only `upsertComment` call sites) and the manager is a single
+     * process that builds one adapter at boot.
+     *
+     * What it does NOT cover, and nothing here pretends to: a second manager
+     * process against the same repository (each has its own chain), or a human
+     * pasting ADL's hidden marker into a comment of their own. Both are
+     * outside the single-writer premise; GitHub has no idempotency key for
+     * issue comments to close them with.
+     *
+     * Different keys on the same change request do not wait for each other --
+     * the developer's and the escalation's comments are independent.
+     */
+    upsertComment(input: UpsertCommentInput): Promise<void> {
+      return serialiseUpserts(
+        JSON.stringify([
+          input.repo.owner,
+          input.repo.repo,
+          input.number,
+          input.key,
+        ]),
+        () => upsertCommentUnserialised(input),
       );
-      const existing = comments.find(
-        (comment) =>
-          typeof comment.body === 'string' && comment.body.includes(marker),
-      );
-
-      if (existing !== undefined) {
-        await octokit.rest.issues.updateComment({
-          owner: input.repo.owner,
-          repo: input.repo.repo,
-          comment_id: existing.id,
-          body,
-        });
-        return;
-      }
-
-      await octokit.rest.issues.createComment({
-        owner: input.repo.owner,
-        repo: input.repo.repo,
-        issue_number: input.number,
-        body,
-      });
     },
 
     async listOpenChangeRequests(

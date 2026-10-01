@@ -206,18 +206,31 @@ describe('tracer: a committed dev-run automatically pushes and opens a draft cha
             // trigger — the other half of what a human sees on the pull
             // request the moment ADL opens one.
             const number = open[0]!.number;
-            await waitUntil(
-              () =>
-                (githubServer.state.commentsByIssue.get(number) ?? []).length >
-                0,
-              { timeoutMs: 15_000 },
-            );
+            const developerMarker = '<!-- adl:role=developer -->';
+            const developerComments = () =>
+              (githubServer.state.commentsByIssue.get(number) ?? []).filter(
+                (comment) => comment.body.includes(developerMarker),
+              );
+            await waitUntil(() => developerComments().length > 0, {
+              timeoutMs: 15_000,
+            });
 
-            const comments =
-              githubServer.state.commentsByIssue.get(number) ?? [];
+            // D-7-05-1: this asserted `comments.toHaveLength(1)` over EVERY
+            // comment on the change request, and failed intermittently with
+            // two. The second was never a duplicate developer comment: this
+            // tracer's pipeline is `['develop']` alone, so the round loop
+            // escalates ("the pipeline ran zero gates") ~50ms after the
+            // developer's comment lands and publishes the escalation comment,
+            // under its own key. Whether that second comment had arrived by the
+            // time the first one was noticed was a coin toss. What this test is
+            // about is that the *developer's* comment is sticky -- one of it,
+            // however many other roles have spoken -- and the same-key race
+            // itself is pinned deterministically by
+            // `packages/forge-github/test/upsert-concurrency.test.ts`.
+            const comments = developerComments();
             expect(comments).toHaveLength(1);
             const commentBody = comments[0]?.body ?? '';
-            expect(commentBody).toContain('<!-- adl:role=developer -->');
+            expect(commentBody).toContain(developerMarker);
             expect(commentBody).toContain('### Developer');
             expect(commentBody).toContain('**Round 1 — committed `');
             // The real sha the worker actually pushed, abbreviated the way git

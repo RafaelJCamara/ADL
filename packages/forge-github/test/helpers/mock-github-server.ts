@@ -60,6 +60,24 @@ export interface MockGithubState {
   nextCommentId: number;
 }
 
+export interface MockGithubServerOptions {
+  /**
+   * Hold every comment-list response back this long AFTER the server has taken
+   * its snapshot of the comments. That is what real network latency does to a
+   * check-then-act caller: the answer it gets describes the world as it was when
+   * it asked, not as it is when the answer arrives. It is the deterministic way
+   * to make two concurrent `upsertComment` calls interleave (D-7-05-1) --
+   * without it the race depends on scheduler luck and a guard against it cannot
+   * be observed failing.
+   */
+  readonly listCommentsLatencyMs?: number;
+  /**
+   * The same, for the open-pull-request list -- what makes two concurrent
+   * `publishDraftChangeRequest` calls both read "none open" (D-7-05-2).
+   */
+  readonly listPullsLatencyMs?: number;
+}
+
 export interface MockGithubServer {
   readonly url: string;
   readonly state: MockGithubState;
@@ -139,7 +157,9 @@ function toPullResponse(pr: MockPullRequest): Record<string, unknown> {
 }
 
 /** Start the mock server. Always on an OS-assigned free port. */
-export async function startMockGithubServer(): Promise<MockGithubServer> {
+export async function startMockGithubServer(
+  options: MockGithubServerOptions = {},
+): Promise<MockGithubServer> {
   const state: MockGithubState = {
     pulls: [],
     commentsByIssue: new Map(),
@@ -153,7 +173,7 @@ export async function startMockGithubServer(): Promise<MockGithubServer> {
   };
 
   const server = createServer((req, res) => {
-    void handle(req, res, state).catch((error: unknown) => {
+    void handle(req, res, state, options).catch((error: unknown) => {
       sendJson(res, 500, {
         message: error instanceof Error ? error.message : 'mock server error',
       });
@@ -177,6 +197,7 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   state: MockGithubState,
+  options: MockGithubServerOptions,
 ): Promise<void> {
   const authorization = req.headers.authorization;
   if (authorization !== undefined)
@@ -239,8 +260,16 @@ async function handle(
   if (method === 'GET' && match) {
     const wanted = query.get('state') ?? 'open';
     const filtered = state.pulls.filter((pr) => pr.state === wanted);
+    // Snapshot first (`paginate` slices now), delay second: see
+    // `listPullsLatencyMs`.
     const { page, headers } = paginate(filtered, query, req, pathname);
-    sendJson(res, 200, page.map(toPullResponse), headers);
+    const body = page.map(toPullResponse);
+    if ((options.listPullsLatencyMs ?? 0) > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, options.listPullsLatencyMs),
+      );
+    }
+    sendJson(res, 200, body, headers);
     return;
   }
 
@@ -302,7 +331,14 @@ async function handle(
     state.commentsByIssue.set(issueNumber, comments);
 
     if (method === 'GET') {
+      // Snapshot first (`paginate` slices now), delay second: see
+      // `listCommentsLatencyMs`.
       const { page, headers } = paginate(comments, query, req, pathname);
+      if ((options.listCommentsLatencyMs ?? 0) > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.listCommentsLatencyMs),
+        );
+      }
       sendJson(res, 200, page, headers);
       return;
     }

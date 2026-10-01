@@ -1,6 +1,7 @@
 /**
- * `@adl/core/forge` — the forge port (FORGE-01). Pure declarations only; an
- * adapter package supplies the implementation. Not re-exported through
+ * `@adl/core/forge` — the forge port (FORGE-01). Pure declarations (plus one
+ * pure concurrency primitive, `createKeyedSerialiser`); an adapter package
+ * supplies the implementation. Not re-exported through
  * `@adl/plugin-sdk` — see `forge.ts`'s own docblock for why.
  */
 export {
@@ -26,3 +27,7 @@ export {
   type StickyCommentInput,
   type StickyRound,
 } from './sticky-comment.js';
+export {
+  createKeyedSerialiser,
+  type KeyedSerialiser,
+} from './keyed-serialiser.js';

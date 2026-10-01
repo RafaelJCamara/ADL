@@ -24,12 +24,33 @@ import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import { basename } from 'node:path';
 import { reposRepository, type Database, type FeaturesTable } from '@adl/db';
-import type {
-  ChangeRequest,
-  ForgeAdapter,
-  ForgeRepoRef,
+import {
+  createKeyedSerialiser,
+  type ChangeRequest,
+  type ForgeAdapter,
+  type ForgeRepoRef,
+  type KeyedSerialiser,
 } from '@adl/core/forge';
 import { changeRequestBranchFor } from './branch.js';
+
+/**
+ * One serialiser per `ForgeAdapter` instance (D-7-05-2). The scope of the
+ * guarantee is then exactly "callers publishing through this forge connection",
+ * which is every caller there is: forge writes are manager-side and the manager
+ * is one process holding one adapter. Keyed off the adapter rather than module
+ * state so two daemons in one process (the test suite starts many) never
+ * serialise against each other for no reason.
+ */
+const serialisers = new WeakMap<ForgeAdapter, KeyedSerialiser>();
+
+function serialiserFor(forge: ForgeAdapter): KeyedSerialiser {
+  let serialise = serialisers.get(forge);
+  if (serialise === undefined) {
+    serialise = createKeyedSerialiser();
+    serialisers.set(forge, serialise);
+  }
+  return serialise;
+}
 
 export interface PublishDraftChangeRequestDeps {
   readonly db: Kysely<Database>;
@@ -50,13 +71,35 @@ export interface PublishDraftChangeRequestDeps {
  * reason: from round 2 onwards, "already open" is the normal case, and a
  * caller that got `undefined` there would silently stop commenting after
  * round 1.
+ *
+ * **Serialised per (repository, branch)** (D-7-05-2). "List, find none, open"
+ * is a read-then-create, and two callers genuinely overlap on a first-round
+ * escalation: `onDeveloperCommitted` and the round loop's `publishOnEscalation`
+ * both publish from the same `stage_result`. Without the chain both listed
+ * nothing and both opened -- two draft change requests against a lenient forge,
+ * and against GitHub (which rejects a second pull request for one head/base
+ * with a 422) a logged failure that cost the escalation its comment. The second
+ * caller now lists after the first has finished opening, and finds it. Covers
+ * callers sharing one adapter instance, i.e. the single manager process; see
+ * `createKeyedSerialiser`.
  */
-export async function publishDraftChangeRequest(
+export function publishDraftChangeRequest(
   deps: PublishDraftChangeRequestDeps,
   params: { readonly feature: FeaturesTable; readonly sha: string },
 ): Promise<ChangeRequest | undefined> {
+  const branch = changeRequestBranchFor(params.feature);
+  return serialiserFor(deps.forge)(
+    JSON.stringify([deps.forgeRepo.owner, deps.forgeRepo.repo, branch]),
+    () => publishDraftChangeRequestUnserialised(deps, params, branch),
+  );
+}
+
+async function publishDraftChangeRequestUnserialised(
+  deps: PublishDraftChangeRequestDeps,
+  params: { readonly feature: FeaturesTable; readonly sha: string },
+  branch: string,
+): Promise<ChangeRequest | undefined> {
   const { feature } = params;
-  const branch = changeRequestBranchFor(feature);
 
   try {
     const open = await deps.forge.listOpenChangeRequests(deps.forgeRepo);

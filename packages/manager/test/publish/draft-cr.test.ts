@@ -158,6 +158,88 @@ describe('publishDraftChangeRequest', () => {
     });
   });
 
+  // D-7-05-2: "list, find none, open" is a read-then-create. A first-round
+  // escalation really does call this twice at once (`onDeveloperCommitted` and
+  // `publishOnEscalation`, same `stage_result`). The mock holds each pull
+  // request list back 300ms after snapshotting it, so both callers' answer is
+  // "none open" -- the interleaving is certain, which is what lets this be
+  // watched failing against the unserialised code.
+  describe('under concurrency (D-7-05-2)', () => {
+    const LIST_LATENCY_MS = 300;
+    let slowServer: MockGithubServer;
+    let slowForge: ReturnType<typeof githubForgeAdapter>;
+
+    beforeEach(async () => {
+      slowServer = await startMockGithubServer({
+        listPullsLatencyMs: LIST_LATENCY_MS,
+      });
+      slowForge = githubForgeAdapter({
+        appId: 'adl-test-app',
+        privateKey: throwawayPrivateKeyPem(),
+        installationId: 1,
+        baseUrl: slowServer.url,
+        disablePacingForTests: true,
+      });
+    });
+
+    afterEach(async () => {
+      await slowServer.close();
+    });
+
+    it('two overlapping publishes for one feature open exactly one change request, and both return it', async () => {
+      await withTempDb(async ({ db }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+        const repoId = await seedRepo(db);
+        const feature = await seedFeature(db, repoId, 'features/dark-mode');
+        const { logger } = createCapturingLogger();
+        const deps = { db, logger, forge: slowForge, forgeRepo: FORGE_REPO };
+
+        const [first, second] = await Promise.all([
+          publishDraftChangeRequest(deps, {
+            feature,
+            sha: 'a'.repeat(40),
+          }),
+          publishDraftChangeRequest(deps, {
+            feature,
+            sha: 'a'.repeat(40),
+          }),
+        ]);
+
+        expect(slowServer.state.pulls).toHaveLength(1);
+        expect(first).toBeDefined();
+        expect(second?.number).toBe(first?.number);
+      });
+    });
+
+    it('overlapping publishes for different features do not wait for each other', async () => {
+      await withTempDb(async ({ db }) => {
+        await migrateToLatest(db, MIGRATIONS_DIR);
+        const repoId = await seedRepo(db);
+        const a = await seedFeature(db, repoId, 'features/dark-mode');
+        const b = await seedFeature(db, repoId, 'features/export-widgets');
+        const { logger } = createCapturingLogger();
+        const deps = { db, logger, forge: slowForge, forgeRepo: FORGE_REPO };
+
+        const start = Date.now();
+        await Promise.all([
+          publishDraftChangeRequest(deps, {
+            feature: a,
+            sha: 'a'.repeat(40),
+          }),
+          publishDraftChangeRequest(deps, {
+            feature: b,
+            sha: 'b'.repeat(40),
+          }),
+        ]);
+        const elapsedMs = Date.now() - start;
+
+        expect(slowServer.state.pulls).toHaveLength(2);
+        // Serialised, the two list round trips would run back to back.
+        expect(elapsedMs).toBeLessThan(2 * LIST_LATENCY_MS);
+      });
+    });
+  });
+
   it('logs and returns cleanly rather than throwing when the repos row is missing', async () => {
     await withTempDb(async ({ db }) => {
       await migrateToLatest(db, MIGRATIONS_DIR);
